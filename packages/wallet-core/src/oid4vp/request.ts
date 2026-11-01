@@ -146,7 +146,10 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
       checks.push({ label: 'x509_san_dns binding', ok: true, detail: `SAN ${value}` });
     }
   } else if (prefix === 'decentralized_identifier') {
-    if (!jws || typeof header?.kid !== 'string' || !header.kid.startsWith(value)) throw new PresentationRequestError('decentralized_identifier requires a request signed with a DID key', 'invalid_client');
+    // The kid's DID must be the client_id's DID exactly (a prefix match would let did:web:bank.com.evil.net pass).
+    if (!jws || typeof header?.kid !== 'string' || header.kid.split('#')[0] !== value) {
+      throw new PresentationRequestError('decentralized_identifier requires a request signed with a key of that DID', 'invalid_client');
+    }
     const resolved = await trust.resolveDid(header.kid);
     const vm = resolved.didDocument ? findVerificationMethod(resolved.didDocument, header.kid) : undefined;
     if (!vm || !verifyJws(jws, verificationMethodPublicKey(vm))) throw new PresentationRequestError('Request object signature is invalid', 'invalid_client');
@@ -158,8 +161,11 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
   } else {
     throw new PresentationRequestError(`Unsupported client identifier prefix ${prefix}`, 'invalid_client');
   }
-  // Request well-formedness. The request is authenticated from here on, so errors may be returned to the verifier.
-  const reportTo = responseUri && responseMode.startsWith('direct_post') ? { responseUri, state: raw.state as string | undefined } : undefined;
+  // Verifier trust. Errors may go back only to a verifier that signed the request and is not refused.
+  const trustDecision = await trust.evaluateVerifier({ clientId, x5c, kid: header?.kid as string | undefined, responseUri });
+  const refusal = verifierRefusal(prefix, trustDecision);
+  const reportTo = jws && !refusal && responseUri && responseMode.startsWith('direct_post') ? { responseUri, state: raw.state as string | undefined } : undefined;
+  // Request well-formedness.
   const fail = (message: string, code = 'invalid_request') => new PresentationRequestError(message, code, reportTo);
   if (raw.response_type !== 'vp_token') throw fail(`Unsupported response_type ${String(raw.response_type)}`, 'unsupported_response_type');
   if (typeof raw.nonce !== 'string' || !raw.nonce) throw fail('nonce is required');
@@ -176,14 +182,13 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
     throw fail('client_metadata.jwks has no P-256 key with alg ECDH-ES for direct_post.jwt');
   }
 
-  const trustDecision = await trust.evaluateVerifier({ clientId, x5c, kid: header?.kid as string | undefined, responseUri });
   const md = (raw.client_metadata ?? {}) as Record<string, unknown>;
   const request: AuthorizationRequest = {
     clientId, prefix, responseType: 'vp_token', responseMode, responseUri, redirectUri: raw.redirect_uri as string | undefined,
     nonce: String(raw.nonce), state: raw.state as string | undefined, dcqlQuery: raw.dcql_query as DcqlQuery, clientMetadata: md,
     signed: !!jws, x5c, raw,
   };
-  return { request, verifier: { clientId, prefix, trust: trustDecision, checks, refusal: verifierRefusal(prefix, trustDecision),
+  return { request, verifier: { clientId, prefix, trust: trustDecision, checks, refusal,
     name: (md.client_name as string | undefined) ?? trustDecision.entity?.display?.[0]?.name, logoUri: md.logo_uri as string | undefined } };
 }
 

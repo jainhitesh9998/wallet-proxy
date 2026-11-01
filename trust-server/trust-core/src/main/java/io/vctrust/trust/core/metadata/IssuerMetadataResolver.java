@@ -208,8 +208,9 @@ public class IssuerMetadataResolver {
 
     /**
      * {@code openidvci-issuer-metadata+jwt}: typ, an asymmetric alg, x5c key resolution with a signer certificate that is
-     * not self-signed (HAIP 1.0 §4.1), the signature, {@code sub} = the Credential Issuer, {@code iat}, expiry, and trust
-     * in the signer. Returns the metadata parameters (JWT claims removed).
+     * not self-signed (HAIP 1.0 §4.1) and is bound to the issuer (SAN dNSName = its host, or SAN URI = its identifier),
+     * the signature, {@code sub} and {@code credential_issuer} = the Credential Issuer, {@code iat}, expiry, and trust in
+     * the signer. Returns the metadata parameters (JWT claims removed).
      */
     private Map<String, Object> verifySigned(String jwt, String credentialIssuer, List<String> warnings) throws MetadataException {
         try {
@@ -223,6 +224,9 @@ public class IssuerMetadataResolver {
             Map<String, Object> claims = new LinkedHashMap<>(jws.getPayload().toJSONObject());
             if (!(claims.get("sub") instanceof String sub) || !Identifier.normalizeUrl(sub).equals(Identifier.normalizeUrl(credentialIssuer))) {
                 throw new MetadataException("issuer_mismatch", "Signed metadata sub does not match the issuer");
+            }
+            if (!(claims.get("credential_issuer") instanceof String ci) || !Identifier.normalizeUrl(ci).equals(Identifier.normalizeUrl(credentialIssuer))) {
+                throw new MetadataException("issuer_mismatch", "Signed metadata credential_issuer does not match the issuer");
             }
             if (!(claims.get("iat") instanceof Number)) {
                 throw new MetadataException("metadata_invalid", "Signed metadata has no iat");
@@ -241,6 +245,13 @@ public class IssuerMetadataResolver {
             X509Certificate leaf = chain.getFirst();
             if (leaf.getSubjectX500Principal().equals(leaf.getIssuerX500Principal())) {
                 throw new MetadataException("untrusted_signer", "Signed metadata is signed with a self-signed certificate");
+            }
+            String host = URI.create(credentialIssuer).getHost();
+            boolean bound = Certificates.dnsNames(leaf).stream().anyMatch(n -> n.equalsIgnoreCase(host))
+                    || Certificates.uriNames(leaf).stream().anyMatch(u -> Identifier.normalizeUrl(u).equals(Identifier.normalizeUrl(credentialIssuer)));
+            if (!bound) {
+                throw new MetadataException("untrusted_signer", "Signed metadata signer " + leaf.getSubjectX500Principal().getName()
+                        + " is not bound to " + credentialIssuer + " (no matching SAN)");
             }
             if (!jws.verify(new DefaultJWSVerifierFactory().createJWSVerifier(jws.getHeader(), leaf.getPublicKey()))) {
                 throw new MetadataException("metadata_invalid", "Signed metadata signature does not verify");

@@ -32,5 +32,5 @@ await p.respond();
 ```
 
 Tests:
-- `npx vitest run`: offline suite (31 tests), including the OpenID4VP SessionTranscript and RFC 7518 KDF vectors, and an in-memory HAIP issuer for encryption, attestation proofs, refusal and notifications.
+- `npx vitest run`: offline suite (33 tests), including the OpenID4VP SessionTranscript and RFC 7518 KDF vectors, and an in-memory HAIP issuer for encryption, attestation proofs, refusal and notifications.
 - `npm run test:live`: live suites against the Animo playground, MOSIP collab and a local trust server.

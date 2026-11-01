@@ -248,7 +248,8 @@ Wallets use the TypeScript client in its default `decisions: 'local'` mode. It d
   - `crl`: CRLs the snapshot does not carry, `'direct'` (default), `'service'` (relay) or `'none'`;
   - `statusLists`: `'direct'` (default) or `'service'` (relay).
 - `issuerMetadata.signed`: `'off'` (default), `'verify'` or `'require'`. A client profile with `require-signed-issuer-metadata`
-  forces `'require'`. The metadata proxy always asks issuers for signed metadata, uses it when its signer chains to a
-  `credential-issuer` anchor, and otherwise falls back to the JSON form with `signedMetadataVerified: false`.
+  forces `'require'`. The metadata proxy always asks issuers for signed metadata and uses it when its signer is bound to
+  the issuer (SAN) and chains to a `credential-issuer` anchor; whether that signer counts is decided per client (its
+  frameworks, `allow-relaxed-profiles`, revocation). Otherwise it falls back to the JSON form with `signedMetadataVerified: false`.
 
 Verifier backends and thin clients can use `decisions: 'service'`. See `packages/trust-client/README.md`.

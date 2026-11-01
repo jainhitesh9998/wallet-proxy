@@ -17,9 +17,14 @@ import io.vctrust.trust.server.cache.TtlCache;
 import io.vctrust.trust.server.config.TrustProperties;
 import org.springframework.http.HttpStatus;
 
+import com.nimbusds.jose.JWSObject;
+import io.vctrust.trust.core.x509.Certificates;
+
+import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -37,15 +42,26 @@ public class MetadataService {
                                          TrustDecision trust) {
     }
 
+    /**
+     * Whether a metadata signer chain (leaf first) is trusted for one client: its frameworks' credential-issuer anchors, its
+     * relaxed-profile and revocation policy. Null when trusted, else why not.
+     */
+    @FunctionalInterface
+    public interface ClientSignerTrust {
+        String untrustedReason(List<X509Certificate> chain, ClientProfile client);
+    }
+
     private final IssuerMetadataResolver resolver;
+    private final ClientSignerTrust signerTrust;
     private final TrustRegistry registry;
     private final TrustEvaluator evaluator;
     private final TtlCache<String, IssuerMetadata> cache;
     private final Clock clock;
 
     public MetadataService(IssuerMetadataResolver resolver, TrustRegistry registry, TrustEvaluator evaluator,
-                           TrustProperties.Cache cfg, Clock clock) {
+                           TrustProperties.Cache cfg, Clock clock, ClientSignerTrust signerTrust) {
         this.resolver = resolver;
+        this.signerTrust = signerTrust;
         this.registry = registry;
         this.evaluator = evaluator;
         this.clock = clock;
@@ -88,17 +104,42 @@ public class MetadataService {
             throw new ApiException(HttpStatus.BAD_GATEWAY, "fetch_failed", e.getMessage());
         }
         IssuerMetadata md = hit.value();
-        if (client.requireSignedIssuerMetadata() && !Boolean.TRUE.equals(md.signedMetadataVerified())) {
+        // The cached result says the signer chains to some anchor; whether it is trusted is this client's question.
+        String signed = md.signedMetadata();
+        Boolean verified = md.signedMetadataVerified();
+        List<String> warnings = md.warnings();
+        if (signed != null && Boolean.TRUE.equals(verified) && signerTrust != null) {
+            String reason = signerTrust.untrustedReason(signerChain(signed), client);
+            if (reason != null) {
+                signed = null;
+                verified = false;
+                warnings = new ArrayList<>(warnings);
+                warnings.add("Signed metadata signer is not trusted for client " + client.clientId() + ": " + reason);
+            }
+        }
+        if (client.requireSignedIssuerMetadata() && !Boolean.TRUE.equals(verified)) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "signed_metadata_required", credentialIssuer
-                    + (md.signedMetadataVerified() == null ? " serves no signed metadata" : " serves signed metadata whose signer is not trusted")
+                    + (verified == null ? " serves no signed metadata" : " serves signed metadata whose signer is not trusted")
                     + ", which client " + client.clientId() + " requires");
         }
         TrustDecision decision = evaluator.evaluate(new TrustQuery(EntityRole.CREDENTIAL_ISSUER,
                 new TrustQuery.Subject(credentialIssuer, null, null, null),
                 new TrustQuery.Context("oid4vci", null, null, null, null, null)), client);
         return new IssuerMetadataEnvelope(md.credentialIssuer(), md.issuer(), md.authorizationServers(),
-                md.signedMetadata(), md.signedMetadataVerified(), md.policyApplied(), md.fetchedAt(), hit.expiresAt(),
-                hit.stale(), md.warnings(), entity == null ? null : entity.id(), decision);
+                signed, verified, md.policyApplied(), md.fetchedAt(), hit.expiresAt(),
+                hit.stale(), warnings, entity == null ? null : entity.id(), decision);
+    }
+
+    private static List<X509Certificate> signerChain(String jwt) {
+        try {
+            List<X509Certificate> chain = new ArrayList<>();
+            for (com.nimbusds.jose.util.Base64 c : JWSObject.parse(jwt).getHeader().getX509CertChain()) {
+                chain.add(Certificates.fromDer(c.decode()));
+            }
+            return chain;
+        } catch (Exception e) {
+            throw new IllegalStateException("Verified signed metadata no longer parses", e);
+        }
     }
 
     /** Remaining freshness in seconds, for Cache-Control. */

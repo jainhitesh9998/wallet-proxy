@@ -90,8 +90,9 @@ Every `TrustDecision` says who decided:
 ### Signed issuer metadata
 `issuerMetadata.signed` (or a client profile with `requireSignedIssuerMetadata`, from the snapshot policy):
 - `'verify'` asks issuers for `application/jwt` and uses signed metadata when served; `'require'` refuses issuers without it.
-- The JWT must have `typ: openidvci-issuer-metadata+jwt`, an asymmetric `alg`, an `x5c` whose leaf is not self-signed and chains to a `credential-issuer` anchor, `sub` equal to the Credential Issuer, `iat`, and no past `exp`.
-- Signed metadata that arrives through the service's proxy is verified again on the device; the registry's metadata policy is then applied locally.
+- The JWT must have `typ: openidvci-issuer-metadata+jwt`, an asymmetric `alg`, an `x5c` whose leaf is not self-signed, is bound to the issuer (SAN dNSName = its host, or SAN URI = its identifier) and chains to a `credential-issuer` anchor, `sub` and `credential_issuer` equal to the Credential Issuer, `iat`, and no past `exp`.
+- Signed metadata that arrives through the service's proxy is verified again on the device; the registry's metadata policy is then applied locally, and the authorization servers' metadata is fetched from the servers the signed metadata names.
+- Under `'verify'`, rejected signed metadata falls back to the JSON form with a warning (the service does the same); under `'require'` it is an error.
 
 ### Client policy from the snapshot
 | Policy | Effect on the device |
@@ -130,4 +131,4 @@ Building blocks are exported for reuse:
 - `applyMetadataPolicy`
 - the `cbor` codec
 
-Tests: `npx vitest run` (66 tests). `npm run test:live` adds the parity test against a running trust service. It runs 29 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.
+Tests: `npx vitest run` (67 tests). `npm run test:live` adds the parity test against a running trust service. It runs 29 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.

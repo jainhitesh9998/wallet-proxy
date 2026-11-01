@@ -132,6 +132,11 @@ class MetadataTest {
         var ca = TestPki.rootCa("CN=Metadata CA,C=NL");
         var signer = TestPki.leaf("CN=Metadata signer,C=NL", ca, List.of("signed.example"), null);
         IssuerMetadataResolver.SignerTrust signerOnly = chain -> chain.getFirst().equals(signer.certificate()) ? null : "untrusted";
+        var unbound = TestPki.leaf("CN=Other signer,C=NL", ca, List.of("other.example"), null);
+        IssuerMetadataResolver.SignerTrust anyUnderCa = chain -> null;
+        assertThatThrownBy(() -> new IssuerMetadataResolver(signedIssuer(unbound, "openidvci-issuer-metadata+jwt", SIGNED_ISSUER), Clock.systemUTC(),
+                Duration.ofMinutes(1), Duration.ofHours(1), true, anyUnderCa).resolve(SIGNED_ISSUER, null))
+                .hasMessageContaining("not bound to " + SIGNED_ISSUER);
         for (var http : List.of(signedIssuer(ca, "openidvci-issuer-metadata+jwt", SIGNED_ISSUER),
                 signedIssuer(signer, "JWT", SIGNED_ISSUER),
                 signedIssuer(signer, "openidvci-issuer-metadata+jwt", "https://other.example"))) {

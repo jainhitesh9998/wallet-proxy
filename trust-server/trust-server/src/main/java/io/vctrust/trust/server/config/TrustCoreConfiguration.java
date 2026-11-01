@@ -9,6 +9,7 @@ import io.vctrust.trust.core.did.HttpRegistryDidDriver;
 import io.vctrust.trust.core.did.UniversalResolverDriver;
 import io.vctrust.trust.core.evaluation.TrustEvaluator;
 import io.vctrust.trust.core.metadata.IssuerMetadataResolver;
+import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustDomain;
 import io.vctrust.trust.core.x509.CertificateProfiles;
 import io.vctrust.trust.core.x509.ValidationIssue;
@@ -215,10 +216,21 @@ public class TrustCoreConfiguration {
                 props.getCache().getMetadataMaxTtl(), true, signerTrust);
     }
 
+    /** Per client, signed metadata counts only when its signer validates as X509Controller would validate it for that client. */
     @Bean
     MetadataService metadataService(IssuerMetadataResolver resolver, TrustRegistry registry, TrustEvaluator evaluator,
-                                    TrustProperties props, Clock clock) {
-        return new MetadataService(resolver, registry, evaluator, props.getCache(), clock);
+                                    TrustProperties props, Clock clock, X509PathValidator validator, RevocationChecker revocation) {
+        RevocationChecker checker = props.getRevocation().isEnabled() ? revocation : null;
+        MetadataService.ClientSignerTrust signerTrust = (chain, client) -> {
+            List<TrustAnchor> anchors = registry.snapshot().anchors(TrustDomain.CREDENTIAL_ISSUER).stream()
+                    .filter(a -> client.accepts(a.frameworkId())).toList();
+            PathValidationResult r = validator.validate(chain, anchors, new X509PathValidator.Options(clock.instant(),
+                    CertificateProfiles.forDomain(TrustDomain.CREDENTIAL_ISSUER), null, null)
+                    .withRevocation(checker, client.requireRevocationStatus()).withRelaxedProfiles(client.allowRelaxedProfiles()));
+            return r.valid() ? null : r.issues().stream().filter(ValidationIssue::isError).map(ValidationIssue::message)
+                    .reduce((x, y) -> x + "; " + y).orElse("no trusted anchor");
+        };
+        return new MetadataService(resolver, registry, evaluator, props.getCache(), clock, signerTrust);
     }
 
     @Bean

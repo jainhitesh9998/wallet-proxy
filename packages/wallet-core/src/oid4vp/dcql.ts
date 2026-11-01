@@ -54,7 +54,7 @@ function pathValues(root: unknown, path: (string | number | null)[]): unknown[] 
     for (const v of current) {
       if (seg === null && Array.isArray(v)) next.push(...v);
       else if (typeof seg === 'number' && Array.isArray(v) && seg < v.length) next.push(v[seg]);
-      else if (typeof seg === 'string' && v && typeof v === 'object' && !Array.isArray(v) && seg in (v as object)) next.push((v as Record<string, unknown>)[seg]);
+      else if (typeof seg === 'string' && v && typeof v === 'object' && !Array.isArray(v) && Object.prototype.hasOwnProperty.call(v, seg)) next.push((v as Record<string, unknown>)[seg]);
     }
     current = next;
   }
@@ -74,7 +74,7 @@ function typeMatches(q: DcqlCredentialQuery, c: StoredCredential): boolean {
   const t = credentialType(c);
   const meta = q.meta ?? {};
   if (q.format === 'mso_mdoc') return !meta.doctype_value || meta.doctype_value === t.doctype;
-  if (q.format === 'dc+sd-jwt') return !Array.isArray(meta.vct_values) || (meta.vct_values as string[]).includes(t.vct ?? '');
+  if (q.format === 'dc+sd-jwt' || q.format === 'vc+sd-jwt') return !Array.isArray(meta.vct_values) || (meta.vct_values as string[]).includes(t.vct ?? '');
   const alternatives = meta.type_values as string[][] | undefined;
   if (!alternatives) return true;
   // type_values are fully expanded IRIs; compare by IRI or by the term's local name.

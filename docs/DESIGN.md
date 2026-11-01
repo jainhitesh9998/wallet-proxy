@@ -216,7 +216,7 @@ const trust = createTrustClient({
 const { decision } = await trust.evaluateCredential(mdocB64, 'mso_mdoc', { credentialIssuer });   // decided on the device
 ```
 
-Test coverage: 66 unit tests (real MOSIP and Animo artefacts, generated EC and RSA PKI, Node-generated JWS/EdDSA/RSA-PSS, RFC 7638 vector, both decision modes: snapshot-only traffic, rollback and expiry, strict policy, snapshot DID documents with key rotation, metadata policy, signed metadata, signed on-demand lookups, CRL parsing and revocation rules, CRL sources and relays, status lists and their caching). A live parity test runs 29 queries under a lenient and a strict client profile through `/evaluate` and on the device, and requires identical decisions, error reasons, entities and revocation status.
+Test coverage: 67 unit tests (real MOSIP and Animo artefacts, generated EC and RSA PKI, Node-generated JWS/EdDSA/RSA-PSS, RFC 7638 vector, both decision modes: snapshot-only traffic, rollback and expiry, strict policy, snapshot DID documents with key rotation, metadata policy, signed metadata, signed on-demand lookups, CRL parsing and revocation rules, CRL sources and relays, status lists and their caching). A live parity test runs 29 queries under a lenient and a strict client profile through `/evaluate` and on the device, and requires identical decisions, error reasons, entities and revocation status.
 
 ## Revocation and credential status
 
@@ -322,7 +322,7 @@ The service is a policy decision point that wallets act on, so its answers must 
 | Cross-purpose trust | Anchors are partitioned by trust domain (IACA, credential issuer, verifier access, wallet provider, status list), each with its own certificate profile |
 | Malicious XML / CBOR / JSON | DOCTYPE and external entities disabled, XMLDSig secure validation; size-capped inputs; explicit algorithm allow-lists (no `alg: none`) |
 | Verifier impersonation | JAR `typ`, signature and expiry checks, `x509_hash` / SAN binding, `response_uri` host rule for `x509_san_dns`, `client_id` equality between query and request object; the wallet refuses to present unless the `x509_*` verifier chains to a trusted verifier-access CA |
-| Spoofed issuer metadata | TLS, plus signed metadata where an ecosystem requires it: `x5c` chain to a credential-issuer anchor, no self-signed signer, `sub`, `iat`, `exp`; verified on the device even when it comes through the proxy |
+| Spoofed issuer metadata | TLS, plus signed metadata where an ecosystem requires it: `x5c` chain to one of the client's credential-issuer anchors, a signer that is not self-signed and is bound to the issuer by SAN, `sub` and `credential_issuer`, `iat`, `exp`. Verified on the device even when it comes through the proxy, and the authorization servers are then taken from the signed metadata |
 | Over-disclosure | Only the claims on the requested DCQL paths are disclosed; credentials without holder binding are offered only when the verifier allows it |
 | Sandbox deviations leaking into production decisions | `relaxProfile` anchors downgrade profile errors to warnings only for client profiles that allow it; strict verifiers see the errors |
 | Credentials borrowing trust | The issuer query uses the identifier inside the credential (`iss`/`issuer`), not the endpoint that delivered it; for JSON-LD the issuer must control the signing key |
@@ -338,7 +338,7 @@ The demo authenticates clients with API keys and signs with a JWK file. Producti
 
 Testing runs in three layers.
 
-1. **Deterministic suites:** 102 Java, 66 trust-client and 31 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal and notification).
+1. **Deterministic suites:** 102 Java, 67 trust-client and 33 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal and notification).
 2. **Live end-to-end suites:** wallet-core against public issuers and verifiers through a running trust service.
 3. **UI tests:** Playwright on the Expo web build, and the same app in Expo Go on an Android emulator (Hermes).
 

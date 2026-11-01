@@ -8,7 +8,8 @@ const PKI = new URL('./fixtures/pki/', import.meta.url);
 const pem = (n: string) => readFileSync(new URL(`${n}.pem`, PKI), 'utf8');
 const b64 = (n: string) => pem(n).replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
 const enc = (o: unknown) => bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify(o)));
-const ISSUER = 'https://issuer.example';
+// The rp fixture's SAN is verifier.example, so it may sign this issuer's metadata.
+const ISSUER = 'https://verifier.example';
 
 function sign(header: object, payload: object, key: string): string {
   const input = `${enc(header)}.${enc(payload)}`;
@@ -17,9 +18,10 @@ function sign(header: object, payload: object, key: string): string {
 }
 
 const metadata = { credential_issuer: ISSUER, credential_endpoint: `${ISSUER}/credential`, credential_configurations_supported: { pid: { format: 'dc+sd-jwt' } } };
-const signedMd = (over: { typ?: string; sub?: string; signer?: string; x5c?: string[]; exp?: number } = {}) =>
+const signedMd = (over: { typ?: string; sub?: string; signer?: string; x5c?: string[]; exp?: number; issuer?: string } = {}) =>
   sign({ alg: 'ES256', typ: over.typ ?? 'openidvci-issuer-metadata+jwt', x5c: over.x5c ?? [b64(over.signer ?? 'rp')] },
-    { ...metadata, sub: over.sub ?? ISSUER, iat: Math.floor(Date.now() / 1000), ...(over.exp ? { exp: over.exp } : {}) }, over.signer ?? 'rp');
+    { ...metadata, credential_issuer: over.issuer ?? ISSUER, sub: over.sub ?? ISSUER, iat: Math.floor(Date.now() / 1000), ...(over.exp ? { exp: over.exp } : {}) },
+    over.signer ?? 'rp');
 
 function client(serve: { jwt?: string }, signed: 'off' | 'verify' | 'require') {
   const accepts: string[] = [];
@@ -60,13 +62,23 @@ describe('signed issuer metadata', () => {
     await expect(client({}, 'require').trust.getIssuerMetadata(ISSUER)).rejects.toThrow(/no signed metadata/);
   });
 
-  it('rejects untrusted or self-signed signers, wrong typ, sub and expiry', async () => {
-    const fails = async (jwt: string, re: RegExp) => expect(client({ jwt }, 'verify').trust.getIssuerMetadata(ISSUER)).rejects.toThrow(re);
-    await fails(signedMd({ signer: 'rogue-ds' }), /signer is not trusted/);
+  it('rejects untrusted, unbound or self-signed signers, wrong typ, sub, credential_issuer and expiry', async () => {
+    const fails = async (jwt: string, re: RegExp) => expect(client({ jwt }, 'require').trust.getIssuerMetadata(ISSUER)).rejects.toThrow(re);
+    await fails(signedMd({ signer: 'rogue-ds' }), /not bound to|signer is not trusted/);
+    await fails(signedMd({ signer: 'ds' }), /not bound to/);
+    await fails(signedMd({ issuer: 'https://other.example' }), /credential_issuer .* is not/);
     await fails(signedMd({ signer: 'rp-ca' }), /self-signed/);
     await fails(signedMd({ typ: 'JWT' }), /typ must be openidvci-issuer-metadata\+jwt/);
     await fails(signedMd({ sub: 'https://other.example' }), /sub .* is not/);
     await fails(signedMd({ exp: 1000 }), /expired/);
-    await fails(signedMd({ x5c: [b64('ds')] }), /signature does not verify/);
+    await fails(signedMd({ x5c: [b64('rp-ca'), b64('rp')] }), /self-signed/);
+    await fails(signedMd({ signer: 'ds', x5c: [b64('rp')] }), /signature does not verify/);
+  });
+
+  it('falls back to the JSON form when signed metadata is rejected under verify, as the service does', async () => {
+    const md = await client({ jwt: signedMd({ typ: 'JWT' }) }, 'verify').trust.getIssuerMetadata(ISSUER);
+    expect(md.signedMetadata).toBeNull();
+    expect(md.credentialIssuerMetadata).toEqual(metadata);
+    expect(md.warnings.join()).toMatch(/Signed metadata rejected: .*typ/);
   });
 });

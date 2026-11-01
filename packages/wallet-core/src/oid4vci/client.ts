@@ -10,7 +10,6 @@
  */
 import { bytes, base58Encode, writeVarint, MULTICODEC, type IssuerMetadataResult, type Jwk, type TrustClient, type TrustDecision } from '@vctrust/trust-client';
 import { p256 } from '@noble/curves/nist.js';
-import { inflateSync } from 'fflate';
 import { nowSeconds, randomId, signJwt } from '../crypto/jwt.js';
 import { decryptJwe, encryptJwe, type JweEnc } from '../crypto/jwe.js';
 import { SoftwareKey, type KeyStore, type SigningKey } from '../crypto/keys.js';
@@ -81,6 +80,9 @@ export interface IssuedCredential {
 }
 
 export class IssuanceError extends Error {
+  /** credentials of the same offer issued before this failure; store or discard them */
+  issued: IssuedCredential[] = [];
+
   constructor(message: string, readonly code?: string, readonly status?: number, readonly report?: VerificationReport) {
     super(message);
     this.name = 'IssuanceError';
@@ -341,7 +343,15 @@ export class IssuanceSession {
 
   private async issueAll(token: TokenResponse, anonymous: boolean): Promise<IssuedCredential[]> {
     const out: IssuedCredential[] = [];
-    for (const c of this.configurations) out.push(await this.issueOne(c.id, c.config, token, anonymous));
+    for (const c of this.configurations) {
+      try {
+        out.push(await this.issueOne(c.id, c.config, token, anonymous));
+      } catch (e) {
+        // Credentials already issued for this offer travel with the error, so the caller can still store or discard them.
+        if (e instanceof IssuanceError) e.issued = out;
+        throw e;
+      }
+    }
     return out;
   }
 
@@ -416,10 +426,12 @@ export class IssuanceSession {
       const algs = t?.proof_signing_alg_values_supported as string[] | undefined;
       return !algs || algs.includes('ES256');
     };
-    if (!types || types.jwt) {
-      if (!algsOk(types?.jwt)) throw new IssuanceError(`The issuer accepts jwt proofs signed with ${JSON.stringify(types!.jwt!.proof_signing_alg_values_supported)}; this wallet signs with ES256`, 'invalid_proof');
-      return { jwt: [await this.proof(holder, config, nonce, anonymous, holderDid)] };
+    if (!types || (types.jwt && algsOk(types.jwt))) return { jwt: [await this.proof(holder, config, nonce, anonymous, holderDid)] };
+    if (types.attestation && this.client.opts.attester && algsOk(types.attestation)) {
+      this.checkKeyProtection(types.attestation);
+      return { attestation: [await this.client.opts.attester.keyAttestation([holder.publicJwk], nonce)] };
     }
+    if (types.jwt) throw new IssuanceError(`The issuer accepts jwt proofs signed with ${JSON.stringify(types.jwt.proof_signing_alg_values_supported)}; this wallet signs with ES256`, 'invalid_proof');
     if (types.attestation) {
       if (!this.client.opts.attester) throw new IssuanceError('The issuer accepts only key attestation proofs and no wallet provider is configured', 'key_attestation_required');
       if (!algsOk(types.attestation)) throw new IssuanceError('The issuer does not accept ES256 key attestations', 'invalid_proof');
@@ -506,8 +518,9 @@ export class IssuanceSession {
     if (contentType !== 'application/jwt') throw new IssuanceError('The issuer answered without encryption although an encrypted response was requested', 'invalid_encryption_parameters');
     const key = sealed.responseKey;
     const { header, plaintext } = decryptJwe((await r.text()).trim(), (peer) => key.ecdh(peer));
-    const data = header.zip === 'DEF' ? inflateSync(plaintext) : plaintext;
-    return JSON.parse(bytes.utf8Decode(data)) as Record<string, unknown>;
+    // No zip was requested, so none is accepted (§8.2: absent zip → no compression); this also rules out inflation bombs.
+    if (header.zip !== undefined) throw new IssuanceError(`The issuer compressed the response (zip ${String(header.zip)}) although no compression was requested`, 'invalid_encryption_parameters');
+    return JSON.parse(bytes.utf8Decode(plaintext)) as Record<string, unknown>;
   }
 
   private async waitDeferred(transactionId: string, interval: number, token: TokenResponse) {

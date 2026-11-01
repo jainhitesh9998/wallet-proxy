@@ -62,7 +62,7 @@ function instanceKeys(keyStore: SoftwareKeyStore): InstanceKeyProvider {
         const k = await keyStore.create();
         await AsyncStorage.setItem(INSTANCE_KEY_PREFIX + as, k.id);
         return k;
-      })());
+      })().catch((e: unknown) => { keys.delete(as); throw e; }));
     }
     return keys.get(as)!;
   };

@@ -23,6 +23,7 @@ function pathsOf(claims: DcqlClaim[]): string[][] {
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const own = (o: Record<string, unknown>, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 const arrayRef = (e: unknown): string | undefined => (isPlainObject(e) && Object.keys(e).length === 1 && typeof e['...'] === 'string' ? e['...'] : undefined);
 
 /**
@@ -53,7 +54,7 @@ export function selectDisclosures(payload: Record<string, unknown>, decoded: Dis
     const seg = claim.path[i] as string | number | null;
     if (typeof seg === 'string') {
       if (!isPlainObject(v)) return null;
-      if (seg in v && seg !== '_sd') return follow(v[seg], claim, i + 1);
+      if (own(v, seg) && seg !== '_sd') return follow(v[seg], claim, i + 1);
       for (const digest of Array.isArray(v._sd) ? v._sd : []) {
         const d = byDigest.get(String(digest));
         if (d?.name === seg) { const below = follow(d.value, claim, i + 1); return below ? [d, ...below] : null; }
@@ -61,13 +62,18 @@ export function selectDisclosures(payload: Record<string, unknown>, decoded: Dis
       return null;
     }
     if (!Array.isArray(v)) return null;
+    // Elements as the holder's claims have them: digests without a disclosure are decoys and do not count as positions.
+    const elements = v.flatMap((e): Array<{ d?: Disclosure; value: unknown }> => {
+      const ref = arrayRef(e);
+      if (ref === undefined) return [{ value: e }];
+      const d = byDigest.get(ref);
+      return d ? [{ d, value: d.value }] : [];
+    });
     const found: Disclosure[] = [];
     let matched = false;
-    for (const idx of seg === null ? v.keys() : [seg]) {
-      const e = v[idx];
-      const d = byDigest.get(arrayRef(e) ?? '');
-      const below = follow(d ? d.value : e, claim, i + 1);
-      if (below) { matched = true; if (d) found.push(d); found.push(...below); }
+    for (const el of seg === null ? elements : elements.slice(seg, seg + 1)) {
+      const below = follow(el.value, claim, i + 1);
+      if (below) { matched = true; if (el.d) found.push(el.d); found.push(...below); }
     }
     return matched ? found : null;
   };

@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { createPrivateKey, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { deflateRawSync } from 'node:zlib';
 import { bytes, createTrustClient, decodeJws, parseCertificate } from '@vctrust/trust-client';
 import { decryptJwe, disclosureDigest, encryptJwe, evaluateDcql, IssuanceError, MemoryCredentialStore, PresentationRequestError, presentSdJwt,
   reportPresentationError, resolveAuthorizationRequest, selectDisclosures, decodeDisclosure, SoftwareKey, SoftwareKeyStore, verifierRefusal, Wallet,
@@ -30,7 +31,7 @@ function sdJwt(holder?: SoftwareKey, opts: { signer?: string; typ?: string } = {
   const top = [disclosure('s1', 'given_name', 'Erika'), disclosure('s2', 'family_name', 'Mustermann'),
     disclosure('s3', 'address', { locality: 'Berlin', _sd: [disclosureDigest(street)] })];
   const payload = { iss: 'https://issuer.example', vct: 'urn:eudi:pid:1', iat: Math.floor(Date.now() / 1000), _sd_alg: 'sha-256',
-    _sd: top.map(disclosureDigest), nationalities: nat.map((d) => ({ '...': disclosureDigest(d) })), ...(holder ? { cnf: { jwk: holder.publicJwk } } : {}) };
+    _sd: top.map(disclosureDigest), nationalities: [{ '...': 'decoy-digest-without-a-disclosure' }, ...nat.map((d) => ({ '...': disclosureDigest(d) }))], ...(holder ? { cnf: { jwk: holder.publicJwk } } : {}) };
   const jwt = es256({ alg: 'ES256', typ: opts.typ ?? 'dc+sd-jwt', x5c: [b64(pem(opts.signer ?? 'rp'))] }, payload, opts.signer ?? 'rp');
   return `${jwt}~${[...top, street, ...nat].join('~')}~`;
 }
@@ -41,15 +42,15 @@ const ISSUER = 'https://issuer.example';
 
 interface MockIssuer { fetch: typeof fetch; notifications: string[]; requests: { contentType: string; body: Record<string, unknown> }[] }
 
-function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credential: (holderJwk: Record<string, unknown>) => string;
-  proofTypes?: Record<string, unknown>; tokenAuthMethods?: string[] }): MockIssuer {
+function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credential: (holderJwk: Record<string, unknown>, configId: string) => string;
+  proofTypes?: Record<string, unknown>; tokenAuthMethods?: string[]; zip?: boolean }): MockIssuer {
   const issuerKey = SoftwareKey.generate();
   const notifications: string[] = [];
   const requests: MockIssuer['requests'] = [];
   const metadata: Record<string, unknown> = {
     credential_issuer: ISSUER, credential_endpoint: `${ISSUER}/credential`, nonce_endpoint: `${ISSUER}/nonce`, notification_endpoint: `${ISSUER}/notification`,
-    credential_configurations_supported: { pid: { format: 'dc+sd-jwt', vct: 'urn:eudi:pid:1', cryptographic_binding_methods_supported: ['jwk'],
-      proof_types_supported: opts.proofTypes ?? { jwt: { proof_signing_alg_values_supported: ['ES256'] } } } },
+    credential_configurations_supported: Object.fromEntries(['pid', 'pid2'].map((id) => [id, { format: 'dc+sd-jwt', vct: 'urn:eudi:pid:1',
+      cryptographic_binding_methods_supported: ['jwk'], proof_types_supported: opts.proofTypes ?? { jwt: { proof_signing_alg_values_supported: ['ES256'] } } }])),
     ...(opts.requestEnc ? { credential_request_encryption: { jwks: { keys: [{ ...issuerKey.publicJwk, alg: 'ECDH-ES', use: 'enc', kid: 'req-key' }] },
       enc_values_supported: ['A128GCM'], encryption_required: true } } : {}),
     ...(opts.responseEnc ? { credential_response_encryption: { alg_values_supported: ['ECDH-ES'], enc_values_supported: ['A256GCM'], encryption_required: true } } : {}),
@@ -77,9 +78,13 @@ function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credent
       const proofs = body.proofs as { jwt?: string[]; attestation?: string[] };
       const holderJwk = proofs.jwt ? decodeJws(proofs.jwt[0]!).header.jwk as Record<string, unknown>
         : (decodeJws(proofs.attestation![0]!).payload.attested_keys as Record<string, unknown>[])[0]!;
-      const answer = { credentials: [{ credential: opts.credential(holderJwk) }], notification_id: 'n-1' };
+      const answer = { credentials: [{ credential: opts.credential(holderJwk, String(body.credential_configuration_id)) }], notification_id: 'n-1' };
       const re = body.credential_response_encryption as { jwk: never; enc: JweEnc } | undefined;
-      if (re) return new Response(encryptJwe(bytes.utf8Encode(JSON.stringify(answer)), re.jwk, re.enc), { headers: { 'Content-Type': 'application/jwt' } });
+      if (re) {
+        const plain = bytes.utf8Encode(JSON.stringify(answer));
+        return new Response(opts.zip ? encryptJwe(new Uint8Array(deflateRawSync(plain)), re.jwk, re.enc, { zip: 'DEF' }) : encryptJwe(plain, re.jwk, re.enc),
+          { headers: { 'Content-Type': 'application/jwt' } });
+      }
       return Response.json(answer);
     }
     return new Response('not found', { status: 404 });
@@ -87,8 +92,9 @@ function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credent
   return { fetch: f, notifications, requests };
 }
 
-const offer = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify({ credential_issuer: ISSUER, credential_configuration_ids: ['pid'],
-  grants: { 'urn:ietf:params:oauth:grant-type:pre-authorized_code': { 'pre-authorized_code': 'pac' } } }))}`;
+const offerFor = (ids: string[]) => `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify({ credential_issuer: ISSUER,
+  credential_configuration_ids: ids, grants: { 'urn:ietf:params:oauth:grant-type:pre-authorized_code': { 'pre-authorized_code': 'pac' } } }))}`;
+const offer = offerFor(['pid']);
 
 function walletFor(issuer: MockIssuer, extra: Partial<ConstructorParameters<typeof Wallet>[0]> = {}) {
   const trust = createTrustClient({ fetch: issuer.fetch, fallback: { localAnchors: [{ domain: 'credential-issuer', certificate: pem('rp-ca') }] } });
@@ -144,6 +150,19 @@ describe('issuance (OID4VCI 1.0 / HAIP)', () => {
     await expect((await walletFor(rsaOnly).receive(offer)).acceptPreAuthorized()).rejects.toThrow(/signs with ES256/);
   });
 
+  it('refuses compressed responses it did not ask for, falls back to attestation proofs, keeps credentials issued before a failure', async () => {
+    const zipped = mockIssuer({ requestEnc: true, responseEnc: true, zip: true, credential: (jwk) => issueFor(jwk) });
+    await expect((await walletFor(zipped).receive(offer)).acceptPreAuthorized()).rejects.toThrow(/compressed/);
+    const mixed = mockIssuer({ proofTypes: { jwt: { proof_signing_alg_values_supported: ['RS256'] }, attestation: { proof_signing_alg_values_supported: ['ES256'] } },
+      credential: (jwk) => issueFor(jwk) });
+    await (await walletFor(mixed, { attester: demoAttester() }).receive(offer)).acceptPreAuthorized();
+    expect(Object.keys(mixed.requests.find((r) => r.contentType !== 'token')!.body.proofs as object)).toEqual(['attestation']);
+    const partial = mockIssuer({ credential: (jwk, id) => (id === 'pid2' ? issueFor(jwk, { signer: 'rogue-ds' }) : issueFor(jwk)) });
+    const err = await (await walletFor(partial).receive(offerFor(['pid', 'pid2']))).acceptPreAuthorized().catch((e: unknown) => e) as IssuanceError;
+    expect(err.code).toBe('invalid_credential');
+    expect(err.issued.map((c) => c.configurationId)).toEqual(['pid']);
+  });
+
   it('authenticates with the wallet attestation wherever the AS supports it, even when anonymous access is allowed', async () => {
     const issuer = mockIssuer({ tokenAuthMethods: ['attest_jwt_client_auth'], credential: (jwk) => issueFor(jwk) });
     await (await walletFor(issuer, { attester: demoAttester() }).receive(offer)).acceptPreAuthorized();
@@ -173,6 +192,7 @@ describe('minimal disclosure (OpenID4VP §6.4)', () => {
     expect(names([{ path: ['nationalities', 1] }])).toEqual(['[FR]']);
     expect(names([{ path: ['nationalities', null], values: ['FR'] }])).toEqual(['[FR]']);
     expect(names([{ path: ['not_there'] }])).toEqual([]);
+    expect(names([{ path: ['toString'] }])).toEqual([]);
   });
 
   it('presents only the issuer JWT and KB-JWT when no claims are requested; no KB-JWT without cnf', async () => {
@@ -193,6 +213,8 @@ describe('minimal disclosure (OpenID4VP §6.4)', () => {
       claims: [{ id: 'a', path: ['nickname'] }, { id: 'b', path: ['given_name'] }], claim_sets: [['a'], ['b']] }] };
     const r = await evaluateDcql(sets, [mk('x', cred)]);
     expect(r.matches[0]!.claimsFor.x!.map((c) => c.id)).toEqual(['b']);
+    const legacy = { ...mk('l', cred), format: 'vc+sd-jwt' } as StoredCredential;
+    expect((await evaluateDcql({ credentials: [{ id: 'q', format: 'vc+sd-jwt', meta: { vct_values: ['urn:other'] } }] }, [legacy])).satisfied).toBe(false);
   });
 });
 
@@ -231,6 +253,16 @@ describe('verifier trust and error responses (OpenID4VP §5.9.3, §8.2, §8.4)',
     expect(e2.code).toBe('invalid_transaction_data');
     const forged = await resolveAuthorizationRequest(uri('x509_hash:AAAA'), trusted, serve({ ...base, client_id: 'x509_hash:AAAA' })).catch((e: unknown) => e) as PresentationRequestError;
     expect(forged.reportTo).toBeUndefined();
+    const refused = await resolveAuthorizationRequest(uri(), untrusted, serve({ ...base, transaction_data: ['x'] })).catch((e: unknown) => e) as PresentationRequestError;
+    expect(refused.code).toBe('invalid_transaction_data');
+    expect(refused.reportTo).toBeUndefined();                       // never sent to a verifier the wallet does not trust
+  });
+
+  it('binds a decentralized_identifier client to its own DID, not to a DID that merely starts with it', async () => {
+    const did = 'did:web:bank.example';
+    const spoof = (async () => new Response(es256({ alg: 'ES256', typ: 'oauth-authz-req+jwt', kid: `${did}.evil.example#k` },
+      { ...base, client_id: `decentralized_identifier:${did}` }, 'rp'))) as typeof fetch;
+    await expect(resolveAuthorizationRequest(uri(`decentralized_identifier:${did}`), trusted, spoof)).rejects.toThrow(/key of that DID/);
   });
 
   it('needs an ECDH-ES key with alg for direct_post.jwt', async () => {

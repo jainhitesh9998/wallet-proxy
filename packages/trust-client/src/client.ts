@@ -19,7 +19,7 @@ import { SnapshotManager, snapshotRef, type ServiceKeyPolicy, type SnapshotData 
 import { LocalEvaluator, type LocalTrustData, normalizeIdentifier, validateChainOnDevice, type CrlFetchResult } from './evaluation/local.js';
 import { fetchWithTimeout, resolveDidLocally } from './did/resolver.js';
 import { didError, findVerificationMethod } from './did/did.js';
-import { fetchIssuerMetadata, verifySignedMetadata, type SignedMetadataCheck } from './metadata/issuer.js';
+import { fetchAuthorizationServerMetadata, fetchIssuerMetadata, verifySignedMetadata, type SignedMetadataCheck } from './metadata/issuer.js';
 import { applyMetadataPolicy } from './metadata/policy.js';
 import { parseCertificate } from './x509/certificate.js';
 import { type LocalAnchor } from './x509/validate.js';
@@ -419,9 +419,17 @@ export class TrustClient {
         // The proxy is not trusted with signed metadata: verify the issuer's JWT here and use its claims.
         if (!result.signedMetadata) throw new TrustServiceError(`${credentialIssuer} serves no signed metadata, which this ecosystem requires`, 422, 'signed_metadata_required');
         const v = await verifySignedMetadata(result.signedMetadata, credentialIssuer, check);
-        const policy = result.trust.entity?.metadataPolicy?.openid_credential_issuer;
-        result.credentialIssuerMetadata = policy ? applyMetadataPolicy(v.metadata, policy) : v.metadata;
+        const policy = result.trust.entity?.metadataPolicy;
+        result.credentialIssuerMetadata = policy?.openid_credential_issuer ? applyMetadataPolicy(v.metadata, policy.openid_credential_issuer) : v.metadata;
         result.signedMetadataVerified = true;
+        // The authorization servers are the signed metadata's, fetched from them directly (the wallet talks to them next anyway).
+        const servers = Array.isArray(v.metadata.authorization_servers) && v.metadata.authorization_servers.length
+          ? (v.metadata.authorization_servers as string[]) : [credentialIssuer];
+        result.authorizationServers = {};
+        for (const as of servers) {
+          const asMd = await fetchAuthorizationServerMetadata(as, this.fetchFn, this.config.timeoutMs ?? 8000);
+          result.authorizationServers[as] = policy?.oauth_authorization_server ? applyMetadataPolicy(asMd, policy.oauth_authorization_server) : asMd;
+        }
       }
       await this.cache.set(metadataKey(credentialIssuer, check), result, Math.max(60_000, new Date(result.expiresAt).getTime() - Date.now()));
       return result;

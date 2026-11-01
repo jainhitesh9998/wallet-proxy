@@ -8,7 +8,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as Clipboard from 'expo-clipboard';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { EntityView, TrustDecision } from '@vctrust/trust-client';
-import type { IssuanceSession, IssuedCredential } from '@vctrust/wallet-core';
+import { IssuanceError, type IssuanceSession, type IssuedCredential } from '@vctrust/wallet-core';
 import { authCallbacks, OAUTH_CHANNEL, type RootStack } from '../navigation';
 import { useWallet } from '../wallet/WalletContext';
 import { credentialView, issuerView, pickLocale } from '../wallet/display';
@@ -157,6 +157,11 @@ export default function ReceiveScreen({ navigation, route }: NativeStackScreenPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.params?.nonce]);
 
+  /** A later credential of the offer failed: the ones issued before it are still kept. */
+  const keepIssued = async (e: unknown) => {
+    if (e instanceof IssuanceError && e.issued.length) await finish(e.issued).catch(() => undefined);
+  };
+
   const finish = async (creds: IssuedCredential[]) => {
     await wallet.store(creds);
     await refresh();
@@ -170,6 +175,7 @@ export default function ReceiveScreen({ navigation, route }: NativeStackScreenPr
       await finish(await session.acceptPreAuthorized(session.txCode ? txCode.trim() : undefined));
     } catch (e) {
       setError(errMsg(e));
+      await keepIssued(e);
     } finally {
       setBusy(undefined); setProgress(undefined);
     }
@@ -183,6 +189,7 @@ export default function ReceiveScreen({ navigation, route }: NativeStackScreenPr
       await finish(await session.completeAuthorization(url.trim()));
     } catch (e) {
       setError(errMsg(e));
+      await keepIssued(e);
       completing.current = false;
     } finally {
       setBusy(undefined); setProgress(undefined);

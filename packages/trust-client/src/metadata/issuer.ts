@@ -52,8 +52,9 @@ const SYMMETRIC = /^(none|HS\d+)$/i;
 
 /**
  * Verifies {@code openidvci-issuer-metadata+jwt}: typ, an asymmetric alg, x5c key resolution with a signer certificate
- * that is not self-signed (HAIP §4.1), the signature, {@code sub} = the Credential Issuer, {@code iat}, expiry, and
- * trust in the signer. Returns the metadata parameters.
+ * that is not self-signed (HAIP §4.1) and is bound to the issuer (a SAN dNSName equal to its host, or a SAN URI equal
+ * to its identifier), the signature, {@code sub} and {@code credential_issuer} = the Credential Issuer, {@code iat},
+ * expiry, and trust in the signer. Returns the metadata parameters.
  */
 export async function verifySignedMetadata(jwt: string, credentialIssuer: string, check: SignedMetadataCheck): Promise<{ metadata: Record<string, unknown>; signedBy: string }> {
   const jws = decodeJws<Record<string, unknown>>(jwt);
@@ -63,10 +64,17 @@ export async function verifySignedMetadata(jwt: string, credentialIssuer: string
   if (x5c.length === 0) throw new Error('Signed metadata carries no x5c; its signer cannot be established');
   const leaf = parseCertificate(x5c[0]!);
   if (leaf.subject === leaf.issuer) throw new Error('Signed metadata is signed with a self-signed certificate');
+  const host = new URL(credentialIssuer).hostname.toLowerCase();
+  if (!leaf.dnsNames.some((n) => n.toLowerCase() === host) && !leaf.uriNames.some((u) => normalize(u) === normalize(credentialIssuer))) {
+    throw new Error(`Signed metadata signer ${leaf.subject} is not bound to ${credentialIssuer} (no matching SAN)`);
+  }
   if (!leaf.publicKey || !verifyJws(jws, leaf.publicKey)) throw new Error('Signed metadata signature does not verify');
   const p = jws.payload;
   if (typeof p.sub !== 'string' || normalize(p.sub) !== normalize(credentialIssuer)) throw new Error(`Signed metadata sub ${String(p.sub)} is not ${credentialIssuer}`);
   if (typeof p.iat !== 'number') throw new Error('Signed metadata has no iat');
+  if (typeof p.credential_issuer !== 'string' || normalize(p.credential_issuer) !== normalize(credentialIssuer)) {
+    throw new Error(`Signed metadata credential_issuer ${String(p.credential_issuer)} is not ${credentialIssuer}`);
+  }
   const now = Math.floor((check.now ?? new Date()).getTime() / 1000);
   if (typeof p.exp === 'number' && p.exp < now) throw new Error(`Signed metadata expired at ${new Date(p.exp * 1000).toISOString()}`);
   const trusted = await check.trustSigner(x5c);
@@ -95,10 +103,17 @@ export async function fetchIssuerMetadata(credentialIssuer: string, f: typeof fe
     if (type !== 'application/jwt') return (await r.json()) as Record<string, unknown>;
     if (!signed) throw new Error('Issuer answered with signed metadata that was not asked for');
     const jwt = (await r.text()).trim();
-    const v = await verifySignedMetadata(jwt, credentialIssuer, signed);
-    signedMetadata = jwt;
-    signedBy = v.signedBy;
-    return v.metadata;
+    try {
+      const v = await verifySignedMetadata(jwt, credentialIssuer, signed);
+      signedMetadata = jwt;
+      signedBy = v.signedBy;
+      return v.metadata;
+    } catch (e) {
+      // Signed metadata whose signer cannot be trusted is rejected (§12.2.3); like the service, fall back to the JSON form.
+      if (signed.mode === 'require') throw e;
+      warnings.push(`Signed metadata rejected: ${(e as Error).message}`);
+      return get(url, false);
+    }
   };
   let md = await get(wellKnownInserted(credentialIssuer, 'openid-credential-issuer'), !!signed);
   if (signed?.mode === 'require' && md && !signedMetadata) throw new Error(`${credentialIssuer} serves no signed metadata, which this ecosystem requires`);

@@ -27,7 +27,7 @@ export type InstanceKeyProvider = (authorizationServer: string) => Promise<Signi
 export function instanceKeyPerServer(create: () => Promise<SigningKey>): InstanceKeyProvider {
   const keys = new Map<string, Promise<SigningKey>>();
   return (as) => {
-    if (!keys.has(as)) keys.set(as, create());
+    if (!keys.has(as)) keys.set(as, create().catch((e: unknown) => { keys.delete(as); throw e; }));
     return keys.get(as)!;
   };
 }
