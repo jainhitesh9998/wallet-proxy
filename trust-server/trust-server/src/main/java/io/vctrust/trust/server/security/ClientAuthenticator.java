@@ -20,6 +20,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Enumeration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
@@ -35,7 +36,8 @@ import java.util.regex.Pattern;
  *   <li>nothing: the anonymous profile when enabled.</li>
  * </ol>
  * The certificate comes from this server's TLS connector, or from a proxy header that is believed only when the
- * TCP peer (not any forwarded address) is a trusted proxy.
+ * TCP peer (not any forwarded address) is a trusted proxy. The caller's address for rate limits follows the same
+ * rule ({@link #clientAddress}).
  */
 public class ClientAuthenticator {
 
@@ -58,13 +60,17 @@ public class ClientAuthenticator {
     private final TrustProperties.Auth cfg;
     private final AccessTokenVerifier tokens;
     private final List<Cidr> trustedProxies = new ArrayList<>();
+    private final List<Cidr> forwardingProxies = new ArrayList<>();
 
     public ClientAuthenticator(ClientRegistry clients, TrustProperties.Auth cfg, AccessTokenVerifier tokens) {
         this.clients = clients;
         this.cfg = cfg;
         this.tokens = cfg.getOauth().isEnabled() ? tokens : null;
         for (String p : cfg.getMtls().getTrustedProxies()) {
-            trustedProxies.add(Cidr.parse(p));
+            trustedProxies.add(Cidr.parse(p, "trust.auth.mtls.trusted-proxies"));
+        }
+        for (String p : cfg.getTrustedProxies()) {
+            forwardingProxies.add(Cidr.parse(p, "trust.auth.trusted-proxies"));
         }
     }
 
@@ -151,11 +157,45 @@ public class ClientAuthenticator {
 
     /** The TCP peer: unwraps request wrappers such as the forwarded-header filter, which substitute a spoofable address. */
     static String peerAddress(HttpServletRequest request) {
+        return unwrap(request).getRemoteAddr();
+    }
+
+    private static ServletRequest unwrap(ServletRequest request) {
         ServletRequest r = request;
         while (r instanceof ServletRequestWrapper w) {
             r = w.getRequest();
         }
-        return r.getRemoteAddr();
+        return r;
+    }
+
+    /**
+     * The caller's address, for per-address rate limits: the TCP peer, or — when the peer is one of
+     * {@code trust.auth.trusted-proxies} — the nearest {@code X-Forwarded-For} entry (from the right) that is not a
+     * trusted proxy itself, i.e. the address the outermost trusted proxy saw. Forwarded headers from any other peer are
+     * ignored, whatever {@code server.forward-headers-strategy} says.
+     */
+    public String clientAddress(HttpServletRequest request) {
+        ServletRequest raw = unwrap(request);
+        String peer = raw.getRemoteAddr();
+        if (!(raw instanceof HttpServletRequest http) || forwardingProxies.stream().noneMatch(c -> c.contains(peer))) {
+            return peer;
+        }
+        List<String> hops = new ArrayList<>();
+        for (Enumeration<String> e = http.getHeaders("X-Forwarded-For"); e != null && e.hasMoreElements(); ) {
+            for (String hop : e.nextElement().split(",")) {
+                hops.add(hop.trim());
+            }
+        }
+        for (int i = hops.size() - 1; i >= 0; i--) {
+            String hop = hops.get(i);
+            if (!hop.matches("[0-9A-Fa-f:.]+")) {
+                return peer; // not an address our proxy wrote
+            }
+            if (forwardingProxies.stream().noneMatch(c -> c.contains(hop))) {
+                return hop;
+            }
+        }
+        return peer;
     }
 
     /** URL-encoded PEM (a literal '+' kept), plain PEM, or base64 DER. */
@@ -176,7 +216,7 @@ public class ClientAuthenticator {
 
     /** An address block such as {@code 10.0.0.0/8}, {@code fd00::/8} or a single address. */
     record Cidr(byte[] network, int bits) {
-        static Cidr parse(String s) {
+        static Cidr parse(String s, String property) {
             String[] parts = s.trim().split("/");
             try {
                 if (parts.length > 2 || !parts[0].matches("[0-9A-Fa-f:.]+")) {
@@ -189,7 +229,7 @@ public class ClientAuthenticator {
                 }
                 return new Cidr(addr, bits);
             } catch (UnknownHostException | NumberFormatException e) {
-                throw new IllegalArgumentException("trust.auth.mtls.trusted-proxies: invalid address or CIDR " + s);
+                throw new IllegalArgumentException(property + ": invalid address or CIDR " + s);
             }
         }
 

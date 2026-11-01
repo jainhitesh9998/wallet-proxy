@@ -2,7 +2,7 @@
 import type { TrustClient } from '@vctrust/trust-client';
 import type { KeyStore } from './crypto/keys.js';
 import type { WalletAttester } from './oauth/attestation.js';
-import { Oid4vciClient, type IssuanceSession, type IssuedCredential, type IssuerClientRegistration } from './oid4vci/client.js';
+import { Oid4vciClient, type CredentialInstance, type IssuanceSession, type IssuedCredential, type IssuerClientRegistration } from './oid4vci/client.js';
 import type { CredentialStore, StoredCredential } from './store/credentials.js';
 import { verifyCredential, type VerificationReport } from './verify/index.js';
 import { PresentationRequestError, resolveAuthorizationRequest, type AuthorizationRequest, type VerifierView } from './oid4vp/request.js';
@@ -21,6 +21,25 @@ export interface WalletOptions {
   dpop?: 'auto' | 'never';
   walletAttestation?: 'auto' | 'always' | 'never';
   keyAttestation?: 'auto' | 'always' | 'never';
+  /** Instances to request of each credential from issuers that support batch issuance (see {@link Oid4vciOptions.batchSize}). */
+  batchSize?: number;
+}
+
+/** A stored credential's instances; the first is the credential itself. */
+export function instancesOf(c: IssuedCredential): CredentialInstance[] {
+  return [c, ...(c.instances ?? [])];
+}
+
+/**
+ * The instance to present next: the least-presented one among those that verified, so each verifier sees a different
+ * instance until the batch is used up (OID4VCI §15.4). {@code fresh} is false once every instance has been shown.
+ */
+export function pickInstance(c: IssuedCredential): { index: number; instance: CredentialInstance; fresh: boolean; total: number } {
+  const all = instancesOf(c);
+  const usable = all.map((x, i) => ({ x, i })).filter(({ x }) => x.report?.valid !== false);
+  const pool = usable.length ? usable : all.map((x, i) => ({ x, i }));
+  const best = pool.reduce((a, b) => ((b.x.presentations ?? 0) < (a.x.presentations ?? 0) ? b : a));
+  return { index: best.i, instance: best.x, fresh: !best.x.presentations, total: all.length };
 }
 
 export class Wallet {
@@ -49,6 +68,16 @@ export class Wallet {
     return issued;
   }
 
+  /** Asks the issuer again for a pending (deferred) credential; once issued it replaces the pending entry and the issuer hears credential_accepted. */
+  async retrieveDeferred(id: string): Promise<StoredCredential> {
+    const c = await this.opts.credentials.get(id);
+    if (!c?.pending) throw new Error(`No pending credential ${id}`);
+    const next = await this.oid4vci.retrieveDeferred(c);
+    if (next.pending) await this.opts.credentials.save(next);
+    else await this.store([next]);
+    return next;
+  }
+
   /** The user declined freshly issued credentials: nothing is stored and the issuers hear credential_deleted. */
   async discard(issued: IssuedCredential[]): Promise<void> {
     for (const c of issued) await c.notify?.('credential_deleted', 'Declined by the user');
@@ -62,14 +91,28 @@ export class Wallet {
     return this.opts.credentials.remove(id);
   }
 
-  /** Re-runs verification (signature, validity, status, current issuer trust) for a stored credential. */
+  /**
+   * Re-runs verification (signature, validity, status, current issuer trust) for a stored credential and each of its
+   * instances (every instance has its own status entry, HAIP §6.1); returns the first instance's report.
+   */
   async reverify(id: string): Promise<VerificationReport> {
     const c = await this.opts.credentials.get(id);
     if (!c) throw new Error(`No credential ${id}`);
-    const report = await verifyCredential(c.format, c.credential, { trust: this.opts.trust, fetch: this.f, holderJwk: c.holderJwk,
-      holderDid: c.holderDid, credentialIssuer: c.credentialIssuer });
-    await this.opts.credentials.save({ ...c, report });
+    const verify = (x: CredentialInstance) => verifyCredential(c.format, x.credential, { trust: this.opts.trust, fetch: this.f, holderJwk: x.holderJwk,
+      holderDid: x.holderDid, credentialIssuer: c.credentialIssuer });
+    const report = await verify(c);
+    const instances: CredentialInstance[] = [];
+    for (const x of c.instances ?? []) instances.push({ ...x, report: await verify(x) });
+    await this.opts.credentials.save({ ...c, report, ...(c.instances ? { instances } : {}) });
     return report;
+  }
+
+  /** Counts a presentation of one instance, so the next presentation picks another. */
+  async markPresented(id: string, index: number): Promise<void> {
+    const c = await this.opts.credentials.get(id);
+    if (!c) return;
+    const bump = <T extends CredentialInstance>(x: T): T => ({ ...x, presentations: (x.presentations ?? 0) + 1 });
+    await this.opts.credentials.save(index === 0 ? bump(c) : { ...c, instances: c.instances?.map((x, i) => (i === index - 1 ? bump(x) : x)) });
   }
 
   async startPresentation(requestUri: string): Promise<PresentationSession> {
@@ -91,12 +134,17 @@ export class PresentationSession {
     if (this.verifier.refusal) throw new PresentationRequestError(this.verifier.refusal, 'access_denied');
     if (!this.dcql.satisfied) throw new Error(this.dcql.reason ?? 'Request cannot be satisfied');
     const selection: PresentationSelection = {};
+    const used: Array<[string, number]> = [];
     for (const id of this.dcql.selected) {
       const m = this.dcql.matches.find((x) => x.query.id === id)!;
-      const credential = m.candidates.find((c) => c.id === choice[id]) ?? m.candidates[0]!;
-      selection[id] = { credential, claims: m.claimsFor[credential.id] ?? m.claims };
+      const stored = m.candidates.find((c) => c.id === choice[id]) ?? m.candidates[0]!;
+      const { index, instance } = pickInstance(stored);
+      selection[id] = { credential: { ...stored, ...instance }, claims: m.claimsFor[stored.id] ?? m.claims };
+      used.push([stored.id, index]);
     }
     const vpToken = await buildVpToken(this.request, selection, this.wallet.opts.keyStore, this.wallet.fetchFn);
+    // Counted before sending: once a presentation may have reached the verifier, its instance is no longer fresh.
+    for (const [id, index] of used) await this.wallet.markPresented(id, index);
     return submitResponse(this.request, { vp_token: vpToken }, this.wallet.fetchFn);
   }
 

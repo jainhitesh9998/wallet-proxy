@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { PresentationRequestError, reportPresentationError, type PresentationSession } from '@vctrust/wallet-core';
+import { pickInstance, PresentationRequestError, reportPresentationError, type PresentationSession } from '@vctrust/wallet-core';
 import type { RootStack } from '../navigation';
 import { useWallet } from '../wallet/WalletContext';
 import { claimNames, credentialView, humanize, nameFor, shortDate } from '../wallet/display';
@@ -14,7 +14,7 @@ import { Button, colors, ErrorBox, Field, Info, KV, Logo, s, Section, TrustLine 
 type Result = { kind: 'shared' | 'declined'; status: number; redirectUri?: string; body?: unknown };
 
 export default function PresentScreen({ route, navigation }: NativeStackScreenProps<RootStack, 'Present'>) {
-  const { wallet } = useWallet();
+  const { wallet, refresh } = useWallet();
   const [input, setInput] = useState(route.params?.uri ?? '');
   const [session, setSession] = useState<PresentationSession>();
   const [choice, setChoice] = useState<Record<string, string>>({});
@@ -57,7 +57,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
   const share = async () => {
     if (!session) return;
     setBusy('share'); setError(undefined);
-    try { finish('shared', await session.respond(choice)); } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); }
+    try { finish('shared', await session.respond(choice)); } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); void refresh(); }
   };
   const decline = async () => {
     if (!session) return;
@@ -137,6 +137,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
                   {m.candidates.map((c, i) => {
                     const cv = credentialView(c);
                     const on = choice[m.query.id] === c.id;
+                    const next = pickInstance(c);
                     return (
                       <Pressable key={c.id} testID={`candidate-${m.query.id}-${i}`} accessibilityRole="radio" accessibilityState={{ checked: on }}
                         onPress={() => setChoice({ ...choice, [m.query.id]: c.id })} style={[s.row, { paddingVertical: 4 }]}>
@@ -144,6 +145,12 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
                         <View style={{ flex: 1 }}>
                           <Text style={s.label}>{cv.title} <Text style={s.hint}>· {cv.issuer}</Text></Text>
                           <Text style={s.hint}>issued {shortDate(c.issuedAt)} · {c.report?.trust?.decision ?? '?'} ({c.report?.trust?.source ?? '-'})</Text>
+                          {next.total > 1 ? (
+                            <Text testID={`instance-${m.query.id}-${i}`} style={[s.hint, !next.fresh && { color: colors.amber }]}>
+                              {next.fresh ? `Instance ${next.index + 1} of ${next.total}, not shown to any verifier before`
+                                : `All ${next.total} instances were presented before: this verifier could link this presentation to an earlier one`}
+                            </Text>
+                          ) : null}
                         </View>
                       </Pressable>
                     );

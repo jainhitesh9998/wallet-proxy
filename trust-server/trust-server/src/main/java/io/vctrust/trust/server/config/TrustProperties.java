@@ -250,6 +250,11 @@ public class TrustProperties {
         private OAuth oauth = new OAuth();
         private Mtls mtls = new Mtls();
         private RateLimit rateLimit = new RateLimit();
+        /**
+         * Peer addresses or CIDRs of reverse proxies whose {@code X-Forwarded-For} names the caller (for per-address
+         * rate limits). Forwarded headers from any other peer are ignored.
+         */
+        private List<String> trustedProxies = new ArrayList<>();
 
         public boolean isApiKeys() { return apiKeys; }
         public void setApiKeys(boolean v) { this.apiKeys = v; }
@@ -259,6 +264,8 @@ public class TrustProperties {
         public void setMtls(Mtls v) { this.mtls = v; }
         public RateLimit getRateLimit() { return rateLimit; }
         public void setRateLimit(RateLimit v) { this.rateLimit = v; }
+        public List<String> getTrustedProxies() { return trustedProxies; }
+        public void setTrustedProxies(List<String> v) { this.trustedProxies = v; }
     }
 
     /** JWT access tokens (RFC 9068) from an authorization server, e.g. obtained with the client credentials grant. */

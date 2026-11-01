@@ -37,13 +37,20 @@ public record TrustQuery(EntityRole role, Subject subject, Context context) {
      * @param credentialType     doctype, vct or VC type
      * @param responseUri        OpenID4VP response_uri / redirect_uri, checked against x509_san_dns
      * @param trustedAuthorities DCQL {@code trusted_authorities} to match the subject against
+     * @param credentialTypes    every specific type a W3C VC asserts; each must be authorized
      */
     public record Context(String protocol, String credentialFormat, String credentialType, Instant time,
-                          String responseUri, List<TrustedAuthority> trustedAuthorities) {
+                          String responseUri, List<TrustedAuthority> trustedAuthorities, List<String> credentialTypes) {
         public static final Context EMPTY = new Context(null, null, null, null, null, List.of());
 
         public Context {
             trustedAuthorities = trustedAuthorities == null ? List.of() : List.copyOf(trustedAuthorities);
+            credentialTypes = credentialTypes == null ? List.of() : List.copyOf(credentialTypes);
+        }
+
+        public Context(String protocol, String credentialFormat, String credentialType, Instant time,
+                       String responseUri, List<TrustedAuthority> trustedAuthorities) {
+            this(protocol, credentialFormat, credentialType, time, responseUri, trustedAuthorities, List.of());
         }
     }
 

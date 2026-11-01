@@ -180,6 +180,8 @@ export interface TrustQuery {
     protocol?: 'oid4vci' | 'oid4vp' | string;
     credentialFormat?: string;
     credentialType?: string;
+    /** every specific type a W3C VC asserts (beyond VerifiableCredential); each must be authorized */
+    credentialTypes?: string[];
     time?: string;
     responseUri?: string;
     trustedAuthorities?: TrustedAuthorityQuery[];

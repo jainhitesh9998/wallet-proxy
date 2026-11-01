@@ -1,5 +1,5 @@
 /** Local, standards-based DID resolution (did:key, did:jwk, did:web) used when the trust service is unavailable. */
-import { base64UrlDecode, utf8Decode } from '../util/bytes.js';
+import { base64UrlDecode, concatBytes, utf8Decode } from '../util/bytes.js';
 import { DID_ERRORS, didErrorResult, parseDid } from './did.js';
 import { decodeMultibase, publicKeyFromMulticodec } from './keys.js';
 import { readVarint, MULTICODEC } from './multibase.js';
@@ -106,11 +106,48 @@ export async function resolveDidLocally(did: string, opts: LocalDidResolverOptio
   }
 }
 
-export async function fetchWithTimeout(f: typeof fetch, url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+/** Largest response body read from a party or the service (CRLs, status lists, DID documents, metadata). */
+export const MAX_BODY_BYTES = 10 * 1024 * 1024;
+
+/**
+ * fetch with a deadline that covers the body as well, and a size cap. The body is read here — streamed where the
+ * platform allows, so an oversized one is cut off — and handed back as a buffered Response: a caller's .json(),
+ * .text() or .arrayBuffer() can then neither hang on a slow body nor take an unbounded one.
+ */
+export async function fetchWithTimeout(f: typeof fetch, url: string, init: RequestInit, timeoutMs: number, maxBytes = MAX_BODY_BYTES): Promise<Response> {
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
   const timer = setTimeout(() => ctrl?.abort(), timeoutMs);
   try {
-    return await f(url, { ...init, signal: ctrl?.signal });
+    const res = await f(url, { ...init, signal: ctrl?.signal });
+    const tooBig = () => new Error(`Response from ${new URL(url).host} is larger than ${maxBytes} bytes`);
+    const declared = Number(res.headers.get('Content-Length') ?? NaN);
+    if (declared > maxBytes) {
+      ctrl?.abort();
+      throw tooBig();
+    }
+    let body: Uint8Array;
+    const reader = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : undefined;
+    if (reader) {
+      const parts: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw tooBig();
+        }
+        parts.push(value);
+      }
+      body = concatBytes(...parts);
+    } else {
+      // No body streams (React Native): bounded by the deadline and checked after reading.
+      body = new Uint8Array(await res.arrayBuffer());
+      if (body.length > maxBytes) throw tooBig();
+    }
+    const nullBody = res.status === 204 || res.status === 205 || res.status === 304;
+    return new Response(nullBody ? null : (body as Uint8Array<ArrayBuffer>), { status: res.status, statusText: res.statusText, headers: res.headers });
   } finally {
     clearTimeout(timer);
   }

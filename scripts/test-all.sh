@@ -10,6 +10,6 @@ scripts/start-trust-server.sh
 echo "== evaluator parity (service /evaluate vs device-side evaluation over the signed snapshot)"
 (cd packages/trust-client && LIVE=1 npx vitest run test/parity.live.test.ts)
 echo "== live end-to-end (wallet-core against live issuers/verifier + trust server; decisions on the device)"
-(cd packages/wallet-core && LIVE=1 npx vitest run test/animo.live.test.ts test/animo-present.live.test.ts test/animo-sdjwt.live.test.ts test/animo-authcode.live.test.ts test/animo-deferred.live.test.ts \
+(cd packages/wallet-core && LIVE=1 npx vitest run test/animo.live.test.ts test/animo-present.live.test.ts test/animo-sdjwt.live.test.ts test/animo-authcode.live.test.ts test/animo-deferred.live.test.ts test/animo-batch.live.test.ts \
   test/mosip.live.test.ts test/privacy.live.test.ts test/relay.live.test.ts test/fallback.live.test.ts test/samples.live.test.ts)
 if [ -f e2e/playwright.config.ts ]; then echo "== wallet UI (Playwright)"; (cd e2e && npx playwright test); fi

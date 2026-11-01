@@ -4,7 +4,7 @@
  * issuer, or through the service's relay); every list is verified here, so neither a relay nor a cache is trusted:
  * signature, signer, subject, freshness, and for Bitstring lists the list credential's proof, issuer and purpose.
  */
-import { gunzipSync, unzlibSync } from 'fflate';
+import { Gunzip, Unzlib } from 'fflate';
 import type { FetchedStatusList } from '../client.js';
 import { coseX5chain, parseCoseSign1 } from '../credential/extract.js';
 import { coseAlgToJose, verifySignature } from '../crypto/verify.js';
@@ -26,6 +26,30 @@ export interface StatusResult {
 }
 
 export type StatusListFetcher = (uri: string, accept: string) => Promise<FetchedStatusList>;
+
+/** Largest decompressed status list accepted (128 M one-bit entries); anything bigger is refused, not inflated. */
+export const MAX_STATUS_LIST_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Inflates a status list without letting a small input expand without bound: the input goes in 1 KiB at a time, so
+ * each step yields at most about 1 MiB, and inflation stops once the output passes the limit.
+ */
+export function inflateCapped(data: Uint8Array, kind: 'zlib' | 'gzip', max = MAX_STATUS_LIST_BYTES): Uint8Array {
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  const stream = kind === 'gzip' ? new Gunzip() : new Unzlib();
+  stream.ondata = (chunk) => {
+    total += chunk.length;
+    if (total > max) throw new Error(`Status list is larger than ${max} bytes when decompressed`);
+    parts.push(chunk);
+  };
+  if (data.length === 0) throw new Error('Status list is empty');
+  for (let i = 0; i < data.length; i += 1024) stream.push(data.subarray(i, Math.min(i + 1024, data.length)), i + 1024 >= data.length);
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
 
 /** The credential a status belongs to, and how to fetch and trust its status list. */
 export interface StatusContext {
@@ -106,7 +130,7 @@ export async function checkTokenStatus(ref: TokenStatusReference, ctx: StatusCon
     if (list.exp !== undefined && list.exp < now) return unknown(`Status list token expired at ${new Date(list.exp * 1000).toISOString()}`);
     if (list.iat !== undefined && list.iat > now + 300) return unknown('Status list token is issued in the future');
     if (![1, 2, 4, 8].includes(list.bits)) return unknown(`Status list has an invalid bits value ${list.bits}`);
-    const data = unzlibSync(list.lst);
+    const data = inflateCapped(list.lst, 'zlib');
     const pos = ref.idx * list.bits;
     if ((pos >> 3) >= data.length) return unknown('Status index out of bounds');
     const value = (data[pos >> 3]! >> (pos & 7)) & ((1 << list.bits) - 1);
@@ -219,7 +243,7 @@ export async function checkBitstringStatus(entry: Record<string, unknown>, ctx: 
     if (from && new Date(String(from)).getTime() > now.getTime() + 300_000) return unknown('Status list is not yet valid');
     const encoded = subject.encodedList;
     if (typeof encoded !== 'string') return unknown('Status list has no encodedList');
-    const raw = gunzipSync(base64UrlDecode(encoded.startsWith('u') ? encoded.slice(1) : encoded));
+    const raw = inflateCapped(base64UrlDecode(encoded.startsWith('u') ? encoded.slice(1) : encoded), 'gzip');
     const bitPos = index * size;
     if (((bitPos + size - 1) >> 3) >= raw.length) return unknown('Status index out of bounds');
     let value = 0;

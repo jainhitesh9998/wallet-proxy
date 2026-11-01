@@ -18,11 +18,12 @@ public final class Dtos {
     public record EvaluateRequest(String role, Subject subject, Context context) {
         public TrustQuery toQuery() {
             Subject s = subject == null ? new Subject(null, null, null, null) : subject;
-            Context c = context == null ? new Context(null, null, null, null, null, null) : context;
+            Context c = context == null ? new Context(null, null, null, null, null, null, null) : context;
             return new TrustQuery(parseRole(role), new TrustQuery.Subject(s.identifier(), s.x5c(), s.jwk(), s.kid()),
                     new TrustQuery.Context(c.protocol(), c.credentialFormat(), c.credentialType(), c.time(), c.responseUri(),
                             c.trustedAuthorities() == null ? List.of() : c.trustedAuthorities().stream()
-                                    .map(t -> new TrustQuery.TrustedAuthority(t.type(), t.values())).toList()));
+                                    .map(t -> new TrustQuery.TrustedAuthority(t.type(), t.values())).toList(),
+                            c.credentialTypes()));
         }
     }
 
@@ -30,7 +31,7 @@ public final class Dtos {
     }
 
     public record Context(String protocol, String credentialFormat, String credentialType, Instant time,
-                          String responseUri, List<TrustedAuthority> trustedAuthorities) {
+                          String responseUri, List<TrustedAuthority> trustedAuthorities, List<String> credentialTypes) {
     }
 
     public record TrustedAuthority(String type, List<String> values) {

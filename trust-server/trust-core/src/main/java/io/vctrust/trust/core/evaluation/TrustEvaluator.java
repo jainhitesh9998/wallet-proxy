@@ -102,7 +102,9 @@ public class TrustEvaluator {
         Instant now = query.context().time() != null ? query.context().time() : clock.instant();
         RegistrySnapshot snap = registry.snapshot();
         List<Reason> reasons = new ArrayList<>();
+        // ids: proven by the presented key material; identIds: only claimed by the identifier (see step 5)
         Set<Identifier> ids = new LinkedHashSet<>();
+        Set<Identifier> identIds = new LinkedHashSet<>();
         EntityRole role = query.role();
         String format = CredentialFormats.canonical(query.context().credentialFormat());
         String type = query.context().credentialType();
@@ -116,21 +118,21 @@ public class TrustEvaluator {
             if (role == EntityRole.VERIFIER) {
                 ClientId cid = ClientId.parse(identifier);
                 clientIdEvidence = new LinkedHashMap<>(Map.of("clientId", cid.raw(), "prefix", cid.prefix()));
-                ids.add(Identifier.of(IdentifierType.CLIENT_ID, cid.raw()));
+                identIds.add(Identifier.of(IdentifierType.CLIENT_ID, cid.raw()));
                 switch (cid.prefix()) {
                     case "x509_san_dns" -> {
                         expectedDns = cid.value();
-                        ids.add(Identifier.of(IdentifierType.DNS, cid.value()));
+                        identIds.add(Identifier.of(IdentifierType.DNS, cid.value()));
                     }
                     case "x509_hash" -> {
                         expectedHash = cid.value();
-                        ids.add(Identifier.of(IdentifierType.X509_SHA256, cid.value()));
+                        identIds.add(Identifier.of(IdentifierType.X509_SHA256, cid.value()));
                     }
-                    case "decentralized_identifier" -> ids.add(Identifier.did(cid.value()));
-                    case "redirect_uri", "origin" -> ids.add(Identifier.url(cid.value()));
+                    case "decentralized_identifier" -> identIds.add(Identifier.did(cid.value()));
+                    case "redirect_uri", "origin" -> identIds.add(Identifier.url(cid.value()));
                     case "openid_federation" -> {
-                        ids.add(Identifier.of(IdentifierType.FEDERATION_ENTITY, cid.value()));
-                        ids.add(Identifier.url(cid.value()));
+                        identIds.add(Identifier.of(IdentifierType.FEDERATION_ENTITY, cid.value()));
+                        identIds.add(Identifier.url(cid.value()));
                     }
                     case "verifier_attestation" -> reasons.add(Reason.info("client_id.verifier_attestation",
                             "Verifier attestation JWT must be validated by the wallet; matching registry by client_id only"));
@@ -144,7 +146,7 @@ public class TrustEvaluator {
                             "Client identifier prefix " + cid.prefix() + " requires the request object's x5c chain"));
                 }
             } else {
-                ids.addAll(identifiersFor(identifier));
+                identIds.addAll(identifiersFor(identifier));
             }
         }
 
@@ -185,9 +187,8 @@ public class TrustEvaluator {
         if (!chain.isEmpty()) {
             X509Certificate leaf = chain.getFirst();
             String leafHash = Certificates.sha256Thumbprint(leaf);
+            // The leaf's hash is a pin (the caller verifies with the leaf's key); its other names count only once the chain validates.
             ids.add(Identifier.of(IdentifierType.X509_SHA256, leafHash));
-            Certificates.subjectKeyIdentifier(leaf).ifPresent(s -> ids.add(Identifier.of(IdentifierType.X509_SKI, s)));
-            ids.add(Identifier.of(IdentifierType.X509_SUBJECT, leaf.getSubjectX500Principal().getName()));
             if (expectedHash != null && !expectedHash.equals(leafHash)) {
                 reasons.add(Reason.error("client_id.x509_hash_mismatch",
                         "x509_hash client_id does not match the SHA-256 hash of the leaf certificate"));
@@ -202,7 +203,9 @@ public class TrustEvaluator {
                     .withRevocation(revocation, profile.requireRevocationStatus()).withRelaxedProfiles(profile.allowRelaxedProfiles()));
             if (x509.valid()) {
                 validatedAnchor = x509.anchor();
-                // SAN names are authenticated once the chain validates; use them to find the registered entity.
+                // The leaf's names are authenticated once the chain validates; use them to find the registered entity.
+                Certificates.subjectKeyIdentifier(leaf).ifPresent(s -> ids.add(Identifier.of(IdentifierType.X509_SKI, s)));
+                ids.add(Identifier.of(IdentifierType.X509_SUBJECT, leaf.getSubjectX500Principal().getName()));
                 Certificates.dnsNames(leaf).forEach(n -> ids.add(Identifier.of(IdentifierType.DNS, n)));
                 Certificates.uriNames(leaf).forEach(u -> ids.add(Identifier.url(u)));
                 reasons.add(Reason.info("x509.valid", "Certificate chain validates to trust anchor "
@@ -224,31 +227,55 @@ public class TrustEvaluator {
             }
         }
 
-        // 5. Registry candidates
-        Set<TrustedEntity> candidates = new LinkedHashSet<>();
-        List<String> matched = new ArrayList<>();
-        for (Identifier id : ids) {
+        // 5. Registry candidates. With key material (x5c, DID kid, JWK) the entity must be bound to that key: by the
+        // key's own identifiers, a pinned leaf certificate or the anchor's entity. The identifier alone is only a claim
+        // then; it counts when the validated anchor is not tied to one entity and belongs to the identified entity's
+        // framework. Without key material the identifier is a registry lookup (issuer metadata, or a key the caller
+        // fetched from that identifier).
+        boolean keyMaterial = !chain.isEmpty() || (query.subject().kid() != null && query.subject().kid().startsWith("did:"))
+                || (query.subject().jwk() != null && !query.subject().jwk().isEmpty());
+        Map<TrustedEntity, String> byIdentifier = new LinkedHashMap<>();
+        for (Identifier id : identIds) {
             for (TrustedEntity e : snap.byIdentifier(id)) {
-                if (profile.accepts(e.frameworkId())) {
-                    candidates.add(e);
-                    matched.add(id.toString());
-                }
+                if (profile.accepts(e.frameworkId())) byIdentifier.putIfAbsent(e, id.toString());
             }
         }
-        for (X509Certificate c : chain) {
-            snap.byCertificate(c).stream().filter(e -> profile.accepts(e.frameworkId())).forEach(e -> {
-                candidates.add(e);
-                matched.add("X509_CERT:" + Certificates.sha256Thumbprint(c));
-            });
-        }
-        if (validatedAnchor != null && validatedAnchor.entityId() != null) {
-            snap.entity(validatedAnchor.entityId()).filter(e -> profile.accepts(e.frameworkId())).ifPresent(e -> {
-                candidates.add(e);
-                matched.add("ANCHOR:" + e.id());
-            });
+        Set<TrustedEntity> candidates = new LinkedHashSet<>();
+        List<String> matched = new ArrayList<>();
+        if (!keyMaterial) {
+            byIdentifier.forEach((e, how) -> { if (candidates.add(e)) matched.add(how); });
+        } else {
+            for (Identifier id : ids) {
+                for (TrustedEntity e : snap.byIdentifier(id)) {
+                    if (profile.accepts(e.frameworkId()) && candidates.add(e)) matched.add(id.toString());
+                }
+            }
+            if (!chain.isEmpty()) {
+                X509Certificate leaf = chain.getFirst();
+                snap.byCertificate(leaf).stream().filter(e -> profile.accepts(e.frameworkId())).forEach(e -> {
+                    if (candidates.add(e)) matched.add("X509_CERT:" + Certificates.sha256Thumbprint(leaf));
+                });
+            }
+            if (validatedAnchor != null && validatedAnchor.entityId() != null) {
+                snap.entity(validatedAnchor.entityId()).filter(e -> profile.accepts(e.frameworkId())).ifPresent(e -> {
+                    if (candidates.add(e)) matched.add("ANCHOR:" + e.id());
+                });
+            } else if (validatedAnchor != null && validatedAnchor.frameworkId() != null) {
+                String fw = validatedAnchor.frameworkId();
+                byIdentifier.forEach((e, how) -> {
+                    if (fw.equals(e.frameworkId()) && candidates.add(e)) matched.add(how + " (anchor framework)");
+                });
+            }
+            List<TrustedEntity> unbound = byIdentifier.keySet().stream()
+                    .filter(e -> !candidates.contains(e) && (role == null || e.hasRole(role))).toList();
+            if (!unbound.isEmpty()) {
+                reasons.add(Reason.error("identifier.unbound", "The identifier names '" + unbound.getFirst().displayName("en")
+                        + "', but the presented " + (chain.isEmpty() ? "key" : "certificate") + " is not bound to it"));
+            }
         }
         if (candidates.isEmpty() && sources != null) {
-            for (Identifier id : ids) {
+            // On-demand discovery follows the same rule: the key's identifiers, or the identifier without key material.
+            for (Identifier id : keyMaterial ? ids : identIds) {
                 Optional<TrustedEntity> od = sources.resolveOnDemand(id, profile.frameworks());
                 if (od.isPresent() && profile.accepts(od.get().frameworkId())) {
                     candidates.add(od.get());
@@ -280,13 +307,21 @@ public class TrustEvaluator {
                         + (entity.validUntil() != null && now.isAfter(entity.validUntil()) ? " (expired)" : "")));
             }
             if (format != null || type != null) {
-                boolean ok = entity.isAuthorizedFor(format, type, profile.strictAuthorization());
+                // Every type the credential asserts must be authorized (a W3C VC may carry several).
+                Set<String> types = new LinkedHashSet<>();
+                if (type != null) types.add(type);
+                types.addAll(query.context().credentialTypes());
+                String denied = types.isEmpty()
+                        ? (entity.isAuthorizedFor(format, null, profile.strictAuthorization()) ? null : "")
+                        : types.stream().filter(t -> !entity.isAuthorizedFor(format, t, profile.strictAuthorization())).findFirst().orElse(null);
+                boolean ok = denied == null;
                 authz = new AuthorizationEvidence(format, type, ok, entity.authorizations().isEmpty()
                         ? (profile.strictAuthorization() ? "strict: no authorizations registered" : "unconstrained")
                         : "registered authorizations");
                 if (!ok) {
-                    reasons.add(Reason.error("entity.not_authorized", "Entity '" + entity.id() + "' is not authorized for "
-                            + (format == null ? "" : format + " ") + (type == null ? "" : type)));
+                    String what = denied.isEmpty() ? (type == null ? "" : type) : denied;
+                    reasons.add(Reason.error("entity.not_authorized", ("Entity '" + entity.id() + "' is not authorized for "
+                            + (format == null ? "" : format + " ") + what).trim()));
                 }
             }
         }

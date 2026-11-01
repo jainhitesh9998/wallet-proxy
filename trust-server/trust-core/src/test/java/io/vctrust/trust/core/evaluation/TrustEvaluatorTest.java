@@ -114,6 +114,59 @@ class TrustEvaluatorTest {
         assertThat(d.evidence().authorization().authorized()).isTrue();
     }
 
+    // ---- identifiers are bound to the presented key (mirrors packages/trust-client/test/binding.test.ts) ----
+
+    @Test
+    void certificateOutsideTheAnchorsCannotClaimARegisteredDnsName() {
+        TestPki.Issued rogueCa = TestPki.rootCa("CN=Rogue RP CA,C=UT");
+        TestPki.Issued fake = TestPki.leaf("CN=Verifier,C=UT", rogueCa, List.of("verifier.example"), null);
+        var d = evaluator.evaluate(new TrustQuery(EntityRole.VERIFIER, new TrustQuery.Subject("x509_san_dns:verifier.example",
+                List.of(Certificates.toBase64(fake.certificate()), Certificates.toBase64(rogueCa.certificate())), null, null),
+                new TrustQuery.Context("oid4vp", null, null, null, "https://verifier.example/cb", List.of())), all);
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.reasons()).extracting(Reason::code).contains("identifier.unbound");
+        assertThat(d.entity()).isNull();
+        var real = evaluator.evaluate(new TrustQuery(EntityRole.VERIFIER, new TrustQuery.Subject("x509_san_dns:verifier.example",
+                List.of(Certificates.toBase64(rp.certificate())), null, null),
+                new TrustQuery.Context("oid4vp", null, null, null, "https://verifier.example/cb", List.of())), all);
+        assertThat(real.decision()).as(real.reasons().toString()).isEqualTo(Decision.TRUSTED);
+    }
+
+    @Test
+    void issuerIdentifierIsNotBoundToAnUnanchoredChain() {
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://issuer.example/utopia", List.of(Certificates.toBase64(rogueDs.certificate())), null,
+                "mso_mdoc", "org.iso.18013.5.1.mDL", all);
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.reasons()).extracting(Reason::code).contains("identifier.unbound");
+    }
+
+    @Test
+    void identifierOfAnotherEntityThanTheAnchorsIsRefused() {
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://other.example", List.of(Certificates.toBase64(ds.certificate())), null,
+                "mso_mdoc", "org.iso.18013.5.1.mDL", all);
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.reasons()).extracting(Reason::code).contains("identifier.unbound");
+    }
+
+    @Test
+    void didIdentifierSignedWithAKeyOfAnotherDidIsRefused() {
+        String other = "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9";
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, DID_KEY, List.of(), other + "#0", "ldp_vc", null, all);
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.reasons()).extracting(Reason::code).contains("identifier.unbound");
+    }
+
+    @Test
+    void everyAssertedTypeMustBeAuthorized() {
+        var strict = new ClientProfile("v", "Verifier", Set.of(), true, true, false);
+        var q = new TrustQuery(EntityRole.CREDENTIAL_ISSUER, new TrustQuery.Subject("https://issuer.example/utopia", List.of(), null, null),
+                new TrustQuery.Context("oid4vci", "mso_mdoc", "org.iso.18013.5.1.mDL", null, null, List.of(),
+                        List.of("org.iso.18013.5.1.mDL", "eu.europa.ec.eudi.pid.1")));
+        var d = evaluator.evaluate(q, strict);
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.reasons()).anyMatch(r -> r.code().equals("entity.not_authorized") && r.message().contains("eu.europa.ec.eudi.pid.1"));
+    }
+
     @Test
     void mdocChainFromUnknownIacaIsUnknown() {
         var d = eval(EntityRole.CREDENTIAL_ISSUER, null, List.of(Certificates.toBase64(rogueDs.certificate())), null,

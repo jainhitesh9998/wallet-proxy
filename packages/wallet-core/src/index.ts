@@ -10,15 +10,15 @@ export type { WalletProviderConfig, InstanceKeyProvider } from './oauth/attestat
 export { resolveCredentialOffer, PRE_AUTH } from './oid4vci/offer.js';
 export type { CredentialOffer, TxCode } from './oid4vci/offer.js';
 export { Oid4vciClient, IssuanceSession, IssuanceError, bindingDid } from './oid4vci/client.js';
-export type { Oid4vciOptions, IssuedCredential, IssuerClientRegistration, NotificationEvent } from './oid4vci/client.js';
-export { verifyCredential, verifyMdoc, verifyLdpVc, verifySdJwtVc } from './verify/index.js';
+export type { Oid4vciOptions, IssuedCredential, CredentialInstance, IssuerClientRegistration, NotificationEvent } from './oid4vci/client.js';
+export { verifyCredential, verifyMdoc, verifyLdpVc, verifySdJwtVc, holderBinding } from './verify/index.js';
 export type { VerificationReport, Check, CheckStatus, VerifyOptions } from './verify/index.js';
 export { createDocumentLoader, canonize } from './verify/jsonld.js';
 export { parseSdJwt, decodeDisclosure, reconstruct, disclosureDigest } from './verify/sdjwt.js';
 export { issuerSignedItems, coseKeyToJwk, jwkToCoseKey, sigStructure, displayValue } from './verify/mdoc.js';
 export { checkBitstringStatus, checkTokenStatus } from './verify/status.js';
 export type { StatusContext, StatusListReference, StatusResult, ListCredentialVerifier } from './verify/status.js';
-export { Wallet, PresentationSession } from './wallet.js';
+export { Wallet, PresentationSession, instancesOf, pickInstance } from './wallet.js';
 export type { WalletOptions } from './wallet.js';
 export { MemoryCredentialStore, KeyValueCredentialStore } from './store/credentials.js';
 export type { CredentialStore, StoredCredential } from './store/credentials.js';

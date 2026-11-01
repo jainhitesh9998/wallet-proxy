@@ -30,7 +30,7 @@ Toolchains are user-local in `~/.local/tools` (JDK 21, Maven 3.9, Node 22). Load
 them permanent, add `source ~/.local/tools/env.sh` to your shell profile.
 
 ```sh
-scripts/build.sh                 # mvn install (102 tests) + npm install + TS builds
+scripts/build.sh                 # mvn install (112 tests) + npm install + TS builds
 scripts/start-trust-server.sh    # http://localhost:8090 — loads live sources (Animo, MOSIP collab, EBSI on demand)
 open http://localhost:8090/swagger-ui.html
 curl -H 'Authorization: Bearer demo-wallet-key' 'localhost:8090/api/v1/issuers?format=mso_mdoc'
@@ -148,7 +148,8 @@ await p.respond();                         // refused unless an x509 verifier is
 | Animo mDL (mdoc), pre-authorized code | valid + TRUSTED (DS `credo dcs` → Animo IACA, 14 digests, device key) |
 | Animo mDL with DPoP, PIN (`tx_code`), and DPoP + wallet attestation + key attestation (HAIP) | valid + TRUSTED |
 | Animo mDL, authorization code flow: PAR + PKCE + DPoP + wallet attestation, RFC 9207 `iss` (HAIP mandatory flow) | valid + TRUSTED |
-| Animo mDL with deferred issuance (`202` + `transaction_id`, deferred endpoint polled with DPoP) | valid + TRUSTED after about 60 s |
+| Animo mDL with deferred issuance (`202` + `transaction_id`, deferred endpoint polled with DPoP), and stored as pending then retrieved later | valid + TRUSTED after about 60 s |
+| Animo mDL and EUDI PID SD-JWT, batch issuance of 3 (also with one key attestation for all keys) | 3 instances, each valid + TRUSTED; consecutive presentations use different instances, both `ResponseVerified` |
 | Key attestation demanding `iso_18045_high` when the wallet attests less | correctly refused before the request |
 | Animo EUDI PID SD-JWT VC issuance | valid + TRUSTED (x5c chain) |
 | OpenID4VP to Animo verifier: `x509_hash`, `request_uri`, DCQL, `direct_post.jwt` (mdoc DeviceResponse and SD-JWT+KB) | verifier TRUSTED; verifier reports `ResponseVerified` |
@@ -156,7 +157,7 @@ await p.respond();                         // refused unless an x509 verifier is
 | MOSIP Land VCDM 2.0 JSON-LD | **refused**: signature invalid (issuer defect, confirmed with Digital Bazaar's reference library); the issuer is sent `credential_failure` |
 | MOSIP mock mDL | valid + TRUSTED under a `relaxProfile` anchor for the wallet profile, with ISO deviations reported; the strict verifier profile refuses it |
 | Decisions on the device (default): mDL issue + present to Animo, MOSIP JSON-LD issue | TRUSTED from the snapshot; the trust service saw only snapshot/JWKS requests; MOSIP DID document from the snapshot |
-| Parity: 29 queries (including revoked / on-hold / CRL-covered Document Signers and a relaxed sandbox anchor) × lenient and strict client profiles, service `/evaluate` vs device | identical decisions, error reasons, entities and per-certificate revocation status |
+| Parity: 33 queries (including revoked / on-hold / CRL-covered Document Signers and a relaxed sandbox anchor) × lenient and strict client profiles, service `/evaluate` vs device | identical decisions, error reasons, entities and per-certificate revocation status |
 | Revocation, live: Animo mDL Document Signer against the Animo IACA CRL (`https://playground.animo.id/crl`) | `GOOD`; the CRL comes from the snapshot, with no other request to the service or to Animo |
 | Relays, live: the Animo CRL and a MOSIP status list fetched through the service | verified on the device; MOSIP's list is signed with a key missing from its DID document, so its status is reported as unknown |
 | Trust service outage, `service` mode with a synced snapshot (mDL issue + present, JSON-LD issue) | works; trust from `snapshot`; recovers afterwards |

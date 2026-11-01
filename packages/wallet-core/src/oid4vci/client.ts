@@ -17,7 +17,7 @@ import { Dpop } from '../oauth/dpop.js';
 import { createPkce, type Pkce } from '../oauth/pkce.js';
 import type { WalletAttester } from '../oauth/attestation.js';
 import { PRE_AUTH, resolveCredentialOffer, type CredentialOffer, type TxCode } from './offer.js';
-import { verifyCredential, type VerificationReport } from '../verify/index.js';
+import { holderBinding, verifyCredential, type VerificationReport } from '../verify/index.js';
 
 export interface IssuerClientRegistration {
   /** Pre-registered client_id at this issuer's AS (when not using wallet attestation). */
@@ -53,30 +53,56 @@ export interface Oid4vciOptions {
   rejectInvalid?: boolean;
   /** Credential request / response encryption: only when the issuer requires it (default) or whenever it offers it. */
   encryption?: 'required' | 'preferred';
+  /**
+   * Instances to request of each credential when the issuer supports batch issuance (OID4VCI §8.2,
+   * batch_credential_issuance; HAIP §4: in one request, not consecutive ones). Each is bound to its own key, so
+   * presenting a different instance to every verifier keeps them from linking the presentations (OID4VCI §15.4).
+   * Capped at the issuer's batch_size. Default 1.
+   */
+  batchSize?: number;
 }
 
 /** OID4VCI §11 notification events. */
 export type NotificationEvent = 'credential_accepted' | 'credential_failure' | 'credential_deleted';
 
-export interface IssuedCredential {
-  id: string;
-  format: string;
-  configurationId: string;
+/** One copy of a credential and the holder key it is bound to. */
+export interface CredentialInstance {
   credential: unknown;
-  credentialIssuer: string;
   holderKeyId: string;
   holderJwk: Jwk;
   holderDid?: string;
+  report?: VerificationReport;
+  /** times this instance has been presented */
+  presentations?: number;
+}
+
+/** A credential; with batch issuance, the first of its instances (the others are in {@link instances}). */
+export interface IssuedCredential extends CredentialInstance {
+  id: string;
+  format: string;
+  configurationId: string;
+  credentialIssuer: string;
   issuedAt: string;
   display?: Record<string, unknown>;
   claimMetadata?: unknown[];
-  report?: VerificationReport;
-  pending?: { transactionId: string; interval: number };
+  /**
+   * Deferred issuance still running (OID4VCI §9), with what {@link Oid4vciClient.retrieveDeferred} needs to ask again:
+   * the access token (DPoP-bound when dpopKeyId is set) and the holder keys of the requested instances.
+   */
+  pending?: { transactionId: string; interval: number; accessToken?: string; tokenType?: string; dpopKeyId?: string; holderKeyIds?: string[] };
+  /** Further instances of the same credential from a batch, each bound to its own key. */
+  instances?: CredentialInstance[];
   /**
    * Notifies the issuer (OID4VCI §11) — {@link Wallet.store} sends credential_accepted, {@link Wallet.discard}
    * credential_deleted. Not enumerable, so it is never persisted.
    */
   notify?: (event: NotificationEvent, description?: string) => Promise<void>;
+}
+
+/** A freshly created holder key and the DID it is bound with, if the configuration binds to a DID. */
+interface Holder {
+  key: SigningKey;
+  did?: string;
 }
 
 export class IssuanceError extends Error {
@@ -116,6 +142,16 @@ export class Oid4vciClient {
     const offer = await resolveCredentialOffer(offerInput, this.f);
     const metadata = await this.opts.trust.getIssuerMetadata(offer.credential_issuer);
     return new IssuanceSession(this, offer, metadata);
+  }
+
+  /**
+   * Asks the deferred credential endpoint again for a credential stored as pending (OID4VCI §9). Returns it still
+   * pending while the issuer is not done; the issued credential keeps the pending one's id.
+   */
+  async retrieveDeferred(pending: IssuedCredential): Promise<IssuedCredential> {
+    const metadata = await this.opts.trust.getIssuerMetadata(pending.credentialIssuer);
+    return new IssuanceSession(this, { credential_issuer: metadata.credentialIssuer, credential_configuration_ids: [pending.configurationId],
+      grants: { authorization_code: {} } }, metadata).retrieveDeferred(pending);
   }
 
   /** Wallet-initiated issuance (no offer): authorization code flow for the given configurations. */
@@ -355,17 +391,26 @@ export class IssuanceSession {
     return out;
   }
 
+  /** Instances to request per credential: the wallet's wish, capped at the issuer's batch_size (1 without batch support). */
+  private batchSize(): number {
+    const max = (this.im.batch_credential_issuance as { batch_size?: unknown } | undefined)?.batch_size;
+    if (typeof max !== 'number' || !Number.isInteger(max) || max < 2) return 1;
+    return Math.max(1, Math.min(Math.floor(this.client.opts.batchSize ?? 1), max));
+  }
+
   private async issueOne(configId: string, config: Record<string, unknown>, token: TokenResponse, anonymous: boolean): Promise<IssuedCredential> {
-    const opts = this.client.opts;
-    const holder = await opts.keyStore.create();
     const binding = (config.cryptographic_binding_methods_supported as string[] | undefined) ?? ['jwk'];
-    const holderDid = bindingDid(holder.publicJwk, binding);
+    const holders: Holder[] = [];
+    for (let i = this.batchSize(); i > 0; i--) {
+      const key = await this.client.opts.keyStore.create();
+      holders.push({ key, did: bindingDid(key.publicJwk, binding) });
+    }
     const identifiers = token.authorization_details?.find((d) => d.credential_configuration_id === configId)?.credential_identifiers;
     let nonce = await this.nonce(token);
     let response: Response | undefined;
     let sealed: SealedRequest | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const proofs = await this.proofs(holder, config, nonce, anonymous, holderDid);
+      const proofs = await this.proofs(holders, config, nonce, anonymous);
       const body: Record<string, unknown> = identifiers?.length
         ? { credential_identifier: identifiers[0], proofs }
         : { credential_configuration_id: configId, proofs };
@@ -383,32 +428,83 @@ export class IssuanceSession {
     if (response!.status === 202 || (payload.transaction_id && !payload.credentials)) {
       payload = await this.waitDeferred(payload.transaction_id!, payload.interval ?? 5, token) ?? payload;
     }
+    return this.complete(configId, config, payload, holders, token);
+  }
+
+  /** Asks again for a credential that was still pending when issuance returned (see {@link Oid4vciClient.retrieveDeferred}). */
+  async retrieveDeferred(c: IssuedCredential): Promise<IssuedCredential> {
+    const p = c.pending;
+    if (!p) throw new IssuanceError('The credential is not pending');
+    if (!p.accessToken) throw new IssuanceError('No access token was kept for this deferred credential; ask the issuer for a new offer', 'invalid_transaction_id');
+    const endpoint = this.im.deferred_credential_endpoint as string | undefined;
+    if (!endpoint) throw new IssuanceError('The issuer has no deferred_credential_endpoint');
+    const keyStore = this.client.opts.keyStore;
+    const binding = (this.configurations[0]!.config.cryptographic_binding_methods_supported as string[] | undefined) ?? ['jwk'];
+    const holders: Holder[] = [];
+    for (const id of p.holderKeyIds ?? [c.holderKeyId]) {
+      const key = await keyStore.get(id);
+      if (!key) throw new IssuanceError(`Holder key ${id} of the deferred credential is gone`);
+      holders.push({ key, did: bindingDid(key.publicJwk, binding) });
+    }
+    if (p.dpopKeyId) {
+      const key = await keyStore.get(p.dpopKeyId);
+      if (!key) throw new IssuanceError('The DPoP key the access token is bound to is gone');
+      this.dpop = new Dpop(key);
+    }
+    const token: TokenResponse = { access_token: p.accessToken, token_type: p.tokenType ?? 'Bearer' };
+    const sealed = this.seal({ transaction_id: p.transactionId });
+    const r = await this.credentialPost(endpoint, sealed, token);
+    if (r.status === 202) {
+      const body = (await this.open(r, sealed)) as { interval?: number };
+      return { ...c, pending: { ...p, interval: body.interval ?? p.interval } };
+    }
+    if (!r.ok) throw await this.error('Deferred credential request', r);
+    const done = await this.complete(c.configurationId, this.configurations[0]!.config, await this.open(r, sealed), holders, token);
+    done.id = c.id;
+    return done;
+  }
+
+  /** Pairs the received credentials with their keys, verifies them and refuses invalid ones (or records a pending issuance). */
+  private async complete(configId: string, config: Record<string, unknown>, payload: { credentials?: Array<{ credential: unknown }>; credential?: unknown;
+    transaction_id?: string; interval?: number; notification_id?: string }, holders: Holder[], token: TokenResponse): Promise<IssuedCredential> {
+    const opts = this.client.opts;
+    const format = String(config.format);
     const meta = (config.credential_metadata ?? {}) as Record<string, unknown>;
+    const received = payload.credentials?.map((c) => c.credential) ?? (payload.credential !== undefined ? [payload.credential] : []);
+    const [primary, ...more] = received.length ? bindInstances(format, received, holders) : [{ credential: undefined, holderKeyId: holders[0]!.key.id,
+      holderJwk: holders[0]!.key.publicJwk, ...(holders[0]!.did ? { holderDid: holders[0]!.did } : {}) }];
     const issued: IssuedCredential = {
-      id: randomId(), format: String(config.format), configurationId: configId, credential: payload.credentials?.[0]?.credential ?? payload.credential,
-      credentialIssuer: this.metadata.credentialIssuer, holderKeyId: holder.id, holderJwk: holder.publicJwk, holderDid, issuedAt: new Date().toISOString(),
+      id: randomId(), format, configurationId: configId, ...primary!, credentialIssuer: this.metadata.credentialIssuer, issuedAt: new Date().toISOString(),
       display: ((meta.display ?? config.display) as Record<string, unknown>[] | undefined)?.[0],
       claimMetadata: (meta.claims ?? config.claims) as unknown[] | undefined,
+      ...(more.length ? { instances: more } : {}),
     };
     if (!issued.credential && payload.transaction_id) {
-      issued.pending = { transactionId: payload.transaction_id, interval: payload.interval ?? 5 };
+      issued.pending = { transactionId: payload.transaction_id, interval: payload.interval ?? 5, accessToken: token.access_token, tokenType: token.token_type,
+        ...(this.dpop && token.token_type?.toLowerCase() === 'dpop' ? { dpopKeyId: this.dpop.key.id } : {}), holderKeyIds: holders.map((h) => h.key.id) };
       return issued;
     }
     const endpoint = this.im.notification_endpoint as string | undefined;
+    // One notification_id covers every credential of the response (OID4VCI §8.3, §11).
     const notificationId = payload.notification_id;
     const notify = endpoint && notificationId ? async (event: NotificationEvent, description?: string) => {
       await this.credentialPost(endpoint, json({ notification_id: notificationId, event, ...(description ? { event_description: description } : {}) }), token)
         .catch(() => undefined);
     } : undefined;
     if (opts.verify !== false) {
-      issued.report = await verifyCredential(issued.format, issued.credential, { trust: opts.trust, fetch: this.client.fetchFn,
-        holderJwk: holder.publicJwk, holderDid, credentialIssuer: issued.credentialIssuer });
-      if (!payload.credentials && payload.credential) issued.report.checks.unshift({ id: 'oid4vci.response', label: 'Credential response',
+      // Every instance is verified with its own key; one bad instance refuses the batch.
+      for (const instance of [issued, ...more]) {
+        instance.report = await verifyCredential(format, instance.credential, { trust: opts.trust, fetch: this.client.fetchFn,
+          holderJwk: instance.holderJwk, holderDid: instance.holderDid, credentialIssuer: issued.credentialIssuer });
+      }
+      if (!payload.credentials && payload.credential) issued.report!.checks.unshift({ id: 'oid4vci.response', label: 'Credential response',
         status: 'warn', detail: 'Pre-1.0 response shape (credential instead of credentials[])' });
-      const reason = opts.rejectInvalid === false ? undefined : rejection(issued);
-      if (reason) {
+      const refused = opts.rejectInvalid === false ? undefined
+        : [issued, ...more].map((x) => ({ report: x.report!, reason: rejection(format, x.report!) })).find((x) => x.reason);
+      if (refused) {
+        const reason = more.length ? `${refused.reason} (one of ${more.length + 1} batch instances)` : refused.reason!;
         await notify?.('credential_failure', reason.slice(0, 200));
-        throw new IssuanceError(reason, 'invalid_credential', undefined, issued.report);
+        throw new IssuanceError(reason, 'invalid_credential', undefined, refused.report);
       }
     }
     if (notify) Object.defineProperty(issued, 'notify', { value: notify, enumerable: false });
@@ -416,29 +512,47 @@ export class IssuanceSession {
   }
 
   /**
-   * The proofs member (OID4VCI §8.2, Appendix F): a {@code jwt} proof signed with ES256 (it must be among the
-   * issuer's proof_signing_alg_values_supported), or — when the issuer accepts only key attestations — an
-   * {@code attestation} proof: the key attestation itself, bound to the c_nonce.
+   * The proofs member (OID4VCI §8.2, Appendix F) for one or more holder keys (a batch): {@code jwt} proofs signed
+   * with ES256 (it must be among the issuer's proof_signing_alg_values_supported), or — when the issuer accepts only
+   * key attestations — an {@code attestation} proof: one key attestation of all the keys, bound to the c_nonce.
    */
-  private async proofs(holder: SigningKey, config: Record<string, unknown>, nonce: string | undefined, anonymous: boolean, holderDid?: string): Promise<Record<string, string[]>> {
+  private async proofs(holders: Holder[], config: Record<string, unknown>, nonce: string | undefined, anonymous: boolean): Promise<Record<string, string[]>> {
     const types = config.proof_types_supported as Record<string, Record<string, unknown>> | undefined;
     const algsOk = (t?: Record<string, unknown>) => {
       const algs = t?.proof_signing_alg_values_supported as string[] | undefined;
       return !algs || algs.includes('ES256');
     };
-    if (!types || (types.jwt && algsOk(types.jwt))) return { jwt: [await this.proof(holder, config, nonce, anonymous, holderDid)] };
+    const attested = () => this.client.opts.attester!.keyAttestation(holders.map((h) => h.key.publicJwk), nonce);
+    if (!types || (types.jwt && algsOk(types.jwt))) return { jwt: await this.jwtProofs(holders, config, nonce, anonymous) };
     if (types.attestation && this.client.opts.attester && algsOk(types.attestation)) {
       this.checkKeyProtection(types.attestation);
-      return { attestation: [await this.client.opts.attester.keyAttestation([holder.publicJwk], nonce)] };
+      return { attestation: [await attested()] };
     }
     if (types.jwt) throw new IssuanceError(`The issuer accepts jwt proofs signed with ${JSON.stringify(types.jwt.proof_signing_alg_values_supported)}; this wallet signs with ES256`, 'invalid_proof');
     if (types.attestation) {
       if (!this.client.opts.attester) throw new IssuanceError('The issuer accepts only key attestation proofs and no wallet provider is configured', 'key_attestation_required');
       if (!algsOk(types.attestation)) throw new IssuanceError('The issuer does not accept ES256 key attestations', 'invalid_proof');
       this.checkKeyProtection(types.attestation);
-      return { attestation: [await this.client.opts.attester.keyAttestation([holder.publicJwk], nonce)] };
+      return { attestation: [await attested()] };
     }
     throw new IssuanceError(`No supported proof type (issuer offers ${Object.keys(types).join(', ')})`, 'invalid_proof');
+  }
+
+  /**
+   * jwt proofs: one per key, or — with a key attestation — a single proof by the first key whose attestation lists
+   * every key of the batch (HAIP §4.5.1; the issuer then issues one credential per attested key, OID4VCI F.1).
+   */
+  private async jwtProofs(holders: Holder[], config: Record<string, unknown>, nonce: string | undefined, anonymous: boolean): Promise<string[]> {
+    const jwtProof = (config.proof_types_supported as Record<string, Record<string, unknown>> | undefined)?.jwt;
+    const ka = this.client.opts.keyAttestation ?? 'auto';
+    const required = jwtProof?.key_attestations_required as { key_storage?: string[]; user_authentication?: string[] } | undefined;
+    if (required && !this.client.opts.attester) throw new IssuanceError('Issuer requires a key attestation but no wallet provider is configured', 'key_attestation_required');
+    this.checkKeyProtection(jwtProof);
+    if (this.client.opts.attester && ka !== 'never' && (ka === 'always' || required)) {
+      const attestation = await this.client.opts.attester.keyAttestation(holders.map((h) => h.key.publicJwk), nonce);
+      return [await this.proof(holders[0]!, nonce, anonymous, attestation)];
+    }
+    return Promise.all(holders.map((h) => this.proof(h, nonce, anonymous)));
   }
 
   /** Refuses before the request when the issuer demands stronger key storage / user authentication than attested. */
@@ -453,23 +567,17 @@ export class IssuanceSession {
     }
   }
 
-  private async proof(holder: SigningKey, config: Record<string, unknown>, nonce: string | undefined, anonymous: boolean, holderDid?: string): Promise<string> {
+  private async proof(holder: Holder, nonce: string | undefined, anonymous: boolean, keyAttestation?: string): Promise<string> {
     const header: Record<string, unknown> = { typ: 'openid4vci-proof+jwt' };
-    if (holderDid) header.kid = holderDid.startsWith('did:jwk:') ? `${holderDid}#0` : `${holderDid}#${holderDid.slice('did:key:'.length)}`;
-    else header.jwk = holder.publicJwk;
-    const jwtProof = (config.proof_types_supported as Record<string, Record<string, unknown>> | undefined)?.jwt;
-    const ka = this.client.opts.keyAttestation ?? 'auto';
-    const required = jwtProof?.key_attestations_required as { key_storage?: string[]; user_authentication?: string[] } | undefined;
-    if (required && !this.client.opts.attester) throw new IssuanceError('Issuer requires a key attestation but no wallet provider is configured', 'key_attestation_required');
-    this.checkKeyProtection(jwtProof);
-    if (this.client.opts.attester && ka !== 'never' && (ka === 'always' || required)) {
-      header.key_attestation = await this.client.opts.attester.keyAttestation([holder.publicJwk], nonce);
-    }
+    const did = holder.did;
+    if (did) header.kid = did.startsWith('did:jwk:') ? `${did}#0` : `${did}#${did.slice('did:key:'.length)}`;
+    else header.jwk = holder.key.publicJwk;
+    if (keyAttestation) header.key_attestation = keyAttestation;
     const payload: Record<string, unknown> = { aud: this.metadata.credentialIssuer, iat: nowSeconds() };
     if (nonce) payload.nonce = nonce;
     const clientId = this.attestationWanted() ? this.client.opts.attester!.clientId : this.clientId;
     if (!anonymous && clientId) payload.iss = clientId;
-    return signJwt(header, payload, holder);
+    return signJwt(header, payload, holder.key);
   }
 
   private async credentialPost(url: string, req: SealedRequest, token: TokenResponse): Promise<Response> {
@@ -554,15 +662,28 @@ export class IssuanceSession {
 
 const json = (body: Record<string, unknown>): SealedRequest => ({ body: JSON.stringify(body), contentType: 'application/json' });
 
+/**
+ * Pairs each credential of a response with the holder key it is bound to: the response need not follow the order of
+ * the proofs. A credential bound to none of the keys keeps its position's key, so verification reports the mismatch.
+ */
+function bindInstances(format: string, credentials: unknown[], holders: Holder[]): CredentialInstance[] {
+  const free = [...holders];
+  return credentials.map((credential, i) => {
+    const bound = holderBinding(format, credential);
+    const at = free.findIndex((h) => (bound.jwk ? h.key.publicJwk.x === bound.jwk.x && h.key.publicJwk.y === bound.jwk.y
+      : bound.did ? h.did === bound.did : true));
+    const h = at >= 0 ? free.splice(at, 1)[0]! : holders[Math.min(i, holders.length - 1)]!;
+    return { credential, holderKeyId: h.key.id, holderJwk: h.key.publicJwk, ...(h.did ? { holderDid: h.did } : {}) };
+  });
+}
+
 /** Why a freshly issued credential must be refused, if it must. */
-function rejection(c: IssuedCredential): string | undefined {
-  const r = c.report;
-  if (!r) return undefined;
+function rejection(format: string, r: VerificationReport): string | undefined {
   if (!r.valid) {
     const failed = r.checks.filter((x) => x.status === 'fail' && x.id !== 'issuer.trust').map((x) => `${x.label}: ${x.detail ?? 'failed'}`);
     return `The credential failed verification (${failed.join('; ')})`;
   }
-  if ((c.format === 'dc+sd-jwt' || c.format === 'vc+sd-jwt') && r.issuer.x5c?.length && r.trust?.decision !== 'TRUSTED') {
+  if ((format === 'dc+sd-jwt' || format === 'vc+sd-jwt') && r.issuer.x5c?.length && r.trust?.decision !== 'TRUSTED') {
     return `The SD-JWT VC issuer certificate is not trusted (${r.trust?.summary ?? 'no trust decision'}); SD-JWT VC requires rejecting it`;
   }
   return undefined;

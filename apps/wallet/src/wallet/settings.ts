@@ -27,6 +27,8 @@ export interface Settings {
   keyAttestation: Tri;
   /** Attest iso_18045_high key storage / user authentication (simulated WSCD; needed for Animo key-attestation offers). */
   highAssurance: boolean;
+  /** Instances to request of each credential from issuers with batch issuance: a fresh one for each verifier. */
+  batchSize: '1' | '3' | '5';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -45,6 +47,7 @@ export const DEFAULT_SETTINGS: Settings = {
   walletAttestation: 'auto',
   keyAttestation: 'auto',
   highAssurance: false,
+  batchSize: '3',
 };
 
 export const SETTINGS_KEY = 'app:settings';

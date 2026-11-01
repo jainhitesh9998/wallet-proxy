@@ -97,8 +97,10 @@ function issuerId(v: unknown): string | undefined {
   return undefined;
 }
 
+const GENERIC_TYPES = new Set(['VerifiableCredential', 'VerifiableAttestation']);
+
 function mostSpecific(types: string[]): string | undefined {
-  return types.find((t) => t !== 'VerifiableCredential') ?? types[0];
+  return types.find((t) => !GENERIC_TYPES.has(t)) ?? types[0];
 }
 
 /**
@@ -110,6 +112,8 @@ export function issuerTrustQuery(info: IssuerInfo, credentialIssuer?: string, pr
   return {
     role: 'issuer',
     subject: { identifier: info.issuer ?? credentialIssuer, x5c: info.x5c, kid: info.kid?.startsWith('did:') ? info.kid : undefined },
-    context: { protocol, credentialFormat: info.format, credentialType: info.credentialType },
+    // A W3C VC asserts all its types: each specific one must be authorized, not only the first.
+    context: { protocol, credentialFormat: info.format, credentialType: info.credentialType,
+      ...(info.types && info.types.filter((t) => !GENERIC_TYPES.has(t)).length > 1 ? { credentialTypes: info.types.filter((t) => !GENERIC_TYPES.has(t)) } : {}) },
   };
 }

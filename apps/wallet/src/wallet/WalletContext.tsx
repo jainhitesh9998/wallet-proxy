@@ -2,7 +2,7 @@
  * Builds the TrustClient + Wallet from the persisted settings and exposes them to the screens.
  * Persistence (AsyncStorage; localStorage on web):
  *   app:settings              settings
- *   wallet:credentials        credentials (KeyValueCredentialStore)
+ *   wallet:credentials        credential ids; wallet:credentials:<id> one credential (KeyValueCredentialStore)
  *   wallet:key:<id>           holder / instance keys (SoftwareKeyStore, demo: not hardware protected)
  *   vctrust:*                 trust-client cache incl. the signed offline snapshot and pinned service key
  */
@@ -41,6 +41,7 @@ const Ctx = createContext<WalletState | null>(null);
 const kv = (prefix: string) => ({
   get: (k: string) => AsyncStorage.getItem(prefix + k),
   set: (k: string, v: string) => AsyncStorage.setItem(prefix + k, v),
+  remove: (k: string) => AsyncStorage.removeItem(prefix + k),
 });
 const INSTANCE_KEY_PREFIX = 'wallet:instance-key:';
 
@@ -104,7 +105,7 @@ function build(s: Settings, wiKeys: InstanceKeyProvider | undefined, keyStore: S
   const wallet = new Wallet({
     trust, keyStore, credentials: new KeyValueCredentialStore(kv('wallet:')), fetch: appFetch, attester,
     redirectUri: appRedirectUri(), registrations: MOSIP_REGISTRATIONS,
-    dpop: s.dpop, walletAttestation: s.walletAttestation, keyAttestation: s.keyAttestation,
+    dpop: s.dpop, walletAttestation: s.walletAttestation, keyAttestation: s.keyAttestation, batchSize: Number(s.batchSize),
   });
   return { trust, wallet };
 }

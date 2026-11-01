@@ -130,6 +130,27 @@ class SafeHttpFetcherTest {
     }
 
     @Test
+    void plainHttpOnlyThroughTheCrlView() throws IOException {
+        try (SafeHttpFetcher fetcher = new SafeHttpFetcher(config(List.of("crl.test")), LOOPBACK_DNS)) {
+            assertThatThrownBy(() -> fetcher.get(url("crl.test", "/ok"), null))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
+                    .hasMessageContaining("Only https");
+            HttpFetcher crls = fetcher.allowingPlainHttp();
+            assertThat(crls.get(url("crl.test", "/ok"), null).bodyAsString()).isEqualTo("hello");
+            // Every other rule still applies: internal addresses, redirects to them, other schemes.
+            assertThatThrownBy(() -> crls.get(url("other.test", "/ok"), null))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
+                    .hasMessageContaining("non-public address");
+            assertThatThrownBy(() -> crls.get(url("crl.test", "/to-internal"), null))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
+                    .hasMessageContaining("internal.test");
+            assertThatThrownBy(() -> crls.get(URI.create("ftp://crl.test/x.crl"), null))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class);
+        }
+        assertThat(hits).hasValue(2); // /ok and the redirect; the internal target was never reached
+    }
+
+    @Test
     void oversizeBodyIsRefused() throws IOException {
         try (SafeHttpFetcher fetcher = new SafeHttpFetcher(config(List.of("public.test")), LOOPBACK_DNS)) {
             assertThatThrownBy(() -> fetcher.get(url("public.test", "/big"), null))

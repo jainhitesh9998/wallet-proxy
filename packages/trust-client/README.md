@@ -14,6 +14,11 @@ By default (`decisions: 'local'`) every trust decision is made **on the device**
   - the trust anchors' current CRLs.
 - The client verifies the snapshot with a pinned service key and evaluates locally, with the same rules as the service's `TrustEvaluator`. A parity test compares the two.
 - In the default configuration, the service receives only snapshot (and JWKS) requests. It never learns which issuers a user receives credentials from, which verifiers they present to, or any certificate or credential data.
+- **Identifiers are bound to keys.** When a query carries key material (`x5c`, a DID `kid`, a JWK), the entity is found only through identifiers that key proves:
+  - the DID of the `kid`, the JWK thumbprint, or the pinned leaf certificate;
+  - once the chain validates: the leaf's names and the anchor's entity.
+
+  A claimed `client_id`, `iss` or issuer DID counts only when that key also matches the entity, or when an anchor that isn't tied to one entity vouches for its own framework. A self-signed certificate claiming `x509_san_dns:bank.example` is `NOT_TRUSTED` (`identifier.unbound`), not `TRUSTED`. Every type a W3C VC asserts must be authorized.
 
 ### Revocation
 Every certificate below the trust anchor is checked against a CRL that its issuer signed:
@@ -50,7 +55,7 @@ const { decision } = await trust.evaluateCredential(credential, 'mso_mdoc');   /
 - **First decision without a usable snapshot:** waits for a download, bounded by `timeoutMs`.
 - **Usable snapshot:** decisions never wait on the network. A refresh runs in the background once it is older than `snapshotRefreshMs` (1 h). After a failure it retries every `snapshotRetryMs` (30 s).
 - **Integrity:**
-  - Verified against `serviceKeys` (thumbprints, JWKs, or `trustOnFirstUse` for demos).
+  - Verified against `serviceKeys` (thumbprints, JWKs, or `trustOnFirstUse` for demos). A stored key stays trusted only while its thumbprint is still configured.
   - Bound to `clientId`.
   - Re-verified when loaded from storage.
   - An older snapshot (`iat`) never replaces a newer one, which prevents rollback. An already-expired snapshot is refused.
@@ -131,4 +136,4 @@ Building blocks are exported for reuse:
 - `applyMetadataPolicy`
 - the `cbor` codec
 
-Tests: `npx vitest run` (67 tests). `npm run test:live` adds the parity test against a running trust service. It runs 29 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.
+Tests: `npx vitest run` (83 tests). `npm run test:live` adds the parity test against a running trust service. It runs 33 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.

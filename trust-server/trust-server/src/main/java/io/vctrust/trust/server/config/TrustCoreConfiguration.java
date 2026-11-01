@@ -163,14 +163,16 @@ public class TrustCoreConfiguration {
         return new X509PathValidator();
     }
 
+    /** CRL distribution points are mostly http; CRLs are signed, so the CRL service may fetch them over http. */
     @Bean(destroyMethod = "close")
     CrlService crlService(TrustRegistry registry, HttpFetcher http, TrustProperties props, Clock clock) {
-        return new CrlService(registry, http, props.getRevocation(), clock);
+        return new CrlService(registry, http instanceof SafeHttpFetcher safe ? safe.allowingPlainHttp() : http, props.getRevocation(), clock);
     }
 
+    /** OCSP responders are mostly http too, and their responses are signed. */
     @Bean
     OcspClient ocspClient(HttpFetcher http, Clock clock) {
-        return new OcspClient(http, clock);
+        return new OcspClient(http instanceof SafeHttpFetcher safe ? safe.allowingPlainHttp() : http, clock);
     }
 
     /** CRLs from the trust list and distribution points; OCSP only when enabled (server-side decisions). */

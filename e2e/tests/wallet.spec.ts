@@ -89,6 +89,8 @@ test('demo wallet: trust settings, mDL issuance, presentation, outage fallback',
     // The Document Signer was checked against Animo's IACA CRL, carried in the trust list.
     await expect(page.getByTestId('evidence-revocation-0')).toContainText('not revoked');
     await expect(page.getByTestId('evidence-revocation-0')).toContainText('playground.animo.id/crl');
+    // Batch issuance (default 3 instances, Animo's batch_size is 10), each bound to its own key.
+    await expect(page.getByTestId('detail-instances')).toContainText('3, 3 not yet presented');
     await shot(page, '1-credential-detail');
   });
 
@@ -102,6 +104,7 @@ test('demo wallet: trust settings, mDL issuance, presentation, outage fallback',
     await expect(page.getByTestId('verifier-trust-decision')).toHaveText('TRUSTED');
     // DCQL query ids are chosen by the verifier; one mDL candidate must be offered for the (single) query.
     await expect(page.locator('[data-testid^="candidate-"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid^="instance-"]')).toHaveText('Instance 1 of 3, not shown to any verifier before');
     await page.getByTestId('present-share').click();
     await expect(page.getByTestId('present-result-status')).toContainText('HTTP 200', { timeout: 60_000 });
     await shot(page, '2-presentation-result');
@@ -109,6 +112,9 @@ test('demo wallet: trust settings, mDL issuance, presentation, outage fallback',
       const r = await request.get(`${PLAYGROUND}/api/requests/${req.verificationSessionId}`);
       return ((await r.json()) as { responseStatus?: string }).responseStatus;
     }, { timeout: 30_000, intervals: [500, 1000, 2000] }).toBe('ResponseVerified');
+    await home(page);
+    await page.getByTestId('credential-card-0').click();
+    await expect(page.getByTestId('detail-instances')).toContainText('3, 2 not yet presented');
   });
 
   await test.step("'service' mode: the trust service makes the same decision", async () => {

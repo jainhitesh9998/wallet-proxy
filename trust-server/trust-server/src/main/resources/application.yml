@@ -2,7 +2,10 @@
 # Frameworks group trust information; sources feed them; clients see only the frameworks they accept.
 server:
   port: 8090
-  forward-headers-strategy: framework
+  # Forwarded headers are not believed: anyone can send them. Behind a reverse proxy, list it in
+  # trust.auth.trusted-proxies (and trust.auth.mtls.trusted-proxies for a client-certificate header) instead.
+  # The service's own URLs come from trust.service.issuer, not from the request.
+  forward-headers-strategy: none
 
 spring:
   application:

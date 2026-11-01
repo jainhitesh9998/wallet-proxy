@@ -8,7 +8,7 @@ import { createPrivateKey, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { deflateRawSync } from 'node:zlib';
 import { bytes, createTrustClient, decodeJws, parseCertificate } from '@vctrust/trust-client';
-import { decryptJwe, disclosureDigest, encryptJwe, evaluateDcql, IssuanceError, MemoryCredentialStore, PresentationRequestError, presentSdJwt,
+import { decryptJwe, disclosureDigest, encryptJwe, evaluateDcql, IssuanceError, KeyValueCredentialStore, MemoryCredentialStore, pickInstance, PresentationRequestError, presentSdJwt,
   reportPresentationError, resolveAuthorizationRequest, selectDisclosures, decodeDisclosure, SoftwareKey, SoftwareKeyStore, verifierRefusal, Wallet,
   type DcqlClaim, type StoredCredential, type JweEnc } from '../src/index.js';
 import { demoAttester } from './wallet-provider.js';
@@ -42,18 +42,22 @@ const ISSUER = 'https://issuer.example';
 
 interface MockIssuer { fetch: typeof fetch; notifications: string[]; requests: { contentType: string; body: Record<string, unknown> }[] }
 
-function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credential: (holderJwk: Record<string, unknown>, configId: string) => string;
-  proofTypes?: Record<string, unknown>; tokenAuthMethods?: string[]; zip?: boolean }): MockIssuer {
+function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credential: (holderJwk: Record<string, unknown>, configId: string, n: number) => string;
+  proofTypes?: Record<string, unknown>; tokenAuthMethods?: string[]; zip?: boolean; batchSize?: number; deferred?: number }): MockIssuer {
   const issuerKey = SoftwareKey.generate();
   const notifications: string[] = [];
   const requests: MockIssuer['requests'] = [];
+  let deferredLeft = opts.deferred ?? 0;
+  let deferredKeys: Record<string, unknown>[] = [];
   const metadata: Record<string, unknown> = {
     credential_issuer: ISSUER, credential_endpoint: `${ISSUER}/credential`, nonce_endpoint: `${ISSUER}/nonce`, notification_endpoint: `${ISSUER}/notification`,
+    deferred_credential_endpoint: `${ISSUER}/deferred`,
     credential_configurations_supported: Object.fromEntries(['pid', 'pid2'].map((id) => [id, { format: 'dc+sd-jwt', vct: 'urn:eudi:pid:1',
       cryptographic_binding_methods_supported: ['jwk'], proof_types_supported: opts.proofTypes ?? { jwt: { proof_signing_alg_values_supported: ['ES256'] } } }])),
     ...(opts.requestEnc ? { credential_request_encryption: { jwks: { keys: [{ ...issuerKey.publicJwk, alg: 'ECDH-ES', use: 'enc', kid: 'req-key' }] },
       enc_values_supported: ['A128GCM'], encryption_required: true } } : {}),
     ...(opts.responseEnc ? { credential_response_encryption: { alg_values_supported: ['ECDH-ES'], enc_values_supported: ['A256GCM'], encryption_required: true } } : {}),
+    ...(opts.batchSize ? { batch_credential_issuance: { batch_size: opts.batchSize } } : {}),
   };
   const f = (async (url: string, init?: RequestInit) => {
     const u = String(url);
@@ -69,16 +73,29 @@ function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credent
     }
     if (u === `${ISSUER}/nonce`) return Response.json({ c_nonce: 'cn-1' });
     if (u === `${ISSUER}/notification`) { notifications.push(JSON.parse(String(init?.body)).event); return new Response(null, { status: 204 }); }
+    if (u === `${ISSUER}/deferred`) {
+      const auth = new Headers(init?.headers).get('Authorization');
+      requests.push({ contentType: 'deferred', body: { auth, ...JSON.parse(String(init?.body)) } });
+      if (auth !== 'Bearer at' || JSON.parse(String(init?.body)).transaction_id !== 't-1') return Response.json({ error: 'invalid_transaction_id' }, { status: 400 });
+      if (deferredLeft-- > 0) return Response.json({ interval: 1 }, { status: 202 });
+      return Response.json({ credentials: deferredKeys.map((k, i) => ({ credential: opts.credential(k, 'pid', i) })), notification_id: 'n-2' });
+    }
     if (u === `${ISSUER}/credential`) {
       const contentType = new Headers(init?.headers).get('Content-Type') ?? '';
       const body = contentType === 'application/jwt'
         ? JSON.parse(bytes.utf8Decode(decryptJwe(String(init?.body), (peer) => issuerKey.ecdh(peer)).plaintext)) as Record<string, unknown>
         : JSON.parse(String(init?.body)) as Record<string, unknown>;
       requests.push({ contentType, body });
+      // One credential per key: each jwt proof's key, or every key a key attestation lists (OID4VCI F.1, F.3).
       const proofs = body.proofs as { jwt?: string[]; attestation?: string[] };
-      const holderJwk = proofs.jwt ? decodeJws(proofs.jwt[0]!).header.jwk as Record<string, unknown>
-        : (decodeJws(proofs.attestation![0]!).payload.attested_keys as Record<string, unknown>[])[0]!;
-      const answer = { credentials: [{ credential: opts.credential(holderJwk, String(body.credential_configuration_id)) }], notification_id: 'n-1' };
+      const keys = proofs.jwt ? proofs.jwt.flatMap((p) => {
+        const h = decodeJws(p).header;
+        return h.key_attestation ? decodeJws(String(h.key_attestation)).payload.attested_keys as Record<string, unknown>[] : [h.jwk as Record<string, unknown>];
+      }) : decodeJws(proofs.attestation![0]!).payload.attested_keys as Record<string, unknown>[];
+      if (keys.length > (opts.batchSize ?? 1)) return Response.json({ error: 'invalid_proof', error_description: 'batch too large' }, { status: 400 });
+      if (opts.deferred !== undefined) { deferredKeys = keys; return Response.json({ transaction_id: 't-1', interval: 1 }, { status: 202 }); }
+      // Answered in reverse order: the response need not follow the proofs.
+      const answer = { credentials: keys.map((k, i) => ({ credential: opts.credential(k, String(body.credential_configuration_id), i) })).reverse(), notification_id: 'n-1' };
       const re = body.credential_response_encryption as { jwk: never; enc: JweEnc } | undefined;
       if (re) {
         const plain = bytes.utf8Encode(JSON.stringify(answer));
@@ -170,6 +187,128 @@ describe('issuance (OID4VCI 1.0 / HAIP)', () => {
     const anonymous = mockIssuer({ credential: (jwk) => issueFor(jwk) });
     await (await walletFor(anonymous, { attester: demoAttester() }).receive(offer)).acceptPreAuthorized();
     expect(anonymous.requests.find((r) => r.contentType === 'token')!.body.attested).toBe(false);
+  });
+});
+
+describe('batch issuance (OID4VCI §8.2, HAIP §4)', () => {
+  const keyOf = (c: { credential: unknown }) => (decodeJws(String(c.credential).split('~')[0]!).payload.cnf as { jwk: { x: string } }).jwk.x;
+
+  it('asks for up to batch_size instances in one request, each bound to its own key, and pairs them with their keys', async () => {
+    const issuer = mockIssuer({ batchSize: 3, credential: (jwk) => issueFor(jwk) });
+    const [cred] = await (await walletFor(issuer, { batchSize: 5 }).receive(offer)).acceptPreAuthorized();
+    const req = issuer.requests.filter((r) => r.contentType !== 'token');
+    expect(req).toHaveLength(1);
+    const proofs = (req[0]!.body.proofs as { jwt: string[] }).jwt;
+    expect(proofs).toHaveLength(3);
+    expect(new Set(proofs.map((p) => (decodeJws(p).header.jwk as { x: string }).x)).size).toBe(3);
+    expect(cred!.instances).toHaveLength(2);
+    for (const x of [cred!, ...cred!.instances!]) {
+      expect(keyOf(x)).toBe(x.holderJwk.x);
+      expect(x.report?.valid).toBe(true);
+    }
+    expect(new Set([cred!, ...cred!.instances!].map((x) => x.holderKeyId)).size).toBe(3);
+  });
+
+  it('requests one instance when the issuer has no batch support, whatever the wallet asks for', async () => {
+    const issuer = mockIssuer({ credential: (jwk) => issueFor(jwk) });
+    const [cred] = await (await walletFor(issuer, { batchSize: 3 }).receive(offer)).acceptPreAuthorized();
+    expect((issuer.requests.find((r) => r.contentType !== 'token')!.body.proofs as { jwt: string[] }).jwt).toHaveLength(1);
+    expect(cred!.instances).toBeUndefined();
+  });
+
+  it('attests every key of the batch in one key attestation (HAIP §4.5.1)', async () => {
+    const jwtIssuer = mockIssuer({ batchSize: 3, credential: (jwk) => issueFor(jwk) });
+    const [a] = await (await walletFor(jwtIssuer, { batchSize: 3, attester: demoAttester(), keyAttestation: 'always' }).receive(offer)).acceptPreAuthorized();
+    const jwts = (jwtIssuer.requests.find((r) => r.contentType !== 'token')!.body.proofs as { jwt: string[] }).jwt;
+    expect(jwts).toHaveLength(1);
+    const attested = decodeJws(String(decodeJws(jwts[0]!).header.key_attestation)).payload.attested_keys as unknown[];
+    expect(attested).toHaveLength(3);
+    expect(a!.instances).toHaveLength(2);
+    const attIssuer = mockIssuer({ batchSize: 3, proofTypes: { attestation: { proof_signing_alg_values_supported: ['ES256'] } }, credential: (jwk) => issueFor(jwk) });
+    const [b] = await (await walletFor(attIssuer, { batchSize: 3, attester: demoAttester() }).receive(offer)).acceptPreAuthorized();
+    expect((attIssuer.requests.find((r) => r.contentType !== 'token')!.body.proofs as { attestation: string[] }).attestation).toHaveLength(1);
+    expect(b!.instances).toHaveLength(2);
+  });
+
+  it('refuses the whole batch when one instance fails, with one credential_failure', async () => {
+    const issuer = mockIssuer({ batchSize: 3, credential: (jwk, _id, n) => (n === 1 ? issueFor(jwk, { signer: 'rogue-ds' }) : issueFor(jwk)) });
+    const err = await (await walletFor(issuer, { batchSize: 3 }).receive(offer)).acceptPreAuthorized().catch((e: unknown) => e) as IssuanceError;
+    expect(err.code).toBe('invalid_credential');
+    expect(err.message).toMatch(/one of 3 batch instances/);
+    expect(issuer.notifications).toEqual(['credential_failure']);
+  });
+
+  it('refuses an instance bound to a key the wallet did not send', async () => {
+    const stranger = SoftwareKey.generate().publicJwk as unknown as Record<string, unknown>;
+    const issuer = mockIssuer({ batchSize: 2, credential: (jwk, _id, n) => issueFor(n === 0 ? stranger : jwk) });
+    await expect((await walletFor(issuer, { batchSize: 2 }).receive(offer)).acceptPreAuthorized()).rejects.toThrow(/not this wallet's key/);
+  });
+
+  it('presents a different instance to each verifier until the batch is used up', async () => {
+    const issuer = mockIssuer({ batchSize: 2, credential: (jwk) => issueFor(jwk) });
+    const wallet = walletFor(issuer, { batchSize: 2 });
+    const [stored] = await wallet.store(await (await wallet.receive(offer)).acceptPreAuthorized());
+    const rpHash = parseCertificate(pem('rp')).sha256;
+    const presented: string[] = [];
+    const verifierFetch = (async (url: string, init?: RequestInit) => {
+      if (String(url) === 'https://verifier.example/post') {
+        const vp = JSON.parse(new URLSearchParams(String(init?.body)).get('vp_token')!) as { pid: string[] };
+        presented.push((decodeJws(vp.pid[0]!.split('~')[0]!).payload.cnf as { jwk: { x: string } }).jwk.x);
+        return Response.json({});
+      }
+      return new Response(es256({ alg: 'ES256', typ: 'oauth-authz-req+jwt', x5c: [b64(pem('rp'))] }, { client_id: `x509_hash:${rpHash}`,
+        response_type: 'vp_token', response_mode: 'direct_post', nonce: 'n', response_uri: 'https://verifier.example/post',
+        dcql_query: { credentials: [{ id: 'pid', format: 'dc+sd-jwt', meta: { vct_values: ['urn:eudi:pid:1'] }, claims: [{ path: ['given_name'] }] }] } }, 'rp'));
+    }) as typeof fetch;
+    const trust = createTrustClient({ fetch: verifierFetch, fallback: { localAnchors: [{ domain: 'credential-issuer', certificate: pem('rp-ca') },
+      { domain: 'verifier-access', certificate: pem('rp-ca') }] } });
+    const presenter = new Wallet({ ...wallet.opts, trust, fetch: verifierFetch });
+    const uri = `openid4vp://?client_id=${encodeURIComponent(`x509_hash:${rpHash}`)}&request_uri=${encodeURIComponent('https://verifier.example/req')}`;
+    for (let i = 0; i < 3; i++) await (await presenter.startPresentation(uri)).respond();
+    expect(presented[0]).not.toBe(presented[1]);
+    expect(presented[2]).toBe(presented[0]);
+    const after = (await wallet.list()).find((c) => c.id === stored!.id)!;
+    expect([after.presentations, after.instances![0]!.presentations]).toEqual([2, 1]);
+    expect(pickInstance(after)).toMatchObject({ index: 1, fresh: false, total: 2 });
+  });
+});
+
+describe('deferred issuance (OID4VCI §9)', () => {
+  it('keeps what it needs to ask again later, then completes, verifies and stores the credential under the same id', async () => {
+    const issuer = mockIssuer({ deferred: 1, batchSize: 2, credential: (jwk) => issueFor(jwk) });
+    const wallet = walletFor(issuer, { batchSize: 2 });
+    (wallet.oid4vci.opts as { deferredWaitSeconds?: number }).deferredWaitSeconds = 0;
+    const [pending] = await wallet.store(await (await wallet.receive(offer)).acceptPreAuthorized());
+    expect(pending!.pending).toMatchObject({ transactionId: 't-1', accessToken: 'at', holderKeyIds: expect.any(Array) });
+    expect(pending!.pending!.holderKeyIds).toHaveLength(2);
+    expect(issuer.notifications).toEqual([]);
+    const still = await wallet.retrieveDeferred(pending!.id);
+    expect(still.pending).toBeDefined();
+    const done = await wallet.retrieveDeferred(pending!.id);
+    expect(done.id).toBe(pending!.id);
+    expect(done.pending).toBeUndefined();
+    expect(done.report?.trusted).toBe(true);
+    expect(done.instances).toHaveLength(1);
+    expect(issuer.notifications).toEqual(['credential_accepted']);
+    expect(issuer.requests.filter((r) => r.contentType === 'deferred').map((r) => r.body.auth)).toEqual(['Bearer at', 'Bearer at']);
+    const stored = await wallet.list();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.pending).toBeUndefined();
+  });
+});
+
+describe('credential store', () => {
+  it('keeps one entry per credential and migrates the single-entry layout', async () => {
+    const data = new Map<string, string>([['credentials', JSON.stringify([{ id: 'a', issuedAt: '2026-01-01' }, { id: 'b', issuedAt: '2026-02-01' }])]]);
+    const kv = { get: async (k: string) => data.get(k) ?? null, set: async (k: string, v: string) => { data.set(k, v); }, remove: async (k: string) => { data.delete(k); } };
+    const store = new KeyValueCredentialStore(kv);
+    expect((await store.list()).map((c) => c.id)).toEqual(['b', 'a']);
+    expect(JSON.parse(data.get('credentials')!)).toEqual(['a', 'b']);
+    await store.save({ id: 'c', issuedAt: '2026-03-01' } as StoredCredential);
+    await store.remove('a');
+    expect((await store.list()).map((c) => c.id)).toEqual(['c', 'b']);
+    expect([...data.keys()].sort()).toEqual(['credentials', 'credentials:b', 'credentials:c']);
+    expect(await store.get('a')).toBeUndefined();
   });
 });
 

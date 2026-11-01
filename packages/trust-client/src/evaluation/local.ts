@@ -7,6 +7,8 @@
 import { parseCertificate, type Certificate } from '../x509/certificate.js';
 import { validateCertificateChain, type LocalAnchor, type ValidateOptions } from '../x509/validate.js';
 import { crlUrlsToFetch, type HeldCrl } from '../x509/revocation.js';
+import type { Crl } from '../x509/crl.js';
+import { verifyX509Signature } from '../x509/signature.js';
 import { findVerificationMethod, hasRelationship, didError, parseDid } from '../did/did.js';
 import { jwkThumbprint } from '../crypto/keys.js';
 import type { DidEvidence, DidResolutionResult, EntityView, PathValidationResult, Reason, SnapshotRef, TrustDecision, TrustFramework,
@@ -69,7 +71,8 @@ export interface CrlFetchResult {
   /** error per CRL URL that could not be obtained */
   failures: Record<string, string>;
 }
-export type CrlFetcher = (urls: string[]) => Promise<CrlFetchResult>;
+/** Fetches CRLs; {@code accept} tells whether a CRL is signed by the CA it is for, so only such CRLs are cached. */
+export type CrlFetcher = (urls: string[], accept?: (url: string, crl: Crl) => boolean) => Promise<CrlFetchResult>;
 
 /**
  * Path validation with revocation: first against the CRLs already held (the snapshot's), then — only for
@@ -83,7 +86,11 @@ export async function validateChainOnDevice(chain: Certificate[], anchors: Local
   const r = validateCertificateChain(chain, anchors, { ...opts, revocation });
   const urls = fetchCrls && r.anchorFound ? crlUrlsToFetch(chain, r.revocation) : [];
   if (urls.length === 0) return r;
-  const got = await fetchCrls!(urls);
+  // A CRL counts (and is cached) only when the issuer of a certificate naming its URL signed it.
+  const issuerOf = (j: number) => chain[j + 1] ?? r.anchorRef?.certificate;
+  const accept = (url: string, crl: Crl) => chain.some((c, j) => c.crlDistributionPoints.includes(url) && !!issuerOf(j)
+    && verifyX509Signature(crl, issuerOf(j)!.publicKey));
+  const got = await fetchCrls!(urls, accept);
   return validateCertificateChain(chain, anchors, { ...opts, revocation: { ...revocation, crls: [...revocation.crls, ...got.crls], failures: got.failures } });
 }
 
@@ -94,7 +101,9 @@ export class LocalEvaluator {
   async evaluate(q: TrustQuery, data: LocalTrustData): Promise<TrustDecision> {
     const time = q.context?.time ? new Date(q.context.time) : this.now();
     const reasons: Reason[] = [];
+    // ids: proven by the presented key material; identIds: only claimed by the identifier (see the matching rules below)
     const ids: Array<{ type: string; value: string }> = [];
+    const identIds: Array<{ type: string; value: string }> = [];
     const role = q.role;
     const format = canonicalFormat(q.context?.credentialFormat) ?? undefined;
     const type = q.context?.credentialType;
@@ -107,20 +116,20 @@ export class LocalEvaluator {
         const known = i > 0 && CLIENT_ID_PREFIXES.has(ident.slice(0, i));
         const prefix = known ? ident.slice(0, i) : 'pre-registered';
         const val = known ? ident.slice(i + 1) : ident;
-        ids.push({ type: 'CLIENT_ID', value: ident });
-        if (prefix === 'x509_san_dns') { expectedDns = val; ids.push({ type: 'DNS', value: val }); }
-        else if (prefix === 'x509_hash') { expectedHash = val; ids.push({ type: 'X509_SHA256', value: val }); }
-        else if (prefix === 'decentralized_identifier') ids.push({ type: 'DID', value: val });
-        else if (prefix === 'redirect_uri' || prefix === 'origin') ids.push({ type: 'URL', value: val });
-        else if (prefix === 'openid_federation') ids.push({ type: 'FEDERATION_ENTITY', value: val }, { type: 'URL', value: val });
+        identIds.push({ type: 'CLIENT_ID', value: ident });
+        if (prefix === 'x509_san_dns') { expectedDns = val; identIds.push({ type: 'DNS', value: val }); }
+        else if (prefix === 'x509_hash') { expectedHash = val; identIds.push({ type: 'X509_SHA256', value: val }); }
+        else if (prefix === 'decentralized_identifier') identIds.push({ type: 'DID', value: val });
+        else if (prefix === 'redirect_uri' || prefix === 'origin') identIds.push({ type: 'URL', value: val });
+        else if (prefix === 'openid_federation') identIds.push({ type: 'FEDERATION_ENTITY', value: val }, { type: 'URL', value: val });
         else if (prefix === 'verifier_attestation') reasons.push({ code: 'client_id.verifier_attestation',
           message: 'Verifier attestation JWT must be validated by the wallet; matching registry by client_id only', severity: 'INFO' });
         if ((prefix === 'x509_san_dns' || prefix === 'x509_hash') && !q.subject.x5c?.length) {
           reasons.push({ code: 'client_id.x5c_required', message: `Client identifier prefix ${prefix} requires the request object's x5c chain`, severity: 'ERROR' });
         }
-      } else if (ident.startsWith('did:')) ids.push({ type: 'DID', value: ident });
-      else if (/^https?:\/\//.test(ident)) ids.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
-      else ids.push({ type: 'CLIENT_ID', value: ident }, { type: 'OTHER', value: ident });
+      } else if (ident.startsWith('did:')) identIds.push({ type: 'DID', value: ident });
+      else if (/^https?:\/\//.test(ident)) identIds.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
+      else identIds.push({ type: 'CLIENT_ID', value: ident }, { type: 'OTHER', value: ident });
     }
     let did: string | undefined;
     if (q.subject.kid?.startsWith('did:')) {
@@ -142,8 +151,8 @@ export class LocalEvaluator {
     let anchor: LocalAnchor | undefined;
     if (chain.length > 0) {
       const leaf = chain[0]!;
-      ids.push({ type: 'X509_SHA256', value: leaf.sha256 }, { type: 'X509_SUBJECT', value: leaf.subject });
-      if (leaf.subjectKeyIdentifier) ids.push({ type: 'X509_SKI', value: leaf.subjectKeyIdentifier });
+      // The leaf's hash is a pin (the caller verifies with the leaf's key); its other names count only once the chain validates.
+      ids.push({ type: 'X509_SHA256', value: leaf.sha256 });
       if (expectedHash && expectedHash !== leaf.sha256) {
         reasons.push({ code: 'client_id.x509_hash_mismatch', message: 'x509_hash client_id does not match the SHA-256 hash of the leaf certificate', severity: 'ERROR' });
       }
@@ -155,6 +164,8 @@ export class LocalEvaluator {
       x509 = result;
       if (r.valid) {
         anchor = anchorRef;
+        ids.push({ type: 'X509_SUBJECT', value: leaf.subject });
+        if (leaf.subjectKeyIdentifier) ids.push({ type: 'X509_SKI', value: leaf.subjectKeyIdentifier });
         leaf.dnsNames.forEach((n) => ids.push({ type: 'DNS', value: n }));
         leaf.uriNames.forEach((u) => ids.push({ type: 'URL', value: u }));
         reasons.push({ code: 'x509.valid', message: `Certificate chain validates to trust anchor ${anchorRef?.certificate.subject ?? ''} in domain ${domain}`, severity: 'INFO' });
@@ -170,21 +181,42 @@ export class LocalEvaluator {
       }
     }
 
-    const keys = new Set(ids.map((i) => `${i.type}|${normalizeIdentifier(i.type, i.value)}`));
+    // Matching. With key material (x5c, DID kid, JWK) the entity must be bound to that key: by the key's own identifiers,
+    // a pinned leaf certificate or the anchor's entity. The identifier alone is only a claim then; it counts when the
+    // validated anchor is not tied to one entity and belongs to the identified entity's framework. Without key material
+    // the identifier is a registry lookup (issuer metadata, or a key the caller fetched from that identifier).
     const matched: string[] = [];
-    let candidates = data.entities.filter((e) => e.identifiers.some((i) => {
-      const hit = keys.has(`${i.type}|${normalizeIdentifier(i.type, i.value)}`);
-      if (hit) matched.push(`${i.type}:${i.value}`);
-      return hit;
-    }));
-    for (const e of data.entities) {
-      if (chain.some((c) => e.certificates?.some((ec) => ec.sha256 === c.sha256)) && !candidates.includes(e)) candidates.push(e);
-    }
-    if (anchor?.entityId) {
-      const e = data.entities.find((x) => x.id === anchor!.entityId);
-      if (e && !candidates.includes(e)) { candidates.push(e); matched.push(`ANCHOR:${e.id}`); }
+    const lookup = (list: Array<{ type: string; value: string }>) => {
+      const keys = new Set(list.map((i) => `${i.type}|${normalizeIdentifier(i.type, i.value)}`));
+      const hits: Array<{ e: EntityView; how: string }> = [];
+      for (const e of data.entities) {
+        const i = e.identifiers.find((x) => keys.has(`${x.type}|${normalizeIdentifier(x.type, x.value)}`));
+        if (i) hits.push({ e, how: `${i.type}:${i.value}` });
+      }
+      return hits;
+    };
+    const take = (e: EntityView, how: string, into: EntityView[]) => { if (!into.includes(e)) { into.push(e); matched.push(how); } };
+    const keyMaterial = chain.length > 0 || !!q.subject.kid?.startsWith('did:') || !!q.subject.jwk;
+    const byIdentifier = lookup(identIds);
+    let candidates: EntityView[] = [];
+    if (!keyMaterial) byIdentifier.forEach((h) => take(h.e, h.how, candidates));
+    else {
+      lookup(ids).forEach((h) => take(h.e, h.how, candidates));
+      const leaf = chain[0];
+      if (leaf) data.entities.filter((e) => e.certificates?.some((c) => c.sha256 === leaf.sha256)).forEach((e) => take(e, `X509_CERT:${leaf.sha256}`, candidates));
+      if (anchor?.entityId) {
+        const e = data.entities.find((x) => x.id === anchor!.entityId);
+        if (e) take(e, `ANCHOR:${e.id}`, candidates);
+      } else if (anchor?.frameworkId) {
+        byIdentifier.filter((h) => h.e.frameworkId === anchor!.frameworkId).forEach((h) => take(h.e, `${h.how} (anchor framework)`, candidates));
+      }
     }
     const wantRole = roleName(role);
+    if (keyMaterial) {
+      const unbound = byIdentifier.filter((h) => !candidates.includes(h.e) && (!wantRole || h.e.roles.includes(wantRole)));
+      if (unbound.length) reasons.push({ code: 'identifier.unbound', message: `The identifier names '${pickName(unbound[0]!.e)}', but the presented `
+        + `${chain.length ? 'certificate' : 'key'} is not bound to it`, severity: 'ERROR' });
+    }
     if (wantRole) {
       const withRole = candidates.filter((e) => e.roles.includes(wantRole));
       if (candidates.length > 0 && withRole.length === 0) reasons.push({ code: 'entity.role_mismatch', message: `Matching entity is registered, but not as ${wantRole}`, severity: 'WARNING' });
@@ -227,11 +259,15 @@ export class LocalEvaluator {
         reasons.push({ code: 'entity.status', message: `Entity '${entity.id}' is ${entity.status}${until && time > until ? ' (expired)' : ''}`, severity: 'ERROR' });
       }
       if (format || type) {
-        const ok = entity.authorizations.length === 0 ? !strict : entity.authorizations.some((a) =>
-          (!a.format || !format || canonicalFormat(a.format) === format) && (!a.type || !type || a.type === type));
+        // Every type the credential asserts must be authorized (a W3C VC may carry several).
+        const types = [...new Set([type, ...(q.context?.credentialTypes ?? [])].filter((t): t is string => !!t))];
+        const allowed = (t?: string) => entity.authorizations.some((a) =>
+          (!a.format || !format || canonicalFormat(a.format) === format) && (!a.type || !t || a.type === t));
+        const denied = entity.authorizations.length === 0 ? undefined : (types.length ? types.find((t) => !allowed(t)) : (allowed() ? undefined : ''));
+        const ok = entity.authorizations.length === 0 ? !strict : denied === undefined;
         authorization = { format, type, authorized: ok, rule: entity.authorizations.length === 0
           ? (strict ? 'strict: no authorizations registered' : 'unconstrained') : 'registered authorizations' };
-        if (!ok) reasons.push({ code: 'entity.not_authorized', message: `Entity '${entity.id}' is not authorized for ${format ?? ''} ${type ?? ''}`.trim(), severity: 'ERROR' });
+        if (!ok) reasons.push({ code: 'entity.not_authorized', message: `Entity '${entity.id}' is not authorized for ${format ?? ''} ${denied || type || ''}`.trim(), severity: 'ERROR' });
       }
     }
     if (anchor?.frameworkId && entity && anchor.frameworkId !== entity.frameworkId) {

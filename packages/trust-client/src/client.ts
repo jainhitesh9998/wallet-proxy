@@ -18,12 +18,12 @@ import { ExpiringCache, MemoryCacheStore, type CacheStore } from './cache/store.
 import { SnapshotManager, snapshotRef, type ServiceKeyPolicy, type SnapshotData } from './snapshot/snapshot.js';
 import { LocalEvaluator, type LocalTrustData, normalizeIdentifier, validateChainOnDevice, type CrlFetchResult } from './evaluation/local.js';
 import { fetchWithTimeout, resolveDidLocally } from './did/resolver.js';
-import { didError, findVerificationMethod } from './did/did.js';
+import { DID_ERRORS, didError, findVerificationMethod } from './did/did.js';
 import { fetchAuthorizationServerMetadata, fetchIssuerMetadata, verifySignedMetadata, type SignedMetadataCheck } from './metadata/issuer.js';
 import { applyMetadataPolicy } from './metadata/policy.js';
 import { parseCertificate } from './x509/certificate.js';
 import { type LocalAnchor } from './x509/validate.js';
-import { parseCrl } from './x509/crl.js';
+import { parseCrl, type Crl } from './x509/crl.js';
 import type { HeldCrl } from './x509/revocation.js';
 import { base64Decode, base64Encode } from './util/bytes.js';
 import { extractIssuerInfo, issuerTrustQuery, type IssuerInfo } from './credential/extract.js';
@@ -147,6 +147,8 @@ export interface FetchedStatusList {
 export type StatusCheckOptions = Omit<StatusContext, 'fetchList' | 'validateChain'>;
 
 const ON_DEMAND_TTL_MS = 10 * 60_000;
+/** How long a cached DID document may stand in for one that cannot be fetched (the service's limit too). */
+const STALE_DID_MAX_MS = 24 * 3600_000;
 
 /** Metadata is cached per signed-metadata rule, so an unsigned copy never satisfies a stricter rule. */
 const metadataKey = (credentialIssuer: string, check?: SignedMetadataCheck) => `md:${check?.mode ?? 'json'}:${credentialIssuer}`;
@@ -193,7 +195,7 @@ export class TrustClient {
     }) : null;
     this.snapshots = new SnapshotManager(this.transport, this.store, config.serviceKeys ?? {}, config.clientId,
       config.fallback?.snapshotGraceMs ?? 7 * 24 * 3600_000);
-    this.local = new LocalEvaluator((did) => this.resolveDidOnDevice(did), undefined, (urls) => this.fetchCrls(urls));
+    this.local = new LocalEvaluator((did) => this.resolveDidOnDevice(did), undefined, (urls, accept) => this.fetchCrls(urls, accept));
     this.localAnchors = (config.fallback?.localAnchors ?? []).map((a) => ({
       certificate: parseCertificate(a.certificate), domain: a.domain, frameworkId: a.frameworkId, entityId: a.entityId, constraints: a.constraints,
     }));
@@ -439,7 +441,8 @@ export class TrustClient {
   /** The signed-metadata rule in force: the client profile's (snapshot policy) or this client's configuration. */
   private async signedMetadataCheck(): Promise<SignedMetadataCheck | undefined> {
     let mode = this.config.issuerMetadata?.signed ?? 'off';
-    if (this.decisions === 'local' && this.snapshots) {
+    // The client profile's policy applies in every mode, also when 'service' decisions fall back during an outage.
+    if (this.snapshots) {
       const d = await this.snapshots.current().catch(() => null);
       if (d?.policy.requireSignedIssuerMetadata) mode = 'require';
     }
@@ -492,7 +495,7 @@ export class TrustClient {
       const d = await this.localData(mode);
       const { anchorRef, ...r } = await validateChainOnDevice(chain.map((c) => parseCertificate(c)), d.anchors.filter((a) => a.domain === domain),
         { domain, docType: opts.docType, expectedDnsName: opts.expectedDnsName, time: opts.time ? new Date(opts.time) : undefined }, d,
-        (urls) => this.fetchCrls(urls));
+        (urls, accept) => this.fetchCrls(urls, accept));
       const entity = anchorRef?.entityId ? d.entities.find((e) => e.id === anchorRef.entityId) : undefined;
       return { ...r, entity, source: d.source };
     });
@@ -505,22 +508,28 @@ export class TrustClient {
    * the service's relay ('service'; direct while it is unreachable), or not at all ('none'). Cached until their
    * nextUpdate. Callers verify each CRL against the issuing CA, so neither the cache nor the relay is trusted.
    */
-  async fetchCrls(urls: string[]): Promise<CrlFetchResult> {
+  async fetchCrls(urls: string[], accept?: (url: string, crl: Crl) => boolean): Promise<CrlFetchResult> {
     const out: CrlFetchResult = { crls: [], failures: {} };
     for (const url of new Set(urls)) {
       if (this.lookups.crl === 'none') { out.failures[url] = 'CRL downloads are disabled on this device'; continue; }
       const key = `crl:${url}`;
       const cached = await this.cache.get<string>(key);
       const fromCache = (): HeldCrl | null => {
-        try { return cached ? { crl: parseCrl(base64Decode(cached.value)), url, source: 'cache' } : null; } catch { return null; }
+        try {
+          const crl = cached ? parseCrl(base64Decode(cached.value)) : null;
+          return crl && (!accept || accept(url, crl)) ? { crl, url, source: 'cache' } : null;
+        } catch { return null; }
       };
       if (cached?.fresh) {
         const c = fromCache();
         if (c) { out.crls.push(c); continue; }
+        await this.cache.delete(key);
       }
       try {
         const { der, source } = await this.downloadCrl(url);
         const crl = parseCrl(der);
+        // Unverified CRLs are not kept: a forged one would otherwise mask the real CRL until it expired.
+        if (accept && !accept(url, crl)) throw new Error('CRL is not signed by the issuing CA');
         const ttl = Math.min(24 * 3600_000, Math.max(60_000, (crl.nextUpdate?.getTime() ?? Date.now() + 3600_000) - Date.now()));
         await this.cache.set(key, base64Encode(crl.der), ttl);
         out.crls.push({ crl, url, source });
@@ -654,7 +663,13 @@ export class TrustClient {
     if (cached?.fresh) return { ...cached.value, didResolutionMetadata: { ...cached.value.didResolutionMetadata, source: 'cache' } };
     const r = await resolveDidLocally(did, { fetch: this.fetchFn, httpHosts: this.config.fallback?.didWebHttpHosts, timeoutMs: this.config.timeoutMs ?? 8000 });
     if (didError(r)) {
-      if (cached) return { ...cached.value, didResolutionMetadata: { ...cached.value.didResolutionMetadata, source: 'cache', stale: true } };
+      // A stale document only stands in for a transient failure, for a day at most: never after notFound (a 404 or 410
+      // means the DID is gone) or an invalid document.
+      const transient = didError(r) === DID_ERRORS.INTERNAL_ERROR;
+      if (cached && transient && Date.now() - cached.storedAt < STALE_DID_MAX_MS) {
+        return { ...cached.value, didResolutionMetadata: { ...cached.value.didResolutionMetadata, source: 'cache', stale: true } };
+      }
+      if (cached) await this.cache.delete(key);
     } else if (r.didDocument) {
       await this.cache.set(key, r, 15 * 60_000);
     }

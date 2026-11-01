@@ -155,7 +155,8 @@ function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certif
   if (docTypes.length > 0 && opts.docType && !docTypes.includes(opts.docType)) {
     issues.push({ code: 'x509.anchor_doctype', message: `Trust anchor is not authorized for doctype ${opts.docType}`, severity: 'ERROR' });
   }
-  if (time < anchor.certificate.notBefore || time > anchor.certificate.notAfter) {
+  // As TrustAnchor.isUsableAt in Java: ACTIVE and within the certificate's validity, also for a directly pinned anchor.
+  if ((anchor.status && anchor.status !== 'ACTIVE') || time < anchor.certificate.notBefore || time > anchor.certificate.notAfter) {
     if (!issues.some((i) => i.code.startsWith('x509.anchor'))) issues.push({ code: 'x509.anchor_unusable', message: 'Trust anchor is not usable now', severity: 'ERROR' });
   }
   let revocation: CertificateRevocation[] | undefined;

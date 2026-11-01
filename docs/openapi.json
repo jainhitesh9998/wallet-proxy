@@ -1272,6 +1272,12 @@
             "items": {
               "$ref": "#/components/schemas/TrustedAuthority"
             }
+          },
+          "credentialTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

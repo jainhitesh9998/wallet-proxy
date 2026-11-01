@@ -123,9 +123,11 @@ export class SnapshotManager {
 
   private async serviceKeys(kid: string | undefined, offline: boolean): Promise<Jwk[]> {
     const pinned: Jwk[] = [...(this.keys.jwks ?? [])];
-    const stored = await this.store.get(PINNED).catch(() => null);
-    if (stored) pinned.push(...(JSON.parse(stored) as Jwk[]));
     const thumbs = new Set(this.keys.thumbprints ?? []);
+    const stored = await this.store.get(PINNED).catch(() => null);
+    // Keys stored earlier stay trusted only while the configuration still pins them: removing a thumbprint (a
+    // compromised key) un-pins it. Without configured thumbprints the stored keys are the trust-on-first-use set.
+    if (stored) pinned.push(...(JSON.parse(stored) as Jwk[]).filter((k) => thumbs.size === 0 || thumbs.has(jwkThumbprint(k))));
     const matching = pinned.filter((k) => !kid || k.kid === kid || jwkThumbprint(k) === kid);
     if (matching.length > 0 || offline || !this.transport) return matching.length > 0 ? matching : pinned;
     // Fetch the JWKS and accept keys whose thumbprint is pinned (or TOFU).

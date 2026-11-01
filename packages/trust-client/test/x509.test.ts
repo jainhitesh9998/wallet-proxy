@@ -16,6 +16,12 @@ describe('certificate parsing', () => {
     expect(parseCertificate(pem('rp')).dnsNames).toEqual(['verifier.example']);
   });
 
+  it('rejects malformed DER lengths instead of looping (a 4-byte length must not wrap negative)', () => {
+    expect(() => parseCertificate('MAYwhP////o=')).toThrow(/DER/);
+    expect(() => parseCertificate('MIQAAAAB')).toThrow(/DER/);
+    expect(() => parseCertificate('MAMwAQ==')).toThrow(/DER/);
+  });
+
   it('parses the real Animo playground IACA', () => {
     const c = parseCertificate(new Uint8Array(fixture('animo-root.der')));
     // RFC 4514 renders RDNs in reverse DER order; this certificate encodes CN before C.
@@ -35,6 +41,14 @@ describe('local path validation', () => {
     const r = validateCertificateChain([pem('rsa-leaf'), pem('rsa-root')], [anchor('rsa-root', 'credential-issuer')], { domain: 'credential-issuer' });
     expect(r.valid, JSON.stringify(r.issues)).toBe(true);
     expect(r.path).toHaveLength(1);
+  });
+
+  it('honours the status of a directly pinned anchor, as the service does', () => {
+    const pinned = (status: string): LocalAnchor => ({ ...anchor('rp', 'verifier-access'), status });
+    expect(validateCertificateChain([pem('rp')], [pinned('ACTIVE')], { domain: 'verifier-access' }).valid).toBe(true);
+    const revoked = validateCertificateChain([pem('rp')], [pinned('REVOKED')], { domain: 'verifier-access' });
+    expect(revoked.valid).toBe(false);
+    expect(revoked.issues.map((i) => i.code)).toContain('x509.anchor_unusable');
   });
 
   it('reports unknown anchors without claiming invalidity', () => {

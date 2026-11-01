@@ -28,7 +28,8 @@ mechanism can override them: environment variables, `--trust.service.issuer=...`
 **Outbound requests and SSRF.** Everything the service fetches for clients (issuer metadata, DID documents, CRLs,
 status lists, trust lists) goes through one guarded HTTP client:
 
-- https only (plain http just for `http-allowed-hosts`), at most 3 redirects, each hop checked again;
+- https only (plain http just for `http-allowed-hosts`, and for CRLs: distribution points are mostly http, and a
+  CRL is verified against its issuer), at most 3 redirects, each hop checked again;
 - a host name is resolved once per connection, and the request is refused if any address is loopback, private,
   link-local, CGNAT, unique-local, multicast or reserved, including IPv4 embedded in NAT64 (`64:ff9b::/96`) or 6to4
   (`2002::/16`) addresses. The socket connects only to the addresses that passed, so DNS rebinding between the check
@@ -86,8 +87,12 @@ trust:
 
 ## Client authentication
 
-Every call to `/api/**`, `/admin/**`, `/trqp/**` and `/1.0/**` is mapped to a client profile (below). The methods
-can be combined; `/.well-known/trust-service` lists the enabled ones in `auth_methods_supported` (`api_key`,
+Every request is mapped to a client profile (below), except the public paths: `/.well-known/**` (discovery, JWKS),
+`/actuator/health`, `/actuator/info` and the API description (`/v3/api-docs`, `/swagger-ui`). `/admin/**` and the
+other actuator endpoints (metrics) need an admin client. Paths are judged the way the controllers are matched
+(percent-decoded, within the application); a path that decoders could read differently is refused with `400`:
+path parameters (`;`), encoded slashes or dots (`%2F`, `%2E`), backslashes, dot segments, empty segments. The
+methods can be combined; `/.well-known/trust-service` lists the enabled ones in `auth_methods_supported` (`api_key`,
 `oauth2_jwt`, `mtls`, `anonymous`).
 
 1. **OAuth 2.0 access token** (`Authorization: Bearer <JWT>`): an RFC 9068 JWT from the operator's authorization
@@ -123,6 +128,8 @@ realm="vc-trust-service", error="invalid_token", ...`; a missing scope is `403 i
 | `trust.auth.rate-limit.enabled` | `false` | Token bucket per client (anonymous callers: per address); `429` with `Retry-After` |
 | `trust.auth.rate-limit.requests-per-minute` / `burst` | 600 / 100 | Sustained rate and burst; a client's `requests-per-minute` overrides the rate |
 | `trust.auth.rate-limit.exempt-admin` | `true` | Admin clients are not limited |
+| `trust.auth.trusted-proxies` | `[]` | IP addresses or CIDRs of reverse proxies whose `X-Forwarded-For` names the caller, for per-address rate limits (the rightmost entry that is not a trusted proxy). From any other peer the header is ignored |
+| `server.forward-headers-strategy` | `none` | Leave at `none`: forwarded headers can be sent by anyone, and the service builds its URLs from `trust.service.issuer`. Behind a proxy, use `trust.auth.trusted-proxies` and `trust.auth.mtls.trusted-proxies` instead. (`framework` would not change these decisions, which always use the TCP peer; `native` replaces the peer address in Tomcat itself and would turn the certificate-header check off) |
 
 ```yaml
 trust:
@@ -137,6 +144,7 @@ trust:
       enabled: true
       certificate-header: X-SSL-Client-Cert
       trusted-proxies: [10.0.0.0/8]
+    trusted-proxies: [10.0.0.0/8]                       # the reverse proxy, for per-address rate limits
     rate-limit: { enabled: true, requests-per-minute: 600, burst: 100 }
   clients:
     - id: verifier-backend

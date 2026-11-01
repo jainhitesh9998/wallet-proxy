@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Image, ScrollView, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStack } from '../navigation';
+import { instancesOf } from '@vctrust/wallet-core';
 import { useWallet } from '../wallet/WalletContext';
 import { claimGroups, claimNames, credentialView, humanize, imageUri, isBytes, nameFor, shortDate } from '../wallet/display';
 import { TrustEvidence } from '../components/TrustEvidence';
@@ -66,6 +67,11 @@ export default function CredentialScreen({ route, navigation }: NativeStackScree
         <KV k="Issued to wallet" v={shortDate(c.issuedAt)} />
         {report?.validFrom || report?.validUntil ? <KV k="Valid" v={`${shortDate(report?.validFrom)} – ${shortDate(report?.validUntil)}`} /> : null}
         <KV k="Holder key" v={c.holderDid ?? c.holderKeyId} mono />
+        {c.instances?.length ? (() => {
+          const all = instancesOf(c);
+          const unused = all.filter((x) => !x.presentations).length;
+          return <KV k="Instances" v={`${all.length}, ${unused} not yet presented${all.some((x) => x.report?.valid === false) ? ' (some failed re-verification)' : ''}`} testID="detail-instances" />;
+        })() : null}
       </Section>
 
       <Section title="Claims" testID="claims">
@@ -95,14 +101,25 @@ export default function CredentialScreen({ route, navigation }: NativeStackScree
       <Info message={note} testID="detail-note" />
       <ErrorBox message={error} />
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        <Button testID="cred-reverify" title="Re-verify" busy={busy === 'reverify'} style={{ flex: 1 }} onPress={async () => {
-          setBusy('reverify'); setError(undefined); setNote(undefined);
-          try {
-            const r = await wallet.reverify(c.id);
-            await refresh();
-            setNote(`Re-verified: ${r.valid ? 'valid' : 'INVALID'}, issuer ${r.trust?.decision ?? 'not evaluated'} (${r.trust?.source ?? '-'}) at ${shortDate(new Date().toISOString())}`);
-          } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); }
-        }} />
+        {c.pending ? (
+          <Button testID="cred-retrieve" title="Check for the credential" busy={busy === 'retrieve'} style={{ flex: 1 }} onPress={async () => {
+            setBusy('retrieve'); setError(undefined); setNote(undefined);
+            try {
+              const r = await wallet.retrieveDeferred(c.id);
+              await refresh();
+              setNote(r.pending ? `The issuer is not done yet; try again in ${r.pending.interval} s.` : 'Issued, verified and stored.');
+            } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); }
+          }} />
+        ) : (
+          <Button testID="cred-reverify" title="Re-verify" busy={busy === 'reverify'} style={{ flex: 1 }} onPress={async () => {
+            setBusy('reverify'); setError(undefined); setNote(undefined);
+            try {
+              const r = await wallet.reverify(c.id);
+              await refresh();
+              setNote(`Re-verified: ${r.valid ? 'valid' : 'INVALID'}, issuer ${r.trust?.decision ?? 'not evaluated'} (${r.trust?.source ?? '-'}) at ${shortDate(new Date().toISOString())}`);
+            } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); }
+          }} />
+        )}
         <Button testID="cred-delete" title={confirmDelete ? 'Tap again to delete' : 'Delete'} kind="danger" style={{ flex: 1 }} busy={busy === 'delete'} onPress={async () => {
           if (!confirmDelete) { setConfirmDelete(true); return; }
           setBusy('delete');

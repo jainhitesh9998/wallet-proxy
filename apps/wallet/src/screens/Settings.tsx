@@ -104,6 +104,9 @@ export default function SettingsScreen({ navigation }: NativeStackScreenProps<Ro
         <Segmented testID="settings-key-attestation" label="Key attestation" options={TRI} value={settings.keyAttestation} onChange={(v) => updateSettings({ keyAttestation: v })} />
         <Toggle testID="settings-high-assurance" label="Simulated high-assurance key storage" value={settings.highAssurance} onChange={(v) => updateSettings({ highAssurance: v })}
           hint="Attests iso_18045_high key storage and user authentication (a simulated WSCD; keys are still software keys). Needed for issuers that require it, e.g. Animo key-attestation offers." />
+        <Segmented testID="settings-batch" label="Instances per credential" options={['1', '3', '5'] as const} value={settings.batchSize}
+          onChange={(v) => updateSettings({ batchSize: v })} />
+        <Text style={s.hint}>From issuers that support batch issuance: each instance has its own key, and every verifier gets one not shown before, so verifiers cannot link your presentations.</Text>
       </Section>
 
       <Section title="Danger zone">

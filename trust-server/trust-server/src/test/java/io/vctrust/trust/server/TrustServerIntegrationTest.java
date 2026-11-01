@@ -460,9 +460,14 @@ class TrustServerIntegrationTest {
         var ftp = get("/api/v1/revocation/crl?url=ftp://crl.example/x.crl", "key-a");
         assertThat(ftp.statusCode()).isEqualTo(400);
         assertThat(json(ftp).get("code")).isEqualTo("invalid_request");
-        var plainHttp = get("/api/v1/revocation/crl?url=http://crl.example/x.crl", "key-a");
-        assertThat(plainHttp.statusCode()).isEqualTo(400);
-        assertThat(json(plainHttp).get("code")).isEqualTo("invalid_request");
+        // CRL distribution points are mostly http: allowed for CRLs (they are signed), still https-only for anything else.
+        String plainHttpBase = UPSTREAM_BASE.replace("localhost", "127.0.0.1"); // not in http-allowed-hosts
+        var plainHttp = getBytes("/api/v1/revocation/crl?url=" + plainHttpBase + "/crl/iaca.crl", "key-a");
+        assertThat(plainHttp.statusCode()).isEqualTo(200);
+        assertThat(RevocationChecker.Crl.parse(plainHttp.body(), null, Instant.now()).issuedBy(IACA.certificate())).isTrue();
+        var httpStatusList = get("/api/v1/revocation/status-list?uri=" + plainHttpBase + "/status/token", "key-a");
+        assertThat(httpStatusList.statusCode()).isEqualTo(400);
+        assertThat(json(httpStatusList).get("detail").toString()).contains("Only https");
         assertThat(get("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/crl/iaca.crl", null).statusCode()).isEqualTo(401);
 
         var token = getBytes("/api/v1/revocation/status-list?uri=" + UPSTREAM_BASE + "/status/token", "key-a",
@@ -549,6 +554,30 @@ class TrustServerIntegrationTest {
         assertThat(post("/trqp/authorization", "key-a", Map.of("entity_id", "x")).statusCode()).isEqualTo(400);
         var rec = json(post("/trqp/recognition", "key-admin", Map.of("entity_id", "fw-a", "authority_id", "fw-b", "action", "recognize", "resource", "listed")));
         assertThat(rec.get("recognized")).isEqualTo(true);
+    }
+
+    @Test
+    void noSpellingOfAProtectedPathSkipsAuthentication() throws Exception {
+        // Each of these reached the admin API without credentials when the filter compared raw path prefixes.
+        assertThat(get("/admin;x=y/v1/registry", null).statusCode()).isEqualTo(400);
+        assertThat(get("/admin;x/v1/clients", null).statusCode()).isEqualTo(400);
+        assertThat(json(get("/admin;x/v1/clients", null)).get("code")).isEqualTo("invalid_request");
+        assertThat(put("/admin;x/v1/managed/anchors/x1", "nobody", Map.of("domain", "mdoc-iaca")).statusCode()).isEqualTo(400);
+        assertThat(get("/%61dmin/v1/registry", null).statusCode()).isEqualTo(401);
+        assertThat(get("/%61dmin/v1/registry", "key-a").statusCode()).isEqualTo(403);
+        assertThat(get("/%61dmin/v1/registry", "key-admin").statusCode()).isEqualTo(200);
+        assertThat(get("/admin/v1/registry", null, "X-Forwarded-Prefix", "/x").statusCode()).isEqualTo(401);
+        assertThat(get("/admin/v1/registry", "key-a", "X-Forwarded-Prefix", "/x").statusCode()).isEqualTo(403);
+        assertThat(get("/admin/v1/registry", "key-admin").statusCode()).isEqualTo(200);
+        // Authentication is the default; only discovery, keys, health and the API description are public.
+        assertThat(get("/actuator/health", null).statusCode()).isEqualTo(200);
+        assertThat(get("/.well-known/jwks.json", null).statusCode()).isEqualTo(200);
+        assertThat(get("/actuator/metrics", null).statusCode()).isEqualTo(401);
+        assertThat(get("/actuator/metrics", "key-a").statusCode()).isEqualTo(403);
+        assertThat(get("/actuator/metrics", "key-admin").statusCode()).isEqualTo(200);
+        assertThat(get("/no-such-page", null).statusCode()).isEqualTo(401);
+        // Encoded characters that DIDs need still work.
+        assertThat(get("/api/v1/did/did:web:example.com%3A8443", "key-a").statusCode()).isNotIn(400, 401, 403);
     }
 
     @Test

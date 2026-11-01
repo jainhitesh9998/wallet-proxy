@@ -42,8 +42,9 @@ import java.util.stream.Collectors;
 
 /**
  * Outbound HTTP for everything the service fetches on behalf of clients. Defends against SSRF: only https
- * (http for explicitly allowed development hosts), no private / loopback / link-local / CGNAT targets unless
- * allowed, redirects re-validated hop by hop, response size and total time capped.
+ * (http for explicitly allowed development hosts, and for CRLs through {@link #allowingPlainHttp()}), no private /
+ * loopback / link-local / CGNAT targets unless allowed, redirects re-validated hop by hop, response size and total
+ * time capped.
  * <p>
  * Host names are resolved exactly once per connection, by a {@link DnsResolver} that drops the request when any
  * address is internal. The socket then connects to the addresses that were checked, so a DNS answer that changes
@@ -94,12 +95,25 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
 
     @Override
     public Response execute(Request request) throws IOException {
+        return execute(request, false);
+    }
+
+    /**
+     * This fetcher, also for plain http URLs; every other check (addresses, redirects, size, time) is unchanged. Only
+     * for signed objects whose integrity does not rest on TLS: CRLs, whose distribution points are mostly http
+     * (RFC 5280 §4.2.1.13; a CRL is verified against its issuer).
+     */
+    public HttpFetcher allowingPlainHttp() {
+        return request -> execute(request, true);
+    }
+
+    private Response execute(Request request, boolean plainHttp) throws IOException {
         URI uri = request.uri();
         String method = request.method();
         Duration timeout = request.timeout() != null ? request.timeout() : cfg.getReadTimeout();
         long deadline = System.nanoTime() + cfg.getTotalTimeout().toNanos();
         for (int hop = 0; hop <= cfg.getMaxRedirects(); hop++) {
-            check(uri);
+            check(uri, plainHttp);
             HttpUriRequestBase req = "POST".equals(method) ? new HttpPost(uri) : new HttpGet(uri);
             request.headers().forEach(req::setHeader);
             if ("POST".equals(method) && request.body() != null) {
@@ -157,13 +171,13 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
     }
 
     /** Scheme and host rules; the address check happens at connect time, in {@link GuardedDnsResolver}. */
-    void check(URI uri) throws IOException {
+    void check(URI uri, boolean plainHttp) throws IOException {
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
         if (host.isEmpty()) {
             throw new BlockedRequestException("URL has no host: " + uri);
         }
-        if (!"https".equals(scheme) && !("http".equals(scheme) && httpHosts.contains(host))) {
+        if (!"https".equals(scheme) && !("http".equals(scheme) && (plainHttp || httpHosts.contains(host)))) {
             throw new BlockedRequestException("Only https URLs may be fetched (got " + uri + ")");
         }
     }

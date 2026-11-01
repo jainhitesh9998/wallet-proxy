@@ -101,7 +101,8 @@ export async function fetchIssuerMetadata(credentialIssuer: string, f: typeof fe
     if (!r.ok) return null;
     const type = (r.headers.get('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase();
     if (type !== 'application/jwt') return (await r.json()) as Record<string, unknown>;
-    if (!signed) throw new Error('Issuer answered with signed metadata that was not asked for');
+    // Signed metadata only where it was asked for: the JSON retry below must not verify (and retry) again.
+    if (!signed || !acceptSigned) throw new Error('Issuer answered with signed metadata that was not asked for');
     const jwt = (await r.text()).trim();
     try {
       const v = await verifySignedMetadata(jwt, credentialIssuer, signed);

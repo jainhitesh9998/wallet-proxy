@@ -51,4 +51,8 @@ export class ExpiringCache {
     const e: Entry<T> = { value, storedAt: this.now(), expiresAt: this.now() + ttlMs };
     await this.store.set(key, JSON.stringify(e)).catch(() => undefined);
   }
+
+  async delete(key: string): Promise<void> {
+    await this.store.delete(key).catch(() => undefined);
+  }
 }

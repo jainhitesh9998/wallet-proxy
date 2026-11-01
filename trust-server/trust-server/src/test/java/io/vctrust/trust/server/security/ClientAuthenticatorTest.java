@@ -305,6 +305,115 @@ class ClientAuthenticatorTest {
         assertThat(run(filter, notAdmin).getStatus()).isEqualTo(403);
     }
 
+    @Test
+    void filterJudgesPathsAsSpringMvcRoutesThem() throws Exception {
+        TrustProperties p = props();
+        ClientRegistry clients = new ClientRegistry(p);
+        ClientAuthenticationFilter filter = new ClientAuthenticationFilter(authenticator(p), clients, null, true);
+        // Spellings that reached /admin controllers without credentials when the filter compared raw prefixes.
+        for (String path : List.of("/admin;x=y/v1/registry", "/admin;x/v1/clients", "/admin/v1;x/registry", "/api/v1/../../admin/v1/registry",
+                "/api/v1/%2e%2e/admin/v1/registry", "/admin%2Fv1/registry", "/admin%2fv1/registry", "/api\\..\\admin/v1/registry",
+                "/api/%5c../admin", "//admin/v1/registry", "/admin/./v1/registry", "/api/v1/did/%ZZ", "/api/v1/did/%00")) {
+            MockHttpServletResponse r = run(filter, request("GET", path, null));
+            assertThat(r.getStatus()).as(path).isEqualTo(400);
+            assertThat(Json.parseObject(r.getContentAsString())).as(path).containsEntry("code", "invalid_request");
+        }
+        assertThat(run(filter, request("PUT", "/admin;x/v1/managed/anchors/a1", "wallet-key")).getStatus()).isEqualTo(400);
+
+        // Decoded spellings are recognised as the admin path they route to.
+        assertThat(run(filter, request("GET", "/%61dmin/v1/registry", null)).getStatus()).isEqualTo(401);
+        assertThat(run(filter, request("GET", "/%61dmin/v1/registry", "wallet-key")).getStatus()).isEqualTo(403);
+        assertThat(passes(filter, request("GET", "/%61dmin/v1/registry", "ops-key"))).isTrue();
+        assertThat(run(filter, request("GET", "/ADMIN/v1/registry", "wallet-key")).getStatus()).isEqualTo(403);
+        assertThat(run(filter, request("GET", "/admin", "wallet-key")).getStatus()).isEqualTo(403);
+        // A forwarded prefix moves the context path, not the path within the application.
+        MockHttpServletRequest prefixed = request("GET", "/x/admin/v1/registry", "wallet-key");
+        prefixed.setContextPath("/x");
+        assertThat(run(filter, prefixed).getStatus()).isEqualTo(403);
+
+        // Public paths need no client; everything else does, including unknown paths and operational endpoints.
+        for (String path : List.of("/.well-known/trust-service", "/.well-known/jwks.json", "/actuator/health", "/actuator/health/liveness",
+                "/v3/api-docs", "/swagger-ui/index.html")) {
+            assertThat(passes(filter, request("GET", path, null))).as(path).isTrue();
+        }
+        assertThat(run(filter, request("GET", "/actuator/metrics", null)).getStatus()).isEqualTo(401);
+        assertThat(run(filter, request("GET", "/actuator/metrics", "wallet-key")).getStatus()).isEqualTo(403);
+        assertThat(passes(filter, request("GET", "/actuator/metrics", "ops-key"))).isTrue();
+        assertThat(run(filter, request("GET", "/no-such-page", null)).getStatus()).isEqualTo(401);
+        assertThat(run(filter, request("GET", "/api/v1/issuers", null)).getStatus()).isEqualTo(401);
+        assertThat(passes(filter, request("GET", "/api/v1/did/did:web:example.com%3A8443", "wallet-key"))).isTrue();
+        assertThat(passes(filter, request("GET", "/1.0/identifiers/did:web:example.com%253A8443", "wallet-key"))).isTrue();
+        assertThat(passes(filter, request("OPTIONS", "/api/v1/issuers", null))).isTrue();
+    }
+
+    @Test
+    void anonymousRateLimitKeyIgnoresForwardedHeadersExceptFromTrustedProxies() throws Exception {
+        TrustProperties p = props();
+        p.getAnonymous().setEnabled(true);
+        p.getAuth().setTrustedProxies(List.of("10.0.0.0/8"));
+        ClientRegistry clients = new ClientRegistry(p);
+        ClientAuthenticator auth = authenticator(p);
+        ClientAuthenticationFilter filter = new ClientAuthenticationFilter(auth, clients, new RateLimiter(60, 1, () -> 0L), true);
+
+        MockHttpServletRequest first = anonymous("203.0.113.9", null);
+        assertThat(run(filter, first).getStatus()).isEqualTo(200);
+        // The same caller claiming another address, in the header or through a forwarded-header wrapper: same bucket.
+        assertThat(run(filter, anonymous("203.0.113.9", "198.51.100.1")).getStatus()).isEqualTo(429);
+        MockHttpServletRequest wrapped = anonymous("203.0.113.9", null);
+        HttpServletRequestWrapper spoofed = new HttpServletRequestWrapper(wrapped) {
+            @Override
+            public String getRemoteAddr() {
+                return "198.51.100.2";
+            }
+        };
+        MockHttpServletResponse limited = new MockHttpServletResponse();
+        filter.doFilter(spoofed, limited, new MockFilterChain());
+        assertThat(limited.getStatus()).isEqualTo(429);
+        assertThat(auth.clientAddress(spoofed)).isEqualTo("203.0.113.9");
+
+        // Behind a trusted proxy the caller is the entry that proxy appended, not what the caller put in front of it.
+        assertThat(auth.clientAddress(anonymous("10.1.1.1", "1.2.3.4, 198.51.100.7"))).isEqualTo("198.51.100.7");
+        assertThat(auth.clientAddress(anonymous("10.1.1.1", "198.51.100.7, 10.2.2.2"))).isEqualTo("198.51.100.7");
+        assertThat(auth.clientAddress(anonymous("10.1.1.1", null))).isEqualTo("10.1.1.1");
+        assertThat(auth.clientAddress(anonymous("10.1.1.1", "unknown"))).isEqualTo("10.1.1.1");
+        assertThat(run(filter, anonymous("10.1.1.1", "198.51.100.7")).getStatus()).isEqualTo(200);
+        assertThat(run(filter, anonymous("10.1.1.1", "1.2.3.4, 198.51.100.7")).getStatus()).isEqualTo(429);
+        assertThat(run(filter, anonymous("10.1.1.1", "198.51.100.8")).getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void forwardedForDoesNotMakeAPeerATrustedCertificateProxy() throws Exception {
+        String pem = "-----BEGIN CERTIFICATE-----\n" + Base64.getMimeEncoder(64, "\n".getBytes()).encodeToString(CLIENT_CERT.certificate().getEncoded())
+                + "\n-----END CERTIFICATE-----\n";
+        MockHttpServletRequest r = anonymous("203.0.113.9", "10.0.0.1");
+        r.addHeader("X-SSL-Client-Cert", URLEncoder.encode(pem, StandardCharsets.UTF_8));
+        assertThat(rejected(authenticator(props()).authenticate(r)).detail()).isEqualTo("Client authentication required");
+    }
+
+    static MockHttpServletRequest request(String method, String uri, String apiKey) {
+        MockHttpServletRequest r = new MockHttpServletRequest(method, uri);
+        if (apiKey != null) {
+            r.addHeader("Authorization", "Bearer " + apiKey);
+        }
+        return r;
+    }
+
+    static MockHttpServletRequest anonymous(String peer, String forwardedFor) {
+        MockHttpServletRequest r = new MockHttpServletRequest("GET", "/api/v1/issuers");
+        r.setRemoteAddr(peer);
+        if (forwardedFor != null) {
+            r.addHeader("X-Forwarded-For", forwardedFor);
+        }
+        return r;
+    }
+
+    /** Whether the filter let the request through to the controller. */
+    static boolean passes(ClientAuthenticationFilter filter, MockHttpServletRequest request) throws Exception {
+        MockFilterChain chain = new MockFilterChain();
+        filter.doFilter(request, new MockHttpServletResponse(), chain);
+        return chain.getRequest() != null;
+    }
+
     static MockHttpServletResponse run(ClientAuthenticationFilter filter, MockHttpServletRequest request) throws Exception {
         MockHttpServletResponse response = new MockHttpServletResponse();
         filter.doFilter(request, response, new MockFilterChain());

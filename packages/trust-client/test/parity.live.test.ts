@@ -15,6 +15,7 @@ const ADMIN = 'admin-key';
 const DID = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK';
 const MDL = 'org.iso.18013.5.1.mDL';
 const ANIMO = 'https://playground.animo.id/oid4vci/b39e71cf-9cf1-4723-a9cd-66f42a510b36';
+const OTHER_DID = 'did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9';
 const FARMER_KID = 'did:web:inji.github.io:inji-config:collab:farmer#zZivrLb-k3GP7I1RFH1ZrAAMjggK8ohTpjr-q8GT3Sc';
 
 const managed = {
@@ -73,6 +74,11 @@ const CASES: Array<[string, TrustQuery]> = [
   ['verifier x509_san_dns, SAN mismatch', verifier('x509_san_dns:other.example', [b64(pem('rp'))], 'https://other.example/post')],
   ['verifier x509_hash without x5c', verifier(`x509_hash:${rp.sha256}`)],
   ['verifier redirect_uri', verifier('redirect_uri:https://rp.parity.example/cb')],
+  // Identifiers bound to the presented key: a claim alone never makes a key TRUSTED.
+  ['verifier x509_san_dns, certificate outside the anchors', verifier('x509_san_dns:verifier.example', [b64(pem('selfsigned-verifier'))], 'https://verifier.example/post')],
+  ['issuer URL claimed with an unanchored chain', issuer({ identifier: 'https://dmv.parity.example', x5c: [b64(pem('rogue-ds'))] }, 'mso_mdoc', MDL)],
+  ['issuer URL of another entity than the anchor', issuer({ identifier: 'https://open.parity.example', x5c: [b64(pem('ds'))] }, 'mso_mdoc', MDL)],
+  ['DID issuer claimed with another DID key', issuer({ identifier: DID, kid: `${OTHER_DID}#0` }, 'ldp_vc')],
   ['live: Animo issuer metadata URL', issuer({ identifier: ANIMO }, 'mso_mdoc', MDL)],
   ['live: MOSIP did:web issuer key', issuer({ identifier: 'https://injicertify-farmer.collab.mosip.net', kid: FARMER_KID }, 'ldp_vc', 'FarmerCredential')],
   ['live: MOSIP did:web, unknown key', issuer({ identifier: 'https://injicertify-farmer.collab.mosip.net', kid: `${FARMER_KID.split('#')[0]}#rotated` }, 'ldp_vc')],
