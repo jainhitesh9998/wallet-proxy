@@ -1,0 +1,76 @@
+# Curated demo registry. Entities here carry framework membership, display names, identifiers and
+# authorizations; live sources (oid4vci-discovery, x509-bundle) merge into them by id.
+entities:
+  - id: animo-utopia
+    framework: animo-playground
+    roles: [CREDENTIAL_ISSUER]
+    display:
+      - {locale: en, name: "Utopia Government (Animo playground)", logoUri: "https://playground.animo.id/assets/issuers/utopia/issuer.png"}
+    identifiers:
+      - {type: URL, value: "https://playground.animo.id/oid4vci/b39e71cf-9cf1-4723-a9cd-66f42a510b36"}
+  - id: animo-bdr
+    framework: animo-playground
+    roles: [CREDENTIAL_ISSUER]
+    display:
+      - {locale: en, name: "Bundesdruckerei (Animo playground)", logoUri: "https://playground.animo.id/assets/issuers/bdr/issuer.png"}
+    identifiers:
+      - {type: URL, value: "https://playground.animo.id/oid4vci/188e2459-6da8-4431-9062-2fcdac274f41"}
+  - id: animo-verifier
+    framework: animo-playground
+    roles: [VERIFIER]
+    display:
+      - {locale: en, name: "Animo Playground Verifier"}
+    identifiers:
+      - {type: DNS, value: playground.animo.id}
+      - {type: URL, value: "https://playground.animo.id"}
+    authorizations:
+      - {format: mso_mdoc}
+      - {format: dc+sd-jwt}
+      - {format: ldp_vc}
+
+  - id: mosip-land
+    framework: mosip-collab
+    roles: [CREDENTIAL_ISSUER]
+    display:
+      - {locale: en, name: "MOSIP Land Registry (collab)"}
+    identifiers:
+      - {type: URL, value: "https://injicertify-landregistry.collab.mosip.net"}
+      - did:web:injicertify-landregistry.collab.mosip.net
+      # Inji Certify signs with a key published under a second DID (same key material).
+      - did:web:inji.github.io:inji-config:collab:landregistry
+  - id: mosip-farmer
+    framework: mosip-collab
+    roles: [CREDENTIAL_ISSUER]
+    display:
+      - {locale: en, name: "MOSIP Farmer Registry (collab)"}
+    identifiers:
+      - {type: URL, value: "https://injicertify-farmer.collab.mosip.net"}
+      - did:web:injicertify-farmer.collab.mosip.net
+      - did:web:inji.github.io:inji-config:collab:farmer
+  - id: mosip-mdl
+    framework: mosip-collab
+    roles: [CREDENTIAL_ISSUER]
+    display:
+      - {locale: en, name: "MOSIP Mock mDL issuer (collab)"}
+    identifiers:
+      - {type: URL, value: "https://injicertify-mdl.collab.mosip.net"}
+  - id: mosip-mock
+    framework: mosip-collab
+    roles: [CREDENTIAL_ISSUER]
+    display:
+      - {locale: en, name: "MOSIP Mock identity issuer (collab)"}
+    identifiers:
+      - {type: URL, value: "https://injicertify-mock.collab.mosip.net"}
+      - did:web:injicertify-mock.collab.mosip.net
+
+anchors:
+  # The collab mDL signer does not follow the ISO 18013-5 Document Signer profile (no DS EKU, CA leaf);
+  # relaxProfile keeps it usable for the sandbox while surfacing every deviation as a warning.
+  - id: mosip-collab-mdl-root
+    domain: mdoc-iaca
+    framework: mosip-collab
+    entity: mosip-mdl
+    certificateLocation: classpath:trust/certs/mosip-collab-mdl-root.pem
+    constraints:
+      docTypes: [org.iso.18013.5.1.mDL]
+      relaxProfile: true

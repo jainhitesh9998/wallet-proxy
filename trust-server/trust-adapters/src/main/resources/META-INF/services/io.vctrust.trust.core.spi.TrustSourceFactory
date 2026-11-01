@@ -1,0 +1,8 @@
+io.vctrust.trust.adapters.statik.StaticTrustSourceFactory
+io.vctrust.trust.adapters.x509.X509BundleSourceFactory
+io.vctrust.trust.adapters.oid4vci.Oid4vciDiscoverySourceFactory
+io.vctrust.trust.adapters.etsi.EtsiTrustedListSourceFactory
+io.vctrust.trust.adapters.lote.LoteSourceFactory
+io.vctrust.trust.adapters.vical.VicalSourceFactory
+io.vctrust.trust.adapters.federation.OpenIdFederationSourceFactory
+io.vctrust.trust.adapters.ebsi.EbsiTirSourceFactory

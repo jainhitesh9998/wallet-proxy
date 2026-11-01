@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "VC Trust Wallet",
+    "slug": "vctrust-wallet",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": ["vctwallet", "openid-credential-offer", "openid4vp", "haip-vci", "haip-vp", "io.mosip.residentapp.inji"],
+    "ios": { "supportsTablet": true, "bundleIdentifier": "dev.vctrust.wallet" },
+    "android": { "package": "dev.vctrust.wallet" },
+    "web": { "bundler": "metro", "output": "single", "name": "VC Trust Wallet" },
+    "plugins": [
+      ["expo-camera", { "cameraPermission": "Scan credential offer and presentation request QR codes", "recordAudioAndroid": false }]
+    ]
+  }
+}

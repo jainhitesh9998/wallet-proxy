@@ -1,0 +1,30 @@
+export { TrustClient, createTrustClient } from './client.js';
+export type { TrustClientConfig, LocalAnchorConfig, Logger, CredentialTrustResult } from './client.js';
+export * from './types.js';
+export { TrustServiceError, TrustServiceUnavailableError, TrustIntegrityError } from './errors.js';
+export { MemoryCacheStore, KeyValueCacheStore, ExpiringCache } from './cache/store.js';
+export type { CacheStore, KeyValueStorage } from './cache/store.js';
+export type { ServiceKeyPolicy, SnapshotData } from './snapshot/snapshot.js';
+export { CircuitBreaker } from './transport/circuit.js';
+
+// Building blocks reused by wallets and verifiers.
+export { extractIssuerInfo, issuerTrustQuery, decodeIssuerSigned, parseCoseSign1, coseX5chain } from './credential/extract.js';
+export type { IssuerInfo, CoseSign1 } from './credential/extract.js';
+export { parseCertificate } from './x509/certificate.js';
+export type { Certificate } from './x509/certificate.js';
+export { validateCertificateChain } from './x509/validate.js';
+export type { LocalAnchor } from './x509/validate.js';
+export { decodeJws, verifyJws, x5cFromHeader, toPublicKey } from './jose/jws.js';
+export type { DecodedJws } from './jose/jws.js';
+export { verifySignature, coseAlgToJose } from './crypto/verify.js';
+export type { JoseAlg } from './crypto/verify.js';
+export { publicKeyFromJwk, publicKeyToJwk, jwkThumbprint, jwkThumbprintBytes, publicJwk, CURVES } from './crypto/keys.js';
+export type { Jwk, PublicKey } from './crypto/keys.js';
+export { digest, sha256 } from './crypto/hash.js';
+export { parseDid, findVerificationMethod, hasRelationship, didError } from './did/did.js';
+export { verificationMethodPublicKey, verificationMethodJwk, samePublicKey, publicKeyFromMulticodec, decodeMultibase } from './did/keys.js';
+export { base58Encode, base58Decode, writeVarint, MULTICODEC } from './did/multibase.js';
+export { resolveDidLocally } from './did/resolver.js';
+export { fetchIssuerMetadata, fetchAuthorizationServerMetadata, wellKnownInserted } from './metadata/issuer.js';
+export * as cbor from './encoding/cbor.js';
+export * as bytes from './util/bytes.js';

@@ -1,0 +1,95 @@
+package io.vctrust.trust.adapters;
+
+import io.vctrust.trust.adapters.oid4vci.Oid4vciDiscoverySourceFactory;
+import io.vctrust.trust.adapters.statik.StaticTrustSourceFactory;
+import io.vctrust.trust.adapters.x509.X509BundleSourceFactory;
+import io.vctrust.trust.core.model.EntityRole;
+import io.vctrust.trust.core.model.IdentifierType;
+import io.vctrust.trust.core.model.TrustDomain;
+import io.vctrust.trust.core.spi.SourceDefinition;
+import io.vctrust.trust.core.testing.TestPki;
+import io.vctrust.trust.core.x509.Certificates;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class StaticAndBundleSourcesTest {
+
+    @Test
+    void staticRegistryParsesEntitiesAnchorsAndPolicies() throws Exception {
+        var iaca = TestPki.rootCa("CN=IACA,C=UT");
+        String yaml = """
+                entities:
+                  - id: utopia-dmv
+                    roles: [CREDENTIAL_ISSUER]
+                    name: Utopia DMV
+                    identifiers:
+                      - {type: URL, value: "https://issuer.example/utopia"}
+                      - did:web:issuer.example
+                    authorizations:
+                      - {format: mso_mdoc, type: org.iso.18013.5.1.mDL}
+                      - {format: vc+sd-jwt, type: "urn:eudi:pid:1"}
+                    metadataPolicy:
+                      oauth_authorization_server:
+                        token_endpoint: {default: "https://issuer.example/token"}
+                anchors:
+                  - domain: mdoc-iaca
+                    entity: utopia-dmv
+                    constraints: {docTypes: [org.iso.18013.5.1.mDL]}
+                    certificate: |
+                %s
+                """.formatted(Certificates.toPem(iaca.certificate()).indent(6));
+        var ctx = new TestContext().put("mem:reg.yaml", yaml);
+        var def = new SourceDefinition("s", "static", "utopia", null, true, Map.of("location", "mem:reg.yaml"));
+        var r = new StaticTrustSourceFactory().create(def, ctx).load();
+        assertThat(r.warnings()).isEmpty();
+        var e = r.entities().getFirst();
+        assertThat(e.frameworkId()).isEqualTo("utopia");
+        assertThat(e.hasRole(EntityRole.CREDENTIAL_ISSUER)).isTrue();
+        assertThat(e.identifiers()).extracting(i -> i.type()).contains(IdentifierType.URL, IdentifierType.DID);
+        assertThat(e.authorizations()).extracting(a -> a.format()).containsExactly("mso_mdoc", "dc+sd-jwt");
+        assertThat(e.metadataPolicy()).containsKey("oauth_authorization_server");
+        assertThat(r.anchors()).hasSize(1);
+        assertThat(r.anchors().getFirst().docTypes()).containsExactly("org.iso.18013.5.1.mDL");
+        assertThat(r.anchors().getFirst().entityId()).isEqualTo("utopia-dmv");
+    }
+
+    @Test
+    void x509BundleFromJsonField() throws Exception {
+        var ca = TestPki.rootCa("CN=Animo,C=NL");
+        var ctx = new TestContext();
+        ctx.http.json("https://playground.example/api/x509", "{\"base64\":\"" + Certificates.toBase64(ca.certificate()) + "\"}");
+        var def = new SourceDefinition("b", "x509-bundle", "animo", null, true, Map.of(
+                "domain", "mdoc-iaca", "certificateLocation", "https://playground.example/api/x509", "certificateJsonField", "base64",
+                "docTypes", List.of("org.iso.18013.5.1.mDL")));
+        var r = new X509BundleSourceFactory().create(def, ctx).load();
+        assertThat(r.anchors()).singleElement().satisfies(a -> {
+            assertThat(a.domain()).isEqualTo(TrustDomain.MDOC_IACA);
+            assertThat(a.certificate()).isEqualTo(ca.certificate());
+            assertThat(a.docTypes()).containsExactly("org.iso.18013.5.1.mDL");
+        });
+    }
+
+    @Test
+    void oid4vciDiscoveryBuildsIssuerEntities() throws Exception {
+        var ctx = new TestContext();
+        ctx.http.json("https://issuer.example/.well-known/openid-credential-issuer/t1", """
+                {"credential_issuer":"https://issuer.example/t1","credential_endpoint":"https://issuer.example/t1/credential",
+                 "display":[{"name":"Tenant One","locale":"en","logo":{"uri":"https://issuer.example/logo.png"}}],
+                 "credential_configurations_supported":{
+                   "mdl":{"format":"mso_mdoc","doctype":"org.iso.18013.5.1.mDL"},
+                   "degree":{"format":"ldp_vc","credential_definition":{"@context":["https://www.w3.org/ns/credentials/v2"],"type":["VerifiableCredential","UniversityDegreeCredential"]}}}}""");
+        ctx.http.json("https://issuer.example/.well-known/oauth-authorization-server/t1", "{\"issuer\":\"https://issuer.example/t1\"}");
+        var def = new SourceDefinition("d", "oid4vci-discovery", "fw", null, true,
+                Map.of("issuers", List.of(Map.of("url", "https://issuer.example/t1", "entityId", "tenant-one"))));
+        var r = new Oid4vciDiscoverySourceFactory().create(def, ctx).load();
+        var e = r.entities().getFirst();
+        assertThat(e.id()).isEqualTo("tenant-one");
+        assertThat(e.displayName("en")).isEqualTo("Tenant One");
+        assertThat(e.authorizations()).extracting(a -> a.type()).containsExactlyInAnyOrder("org.iso.18013.5.1.mDL", "UniversityDegreeCredential");
+        assertThat(e.metadata()).containsKey("openid_credential_issuer");
+    }
+}

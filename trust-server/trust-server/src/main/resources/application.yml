@@ -1,0 +1,173 @@
+# VC Trust Service — default (demo) configuration.
+# Frameworks group trust information; sources feed them; clients see only the frameworks they accept.
+server:
+  port: 8090
+  forward-headers-strategy: framework
+
+spring:
+  application:
+    name: vc-trust-service
+  datasource:
+    url: jdbc:h2:file:./data/trust;MODE=PostgreSQL
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+  jackson:
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    io.vctrust: INFO
+
+trust:
+  service:
+    issuer: http://localhost:8090
+    signing-key-file: ./data/signing-key.jwk
+    decision-ttl: PT1H
+    snapshot-ttl: PT24H
+  http:
+    connect-timeout: PT5S
+    read-timeout: PT15S
+    allow-private-networks: false
+  cache:
+    metadata-max-ttl: PT1H
+    did-ttl: PT15M
+    stale-if-error: PT24H
+  did:
+    # Delegate DID methods without a native driver (did:key, did:jwk, did:web are native).
+    universal-resolver-url: https://dev.uniresolver.io
+    universal-resolver-methods: ["*"]
+    registries:
+      ebsi: https://api-pilot.ebsi.eu/did-registry/v5/identifiers/{did}
+  anonymous:
+    enabled: true
+    frameworks: []
+  clients:
+    - id: demo-wallet
+      name: Demo wallet
+      api-key: demo-wallet-key
+      frameworks: [animo-playground, mosip-collab, local]
+    - id: demo-verifier
+      name: Demo verifier
+      api-key: demo-verifier-key
+      frameworks: [animo-playground, mosip-collab, local]
+      strict-authorization: true
+      allow-unregistered-metadata: false
+    - id: admin
+      name: Operator
+      api-key: admin-key
+      admin: true
+
+  frameworks:
+    - id: animo-playground
+      name: Animo OpenID4VC Playground
+      description: Credo-based EUDI-style playground issuers and verifier (mdoc / SD-JWT VC, HAIP features)
+      governance-uri: https://playground.animo.id
+    - id: mosip-collab
+      name: MOSIP Collab sandbox
+      description: Inji Certify issuers (W3C VCDM 2.0 JSON-LD, mDL) on the MOSIP collab environment
+      governance-uri: https://docs.inji.io
+    - id: local
+      name: Locally managed
+      description: Entities and anchors maintained through the admin API
+    - id: eu-lotl
+      name: EU List of Trusted Lists
+      governance-uri: https://ec.europa.eu/tools/lotl/eu-lotl.xml
+    - id: ebsi-pilot
+      name: EBSI pilot network
+      governance-uri: https://api-pilot.ebsi.eu
+
+  sources:
+    - id: demo-registry
+      type: static
+      refresh: PT1H
+      properties:
+        location: classpath:trust/demo-registry.yaml
+    # The playground's IACA / issuer / verifier root, fetched live.
+    - id: animo-root-mdoc
+      type: x509-bundle
+      framework: animo-playground
+      refresh: PT6H
+      properties:
+        domain: mdoc-iaca
+        certificateLocation: https://playground.animo.id/api/x509
+        certificateJsonField: base64
+    - id: animo-root-issuer
+      type: x509-bundle
+      framework: animo-playground
+      refresh: PT6H
+      properties:
+        domain: credential-issuer
+        certificateLocation: https://playground.animo.id/api/x509
+        certificateJsonField: base64
+    - id: animo-root-verifier
+      type: x509-bundle
+      framework: animo-playground
+      refresh: PT6H
+      properties:
+        domain: verifier-access
+        certificateLocation: https://playground.animo.id/api/x509
+        certificateJsonField: base64
+    # Live OpenID4VCI metadata enriches the static entries (merge by entityId).
+    - id: animo-issuers
+      type: oid4vci-discovery
+      framework: animo-playground
+      refresh: PT30M
+      properties:
+        issuers:
+          - url: https://playground.animo.id/oid4vci/b39e71cf-9cf1-4723-a9cd-66f42a510b36
+            entityId: animo-utopia
+          - url: https://playground.animo.id/oid4vci/188e2459-6da8-4431-9062-2fcdac274f41
+            entityId: animo-bdr
+    - id: mosip-issuers
+      type: oid4vci-discovery
+      framework: mosip-collab
+      refresh: PT30M
+      properties:
+        issuers:
+          - url: https://injicertify-landregistry.collab.mosip.net
+            entityId: mosip-land
+          - url: https://injicertify-farmer.collab.mosip.net
+            entityId: mosip-farmer
+          - url: https://injicertify-mdl.collab.mosip.net
+            entityId: mosip-mdl
+          - url: https://injicertify-mock.collab.mosip.net
+            entityId: mosip-mock
+    - id: managed
+      type: managed
+      framework: local
+      refresh: PT5M
+    # Real-world lists, available but off by default (large / network heavy).
+    - id: eu-lotl
+      type: etsi-tl
+      framework: eu-lotl
+      enabled: false
+      refresh: PT12H
+      properties:
+        location: https://ec.europa.eu/tools/lotl/eu-lotl.xml
+        territories: [AT, BE]
+        includeAllServiceTypes: false
+    - id: ebsi-pilot
+      type: ebsi-tir
+      framework: ebsi-pilot
+      refresh: PT12H
+      properties:
+        baseUrl: https://api-pilot.ebsi.eu/trusted-issuers-registry/v5
+        crawl: false

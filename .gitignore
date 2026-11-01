@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+target/
+.expo/
+web-build/
+*.log
+.DS_Store
+test-ecosystem/pki/out/
+.runtime/
+playwright-report/
+test-results/
+*.tsbuildinfo
+dist-android/
+apps/wallet/src/config/*.generated.ts

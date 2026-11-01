@@ -1,0 +1,40 @@
+{
+  "name": "@vctrust/wallet-core",
+  "version": "0.1.0",
+  "description": "Platform-neutral OpenID4VCI 1.0 / OpenID4VP 1.0 / HAIP holder wallet core using @vctrust/trust-client",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "react-native": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "react-native": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:live": "LIVE=1 vitest run"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@vctrust/trust-client": "0.1.0",
+    "fflate": "^0.8.3",
+    "jsonld": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/jsonld": "^1.5.15",
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

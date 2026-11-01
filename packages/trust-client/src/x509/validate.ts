@@ -1,0 +1,201 @@
+/**
+ * Local RFC 5280-style path validation used when the trust service is unreachable. Mirrors the server's
+ * semantics: chains may include or omit the anchor, a pinned end-entity certificate is accepted directly,
+ * profile checks per trust domain, {@code relaxProfile} and {@code docTypes} anchor constraints.
+ */
+import { decodeOid, OID, parseCertificate, subjectCountry, type Certificate } from './certificate.js';
+import { readTlv } from '../encoding/der.js';
+import { verifySignature, type JoseAlg } from '../crypto/verify.js';
+import { base64Encode, bytesEqual } from '../util/bytes.js';
+import type { CertificateSummary, PathValidationResult, ValidationIssue } from '../types.js';
+
+export interface LocalAnchor {
+  certificate: Certificate;
+  domain: string;
+  id?: string;
+  frameworkId?: string;
+  entityId?: string;
+  status?: string;
+  constraints?: Record<string, unknown>;
+}
+
+export interface ValidateOptions {
+  time?: Date;
+  /** trust domain; selects the certificate profile */
+  domain?: string;
+  expectedDnsName?: string;
+  docType?: string;
+}
+
+const KNOWN_CRITICAL = new Set([OID.basicConstraints, OID.keyUsage, OID.extKeyUsage, OID.subjectAltName, '2.5.29.32', OID.issuerAltName]);
+
+export function summarize(c: Certificate): CertificateSummary {
+  return {
+    subject: c.subject, issuer: c.issuer, serialNumber: c.serialNumber,
+    notBefore: c.notBefore.toISOString(), notAfter: c.notAfter.toISOString(), sha256: c.sha256,
+    subjectKeyIdentifier: c.subjectKeyIdentifier, authorityKeyIdentifier: c.authorityKeyIdentifier,
+    dnsNames: c.dnsNames, ca: c.basicConstraints?.ca ?? false, certificate: base64Encode(c.der),
+  };
+}
+
+function sigAlg(c: Certificate): { alg: JoseAlg; format: 'raw' | 'der' } | null {
+  switch (c.signatureAlgorithm) {
+    case '1.2.840.10045.4.3.2': return { alg: 'ES256', format: 'der' };
+    case '1.2.840.10045.4.3.3': return { alg: 'ES384', format: 'der' };
+    case '1.2.840.10045.4.3.4': return { alg: 'ES512', format: 'der' };
+    case '1.3.101.112': return { alg: 'EdDSA', format: 'raw' };
+    case '1.2.840.113549.1.1.11': return { alg: 'RS256', format: 'raw' };
+    case '1.2.840.113549.1.1.12': return { alg: 'RS384', format: 'raw' };
+    case '1.2.840.113549.1.1.13': return { alg: 'RS512', format: 'raw' };
+    case '1.2.840.113549.1.1.10': {
+      const p = c.signatureParams;
+      let hash: JoseAlg = 'PS256';
+      if (p) {
+        const oids = findOids(p);
+        if (oids.includes('2.16.840.1.101.3.4.2.2')) hash = 'PS384';
+        else if (oids.includes('2.16.840.1.101.3.4.2.3')) hash = 'PS512';
+      }
+      return { alg: hash, format: 'raw' };
+    }
+    default: return null;
+  }
+}
+
+function findOids(der: Uint8Array): string[] {
+  const out: string[] = [];
+  const walk = (start: number, end: number) => {
+    let p = start;
+    while (p < end) {
+      const t = readTlv(der, p);
+      if (t.tag === 0x06) out.push(decodeOid(der.subarray(t.valueStart, t.end)));
+      else if (t.tag & 0x20) walk(t.valueStart, t.end);
+      p = t.end;
+    }
+  };
+  try { walk(0, der.length); } catch { /* ignore */ }
+  return out;
+}
+
+export function isSignedBy(cert: Certificate, issuer: Certificate): boolean {
+  const a = sigAlg(cert);
+  if (!a || !issuer.publicKey) return false;
+  return verifySignature(a.alg, issuer.publicKey, cert.tbs, cert.signature, a.format);
+}
+
+function issuedBy(cert: Certificate, issuer: Certificate): boolean {
+  return bytesEqual(cert.issuerRaw, issuer.subjectRaw) || cert.issuer === issuer.subject;
+}
+
+function profileName(domain?: string): string {
+  switch (domain) {
+    case 'mdoc-iaca': return 'iso18013-5-document-signer';
+    case 'credential-issuer': return 'credential-issuer';
+    case 'verifier-access': return 'verifier-access';
+    default: return 'none';
+  }
+}
+
+function profileIssues(domain: string | undefined, path: Certificate[], anchor: Certificate, opts: ValidateOptions): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const leaf = path[0]!;
+  const err = (code: string, message: string) => issues.push({ code, message, severity: 'ERROR' });
+  if (domain === 'mdoc-iaca') {
+    if (leaf.basicConstraints?.ca) err('mdoc.ds.is_ca', 'Document Signer certificate must not be a CA');
+    if (!leaf.extendedKeyUsage.includes(OID.mdlDocumentSigner)) err('mdoc.ds.eku', `Document Signer certificate lacks extended key usage ${OID.mdlDocumentSigner}`);
+    if (leaf.keyUsage && !leaf.keyUsage.digitalSignature) err('mdoc.ds.key_usage', 'Document Signer key usage must include digitalSignature');
+    const c1 = subjectCountry(leaf.subject);
+    const c2 = subjectCountry(anchor.subject);
+    if (c1 && c2 && c1.toUpperCase() !== c2.toUpperCase()) err('mdoc.ds.country', `Document Signer country ${c1} differs from IACA country ${c2}`);
+  } else if (domain === 'credential-issuer') {
+    if (leaf.keyUsage && !leaf.keyUsage.digitalSignature) err('issuer.key_usage', 'Signing certificate key usage must include digitalSignature');
+  } else if (domain === 'verifier-access') {
+    if (leaf.basicConstraints?.ca && path.length > 1) err('verifier.leaf_is_ca', 'Request signing certificate must not be a CA');
+    if (opts.expectedDnsName && !leaf.dnsNames.some((d) => d.toLowerCase() === opts.expectedDnsName!.toLowerCase())) {
+      err('verifier.san_dns', `Leaf certificate has no SAN dNSName matching ${opts.expectedDnsName}`);
+    }
+  }
+  return issues;
+}
+
+export function validateCertificateChain(chainIn: (Certificate | Uint8Array | string)[], anchors: LocalAnchor[],
+                                         opts: ValidateOptions = {}): PathValidationResult & { anchorRef?: LocalAnchor } {
+  const time = opts.time ?? new Date();
+  const profile = profileName(opts.domain);
+  const base = { profile, validationTime: time.toISOString() };
+  const chain = chainIn.map((c) => (typeof c === 'string' || c instanceof Uint8Array ? parseCertificate(c) : c));
+  if (chain.length === 0) {
+    return { ...base, valid: false, anchorFound: false, path: [], issues: [{ code: 'x509.empty_chain', message: 'No certificates supplied', severity: 'ERROR' }] };
+  }
+  const byHash = new Map(anchors.map((a) => [a.certificate.sha256, a]));
+  const path = [...chain];
+  let included: LocalAnchor | undefined;
+  while (path.length > 1 && byHash.has(path[path.length - 1]!.sha256)) included = byHash.get(path.pop()!.sha256);
+  const summaries = path.map(summarize);
+
+  const pinned = byHash.get(path[0]!.sha256);
+  if (pinned && path.length === 1) {
+    return finish([{ code: 'x509.pinned', message: 'Certificate is directly pinned as a trust anchor', severity: 'INFO' }], pinned, path, opts, time, base);
+  }
+  const top = path[path.length - 1]!;
+  const candidates = [...(included ? [included] : []), ...anchors.filter((a) => a !== included && issuedBy(top, a.certificate) && isSignedBy(top, a.certificate))];
+  if (candidates.length === 0) {
+    return { ...base, valid: false, anchorFound: false, path: summaries,
+      issues: [{ code: 'x509.no_anchor', message: `No trust anchor found for issuer ${top.issuer}`, severity: 'ERROR' }] };
+  }
+  let last: { issues: ValidationIssue[]; anchor: LocalAnchor } | undefined;
+  for (const anchor of candidates) {
+    const issues = checkPath(path, anchor, time);
+    if (!issues.some((i) => i.severity === 'ERROR')) return finish(issues, anchor, path, opts, time, base);
+    last = { issues, anchor };
+  }
+  return { ...base, valid: false, anchorFound: true, anchor: anchorSummary(last!.anchor), anchorRef: last!.anchor, path: summaries, issues: last!.issues };
+}
+
+function checkPath(path: Certificate[], anchor: LocalAnchor, time: Date): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const err = (code: string, message: string) => issues.push({ code, message, severity: 'ERROR' });
+  if (anchor.status && anchor.status !== 'ACTIVE') err('x509.anchor_status', `Trust anchor status is ${anchor.status}`);
+  if (time < anchor.certificate.notBefore || time > anchor.certificate.notAfter) err('x509.anchor_expired', `Trust anchor certificate is not valid at ${time.toISOString()}`);
+  for (let j = 0; j < path.length; j++) {
+    const c = path[j]!;
+    const issuer = j + 1 < path.length ? path[j + 1]! : anchor.certificate;
+    if (!issuedBy(c, issuer)) err('x509.path.name_chaining', `Issuer of certificate ${j} does not match subject of its issuer`);
+    if (!isSignedBy(c, issuer)) err('x509.path.invalid_signature', `Signature of certificate ${j} does not verify`);
+    if (time < c.notBefore || time > c.notAfter) err('x509.path.expired', `Certificate ${j} (${c.subject}) is not valid at ${time.toISOString()}`);
+    for (const crit of c.criticalExtensions) if (!KNOWN_CRITICAL.has(crit as never)) err('x509.path.unrecognized_critical_extension', `Certificate ${j} has unsupported critical extension ${crit}`);
+    if (j >= 1) {
+      if (!c.basicConstraints?.ca) err('x509.path.not_ca', `Intermediate certificate ${j} is not a CA`);
+      if (c.keyUsage && !c.keyUsage.keyCertSign) err('x509.path.key_usage', `Intermediate certificate ${j} cannot sign certificates`);
+      const pl = c.basicConstraints?.pathLen;
+      if (pl !== undefined && j - 1 > pl) err('x509.path.path_length', `Path length constraint of certificate ${j} exceeded`);
+    }
+  }
+  const apl = anchor.certificate.basicConstraints?.pathLen;
+  if (apl !== undefined && path.length - 1 > apl) err('x509.path.path_length', 'Trust anchor path length constraint exceeded');
+  return issues;
+}
+
+function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certificate[], opts: ValidateOptions, time: Date,
+                base: { profile: string; validationTime: string }): PathValidationResult & { anchorRef?: LocalAnchor } {
+  const issues = [...pathIssues];
+  let prof = profileIssues(opts.domain, path, anchor.certificate, opts);
+  if (anchor.constraints?.relaxProfile === true && prof.length > 0) {
+    prof = prof.map((i) => (i.severity === 'ERROR' ? { ...i, severity: 'WARNING' as const, message: `${i.message} (profile relaxed for this anchor)` } : i));
+    issues.push({ code: 'x509.profile_relaxed', message: `Certificate profile '${base.profile}' is relaxed for this trust anchor`, severity: 'WARNING' });
+  }
+  issues.push(...prof);
+  const docTypes = Array.isArray(anchor.constraints?.docTypes) ? (anchor.constraints!.docTypes as string[]) : [];
+  if (docTypes.length > 0 && opts.docType && !docTypes.includes(opts.docType)) {
+    issues.push({ code: 'x509.anchor_doctype', message: `Trust anchor is not authorized for doctype ${opts.docType}`, severity: 'ERROR' });
+  }
+  if (time < anchor.certificate.notBefore || time > anchor.certificate.notAfter) {
+    if (!issues.some((i) => i.code.startsWith('x509.anchor'))) issues.push({ code: 'x509.anchor_unusable', message: 'Trust anchor is not usable now', severity: 'ERROR' });
+  }
+  return { ...base, valid: !issues.some((i) => i.severity === 'ERROR'), anchorFound: true, anchor: anchorSummary(anchor), anchorRef: anchor,
+    path: path.map(summarize), issues };
+}
+
+function anchorSummary(a: LocalAnchor): Record<string, unknown> {
+  return { id: a.id ?? `${a.domain}:${a.certificate.sha256}`, domain: a.domain, frameworkId: a.frameworkId, entityId: a.entityId,
+    status: a.status ?? 'ACTIVE', constraints: a.constraints ?? {}, certificate: summarize(a.certificate) };
+}
