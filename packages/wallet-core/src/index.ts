@@ -22,10 +22,10 @@ export { Wallet, PresentationSession, instancesOf, pickInstance } from './wallet
 export type { WalletOptions } from './wallet.js';
 export { MemoryCredentialStore, KeyValueCredentialStore } from './store/credentials.js';
 export type { CredentialStore, StoredCredential } from './store/credentials.js';
-export { resolveAuthorizationRequest, clientIdPrefix, encryptionKey, PresentationRequestError, reportPresentationError, verifierRefusal,
-  WALLET_METADATA } from './oid4vp/request.js';
-export type { AuthorizationRequest, VerifierView, DcqlQuery, DcqlCredentialQuery, DcqlClaim, ErrorResponseTarget } from './oid4vp/request.js';
+export { resolveAuthorizationRequest, resolveDcApiRequest, pickDcApiRequest, dcApiError, DC_API_PROTOCOLS, clientIdPrefix, encryptionKey,
+  PresentationRequestError, reportPresentationError, verifierRefusal, WALLET_METADATA } from './oid4vp/request.js';
+export type { AuthorizationRequest, VerifierView, DcqlQuery, DcqlCredentialQuery, DcqlClaim, ErrorResponseTarget, DcApiRequest } from './oid4vp/request.js';
 export { evaluateDcql, credentialClaims } from './oid4vp/dcql.js';
 export type { DcqlResult, CredentialMatch } from './oid4vp/dcql.js';
-export { buildVpToken, submitResponse, presentMdoc, presentSdJwt, presentLdp, openId4VpHandover, selectDisclosures } from './oid4vp/present.js';
+export { buildVpToken, submitResponse, presentMdoc, presentSdJwt, presentLdp, openId4VpHandover, audienceOf, selectDisclosures } from './oid4vp/present.js';
 export type { PresentationSelection, SubmitResult } from './oid4vp/present.js';

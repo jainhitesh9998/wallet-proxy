@@ -4,6 +4,7 @@
  *  - mso_mdoc: DeviceResponse with OpenID4VPHandover session transcript and deviceSignature (COSE_Sign1)
  *  - ldp_vc: Verifiable Presentation with an ecdsa-rdfc-2019 holder proof (challenge = nonce, domain = client_id)
  *  - direct_post / direct_post.jwt (ECDH-ES + A128GCM/A256GCM JWE to the verifier's ephemeral key)
+ *  - over the DC API (Appendix A): audience origin:<origin>, OpenID4VPDCAPIHandover, dc_api / dc_api.jwt response data
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytes, cbor, decodeIssuerSigned, decodeJws, jwkThumbprintBytes, base58Encode, type Jwk } from '@vctrust/trust-client';
@@ -86,7 +87,7 @@ export function selectDisclosures(payload: Record<string, unknown>, decoded: Dis
  * SD-JWT VC presentation: the issuer JWT, the disclosures {@link selectDisclosures} picks, and a KB-JWT
  * (aud = client_id, nonce, sd_hash) when the credential is holder-bound.
  */
-export async function presentSdJwt(c: StoredCredential, claims: DcqlClaim[], req: AuthorizationRequest, key: SigningKey, audience = req.clientId): Promise<string> {
+export async function presentSdJwt(c: StoredCredential, claims: DcqlClaim[], req: AuthorizationRequest, key: SigningKey, audience = audienceOf(req)): Promise<string> {
   const { issuerJwt, disclosures } = parseSdJwt(String(c.credential));
   const payload = decodeJws<Record<string, unknown>>(issuerJwt).payload;
   const selected = selectDisclosures(payload, disclosures.map(decodeDisclosure), claims);
@@ -97,10 +98,22 @@ export async function presentSdJwt(c: StoredCredential, claims: DcqlClaim[], req
   return sdJwt + kb;
 }
 
+/** Who the presentation is for: the full client_id, or over the DC API the origin prefixed with origin: (A.4, even when signed). */
+export function audienceOf(req: AuthorizationRequest): string {
+  return req.origin !== undefined ? `origin:${req.origin}` : req.clientId;
+}
+
+/** The mdoc SessionTranscript handover: OpenID4VPHandover (B.2.6.1), or OpenID4VPDCAPIHandover over the DC API (B.2.6.2). */
 export function openId4VpHandover(req: AuthorizationRequest, encryptionJwk?: Jwk): unknown[] {
   const thumb = encryptionJwk ? jwkThumbprintBytes(encryptionJwk) : null;
+  if (req.origin !== undefined) return ['OpenID4VPDCAPIHandover', sha256(cbor.encode([req.origin, req.nonce, thumb]))];
   const info = [req.clientId, req.nonce, thumb, req.responseUri ?? req.redirectUri ?? ''];
   return ['OpenID4VPHandover', sha256(cbor.encode(info))];
+}
+
+/** The verifier key an encrypted response mode (direct_post.jwt, dc_api.jwt) encrypts to. */
+function responseEncryptionKey(req: AuthorizationRequest): Jwk | undefined {
+  return req.responseMode.endsWith('.jwt') ? encryptionKey(req.clientMetadata) : undefined;
 }
 
 /** mdoc DeviceResponse for one document, disclosing only the requested data elements. */
@@ -139,7 +152,7 @@ export async function presentLdp(c: StoredCredential, req: AuthorizationRequest,
   const vm = holder.startsWith('did:jwk:') ? `${holder}#0` : `${holder}#${holder.slice('did:key:'.length)}`;
   const vp: Record<string, unknown> = { '@context': ['https://www.w3.org/ns/credentials/v2'], type: ['VerifiablePresentation'], holder, verifiableCredential: [vc] };
   const proof: Record<string, unknown> = { type: 'DataIntegrityProof', cryptosuite: 'ecdsa-rdfc-2019', created: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-    verificationMethod: vm, proofPurpose: 'authentication', challenge: req.nonce, domain: req.clientId };
+    verificationMethod: vm, proofPurpose: 'authentication', challenge: req.nonce, domain: audienceOf(req) };
   const loader = createDocumentLoader(f);
   const docC = await canonize(vp, loader, false);
   const cfgC = await canonize({ ...proof, '@context': vp['@context'] }, loader, false);
@@ -154,7 +167,7 @@ export interface PresentationSelection {
 }
 
 export async function buildVpToken(req: AuthorizationRequest, selection: PresentationSelection, keys: KeyStore, f: typeof fetch): Promise<Record<string, unknown[]>> {
-  const encJwk = req.responseMode === 'direct_post.jwt' ? encryptionKey(req.clientMetadata) : undefined;
+  const encJwk = responseEncryptionKey(req);
   const vpToken: Record<string, unknown[]> = {};
   for (const [queryId, { credential, claims }] of Object.entries(selection)) {
     const key = await keys.get(credential.holderKeyId);
@@ -171,24 +184,34 @@ export async function buildVpToken(req: AuthorizationRequest, selection: Present
 }
 
 export interface SubmitResult {
+  /** HTTP status of the verifier's response; 0 over the DC API, where nothing is sent */
   status: number;
   redirectUri?: string;
   body?: unknown;
+  /** DC API: the response data to hand back to the platform (A.4) */
+  dcApi?: Record<string, unknown>;
+}
+
+/** The Authorization Response parameters, encrypted to the verifier for direct_post.jwt / dc_api.jwt (§8.3). */
+function responseParameters(req: AuthorizationRequest, payload: Record<string, unknown>): Record<string, unknown> {
+  const withState = { ...payload, ...(req.state ? { state: req.state } : {}) };
+  const jwk = responseEncryptionKey(req);
+  if (!req.responseMode.endsWith('.jwt') || payload.error) return withState;
+  if (!jwk) throw new Error('Verifier client_metadata has no usable ECDH-ES P-256 encryption key');
+  const encs = (req.clientMetadata.encrypted_response_enc_values_supported as string[] | undefined) ?? ['A128GCM'];
+  if (!encs.includes('A256GCM') && !encs.includes('A128GCM')) throw new Error(`The verifier accepts no supported response encryption (${encs.join(', ')})`);
+  const enc: JweEnc = encs.includes('A256GCM') ? 'A256GCM' : 'A128GCM';
+  return { response: encryptJwe(bytes.utf8Encode(JSON.stringify(withState)), jwk, enc) };
 }
 
 export async function submitResponse(req: AuthorizationRequest, payload: Record<string, unknown>, f: typeof fetch): Promise<SubmitResult> {
+  if (req.origin !== undefined) {
+    // DC API: the platform returns the data to the origin. An error is a single error member (A.4).
+    return { status: 0, dcApi: payload.error ? { error: payload.error } : responseParameters(req, payload) };
+  }
   if (!req.responseUri) throw new Error('No response_uri');
   const form = new URLSearchParams();
-  if (req.responseMode === 'direct_post.jwt' && !payload.error) {
-    const jwk = encryptionKey(req.clientMetadata);
-    if (!jwk) throw new Error('Verifier client_metadata has no usable ECDH-ES P-256 encryption key');
-    const encs = (req.clientMetadata.encrypted_response_enc_values_supported as string[] | undefined) ?? ['A128GCM'];
-    const enc: JweEnc = encs.includes('A256GCM') ? 'A256GCM' : 'A128GCM';
-    form.set('response', encryptJwe(bytes.utf8Encode(JSON.stringify({ ...payload, ...(req.state ? { state: req.state } : {}) })), jwk, enc));
-  } else {
-    for (const [k, v] of Object.entries(payload)) form.set(k, typeof v === 'string' ? v : JSON.stringify(v));
-    if (req.state) form.set('state', req.state);
-  }
+  for (const [k, v] of Object.entries(responseParameters(req, payload))) form.set(k, typeof v === 'string' ? v : JSON.stringify(v));
   const r = await f(req.responseUri, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: form.toString() });
   const text = await r.text();
   let body: unknown = text;

@@ -10,7 +10,7 @@ A spec-agnostic trust service for OpenID4VCI / OpenID4VP wallets and verifiers. 
 - **Client library** (TypeScript, `@vctrust/trust-client`). One API for wallets and verifiers.
   - **By default it decides trust on the device**, from the signed snapshot, with the same rules as the server. The service never learns which issuers or verifiers a user deals with.
   - Lookups that would disclose a counterparty (metadata proxy, DID proxy, on-demand registry lookups) are opt-in.
-- **Demo wallet**. A platform-neutral `@vctrust/wallet-core` (OpenID4VCI 1.0, OpenID4VP 1.0, HAIP 1.0) and an Expo React Native app (`apps/wallet`). It is tested against live issuers: Animo playground (mDL mdoc, SD-JWT VC) and MOSIP collab (W3C VCDM 2.0 JSON-LD, mDL).
+- **Demo wallet**. A platform-neutral `@vctrust/wallet-core` (OpenID4VCI 1.0, OpenID4VP 1.0, HAIP 1.0) and an Expo React Native app (`apps/wallet`), which on Android also answers Digital Credentials API requests through Credential Manager. It is tested against live issuers: Animo playground (mDL mdoc, SD-JWT VC) and MOSIP collab (W3C VCDM 2.0 JSON-LD, mDL).
 
 Design document: https://claude.ai/artifact/RViVpaEWce3S8yctArPdvk (also in `docs/DESIGN.md`). Configuration reference: [`docs/configuration.md`](docs/configuration.md).
 
@@ -18,7 +18,7 @@ Design document: https://claude.ai/artifact/RViVpaEWce3S8yctArPdvk (also in `doc
 trust-server/          Maven: trust-core (model, SPIs, evaluator, X.509, DID, metadata) ← trust-adapters ← trust-server (Spring Boot)
 packages/trust-client  @vctrust/trust-client — TS client with fallback (Node, browser, React Native)
 packages/wallet-core   @vctrust/wallet-core  — OID4VCI / OID4VP / HAIP holder logic + credential verification
-apps/wallet            Expo demo wallet (web + Expo Go)
+apps/wallet            Expo demo wallet (web, Expo Go; Android release build with the Digital Credentials API)
 e2e/                   Playwright UI tests of the wallet web build
 tools/mosip-issuance   Headless eSignet login helper used by the MOSIP live tests
 scripts/               build / start / test helpers
@@ -36,6 +36,8 @@ open http://localhost:8090/swagger-ui.html
 curl -H 'Authorization: Bearer demo-wallet-key' 'localhost:8090/api/v1/issuers?format=mso_mdoc'
 scripts/test-all.sh              # unit + integration + live end-to-end (needs internet); --offline for unit only
 scripts/android.sh setup && scripts/android.sh start   # the wallet in Expo Go on an Android emulator
+scripts/android-dcapi.sh setup && scripts/android-dcapi.sh start && scripts/android-dcapi.sh build   # native build, DC API
+node e2e/dcapi-android.mjs issue && node e2e/dcapi-android.mjs   # DC API end to end: Chrome → picker → wallet → Animo
 ```
 
 CI (`.github/workflows/ci.yml`) runs the offline suites, typechecks and the web and Android bundles.
@@ -139,6 +141,9 @@ const session = await wallet.receive('openid-credential-offer://?credential_offe
 const [cred] = await wallet.store(await session.acceptPreAuthorized(txCode));   // refused if invalid; stored → credential_accepted
 const p = await wallet.startPresentation('openid4vp://?client_id=x509_hash:...&request_uri=...');  // p.verifier.trust, p.dcql
 await p.respond();                         // refused unless an x509 verifier is TRUSTED; discloses only the requested claims
+// Digital Credentials API (Android): the platform passes the request and the verifier's Origin
+const dc = await wallet.startDcApiPresentation(pickDcApiRequest(requestJson, origin)!);
+const { dcApi } = await dc.respond();      // {vp_token} or {response: JWE}, bound to origin:<origin>; returned through the platform
 ```
 
 ## Tested end to end against live services
@@ -163,6 +168,7 @@ await p.respond();                         // refused unless an x509 verifier is
 | Trust service outage, `service` mode with a synced snapshot (mDL issue + present, JSON-LD issue) | works; trust from `snapshot`; recovers afterwards |
 | Trust service outage without a snapshot | credential verified; trust `UNKNOWN` (`fallback`) |
 | Wallet in Expo Go on an Android emulator: Animo mDL (pre-authorized; DPoP + wallet attestation), presentation to the Animo verifier | TRUSTED, *not revoked*; verifier reports `ResponseVerified` |
+| Digital Credentials API, native release build on an Android 37.2 emulator: Animo's verifier in Chrome, the Play services picker, the wallet's consent screen. PID (SD-JWT) and mDL (mdoc) with signed `x509_hash` requests and `dc_api.jwt`; mDL unsigned + `dc_api.jwt`; PID unsigned + `dc_api`; a decline; a multi-signed request from a local page signed by an untrusted verifier | *Verification Successful* for all four presentations, verifier TRUSTED (unsigned: by origin); the decline reaches the page as `NotAllowedError`; the multi-signed request is authenticated and sharing blocked |
 | HAIP details no live issuer exercises (offline, in-memory issuer): credential request/response encryption, attestation proofs, refusal and notifications, minimal disclosure, holder binding, verifier trust enforcement, error responses | pass |
 
 ### Findings about the live issuers

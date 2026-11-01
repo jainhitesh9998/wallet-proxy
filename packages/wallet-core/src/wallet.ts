@@ -5,7 +5,7 @@ import type { WalletAttester } from './oauth/attestation.js';
 import { IssuanceError, Oid4vciClient, type CredentialInstance, type IssuanceSession, type IssuedCredential, type IssuerClientRegistration } from './oid4vci/client.js';
 import type { CredentialStore, StoredCredential } from './store/credentials.js';
 import { verifyCredential, type VerificationReport } from './verify/index.js';
-import { PresentationRequestError, resolveAuthorizationRequest, type AuthorizationRequest, type VerifierView } from './oid4vp/request.js';
+import { PresentationRequestError, resolveAuthorizationRequest, resolveDcApiRequest, type AuthorizationRequest, type DcApiRequest, type VerifierView } from './oid4vp/request.js';
 import { evaluateDcql, type DcqlResult } from './oid4vp/dcql.js';
 import { buildVpToken, submitResponse, type PresentationSelection, type SubmitResult } from './oid4vp/present.js';
 
@@ -135,6 +135,13 @@ export class Wallet {
 
   async startPresentation(requestUri: string): Promise<PresentationSession> {
     const { request, verifier } = await resolveAuthorizationRequest(requestUri, this.opts.trust, this.f);
+    const dcql = await evaluateDcql(request.dcqlQuery, await this.list(), this.opts.trust);
+    return new PresentationSession(this, request, verifier, dcql);
+  }
+
+  /** A request that arrived through the Digital Credentials API; {@link PresentationSession.respond} returns its response data. */
+  async startDcApiPresentation(input: DcApiRequest): Promise<PresentationSession> {
+    const { request, verifier } = await resolveDcApiRequest(input, this.opts.trust);
     const dcql = await evaluateDcql(request.dcqlQuery, await this.list(), this.opts.trust);
     return new PresentationSession(this, request, verifier, dcql);
   }

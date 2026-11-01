@@ -1,0 +1,33 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.vctrust'
+version = '0.1.0'
+
+android {
+  namespace "dev.vctrust.dcapi"
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+}
+
+def registryVersion = '1.0.0-alpha05'
+
+dependencies {
+  implementation 'com.facebook.react:react-android'
+  implementation 'androidx.appcompat:appcompat:1.7.1'
+  implementation 'androidx.core:core-ktx:1.17.0'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+  // Credential Manager: the request / response of the activity Android starts for a DC API request
+  implementation 'androidx.credentials:credentials:1.7.0-alpha03'
+  // Registry with Google's OpenID4VP matcher (mso_mdoc, dc+sd-jwt); Play services hosts it
+  implementation "androidx.credentials.registry:registry-provider:$registryVersion"
+  implementation "androidx.credentials.registry:registry-provider-play-services:$registryVersion"
+  implementation "androidx.credentials.registry:registry-digitalcredentials-openid:$registryVersion"
+  implementation "androidx.credentials.registry:registry-digitalcredentials-mdoc:$registryVersion"
+  implementation "androidx.credentials.registry:registry-digitalcredentials-sdjwtvc:$registryVersion"
+}

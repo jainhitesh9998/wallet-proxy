@@ -21,6 +21,12 @@ Platform-neutral holder logic for OpenID4VCI 1.0, OpenID4VP 1.0 and HAIP 1.0, bu
   - Errors after authentication (`transaction_data`, `redirect_uri` with `direct_post`) carry `reportTo`; `reportPresentationError()` returns them to the verifier once the user has seen them.
   - Presentation formats: SD-JWT + KB-JWT, an mdoc DeviceResponse with the OpenID4VPHandover transcript, and ldp_vp.
   - Responses go back as `direct_post` or `direct_post.jwt` (ECDH-ES + AES-GCM JWE).
+  - **Over the Digital Credentials API** (OpenID4VP Appendix A, HAIP §5.2):
+    - The platform hands over the request and the verifier's Origin; `pickDcApiRequest()` picks the request to answer, and `startDcApiPresentation()` resolves it.
+    - Unsigned, signed and multi-signed requests are accepted. Signed requests must list the Origin in `expected_origins`.
+    - The presentation is bound to `origin:<origin>`; mdoc uses the OpenID4VPDCAPIHandover transcript.
+    - `respond()` returns the response data (`{vp_token}` or `{response: <JWE>}` for `dc_api.jwt`) in `result.dcApi` instead of posting it.
+    - `dcApiError()` gives `{error}` for an authenticated request the user chose to answer with an error.
 
 ```ts
 const wallet = new Wallet({ trust, keyStore: new SoftwareKeyStore(), credentials: new MemoryCredentialStore(), redirectUri });
@@ -31,8 +37,12 @@ console.log(credential.report.valid, credential.report.trust.decision, credentia
 const p = await wallet.startPresentation(openid4vpUri);
 console.log(p.verifier.trust.decision, p.dcql.satisfied);
 await p.respond();
+
+// DC API: requestJson and origin come from the platform (Android Credential Manager, see apps/wallet/modules/dc-api)
+const dc = await wallet.startDcApiPresentation(pickDcApiRequest(requestJson, origin)!);
+const { dcApi } = await dc.respond();        // hand {protocol, data: dcApi} back to the platform
 ```
 
 Tests:
-- `npx vitest run`: offline suite (51 tests), including the OpenID4VP SessionTranscript and RFC 7518 KDF vectors, and an in-memory HAIP issuer for encryption, attestation proofs, refusal, notifications, batch and deferred issuance.
+- `npx vitest run`: offline suite (62 tests), including the OpenID4VP SessionTranscript (redirect and DC API) and RFC 7518 KDF vectors, and an in-memory HAIP issuer for encryption, attestation proofs, refusal, notifications, batch and deferred issuance.
 - `npm run test:live`: live suites against the Animo playground, MOSIP collab and a local trust server.

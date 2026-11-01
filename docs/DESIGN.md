@@ -40,8 +40,8 @@ Every trust-list format enters through an adapter, and every protocol touchpoint
 | Standard | Version | Role in the service | Where |
 | --- | --- | --- | --- |
 | [OpenID4VCI](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) | 1.0 Final (Sep 2025) | Issuer metadata proxy: well-known insertion rule, `credential_issuer`/AS `issuer` checks, `oid4vci-discovery` source | Server, client, wallet |
-| [OpenID4VP](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html) | 1.0 Final (Jul 2025) | Verifier trust: all client\_id prefixes; DCQL `trusted_authorities` (`aki`, `etsi_tl`, `openid_federation`) | Server, client, wallet |
-| [HAIP](https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html) | 1.0 Final (Dec 2025) | Wallet profile: PAR, PKCE, DPoP nonces, wallet and key attestation, credential encryption, signed issuer metadata (`x5c`), `x509_hash` with enforced verifier trust, `direct_post.jwt`, minimal disclosure. Signed metadata can be required per client profile | Wallet, client, server |
+| [OpenID4VP](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html) | 1.0 Final (Jul 2025) | Verifier trust: all client\_id prefixes; DCQL `trusted_authorities` (`aki`, `etsi_tl`, `openid_federation`); the wallet presents by redirect (`direct_post`, `direct_post.jwt`) and over the DC API (Appendix A) | Server, client, wallet |
+| [HAIP](https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html) | 1.0 Final (Dec 2025) | Wallet profile: PAR, PKCE, DPoP nonces, wallet and key attestation, credential encryption, signed issuer metadata (`x5c`), `x509_hash` with enforced verifier trust, `direct_post.jwt`, DC API with `dc_api.jwt` and unsigned, signed and multi-signed requests (Android), minimal disclosure. Signed metadata can be required per client profile | Wallet, client, server |
 | ISO/IEC 18013-5 | 1st ed. + VICAL | IACA trust domain, Document Signer profile (EKU 1.0.18013.5.1.2, country match), `vical` source | Server, client |
 | W3C VCDM 2.0 + Data Integrity | REC | JSON-LD credential verification; issuer DID trust | Wallet, client |
 | SD-JWT VC | draft-13 (HAIP pin) | `x5c` issuer chains (`credential-issuer` domain) | Server, client |
@@ -310,6 +310,7 @@ The wallet is a throwaway Expo app over `@vctrust/wallet-core`, a platform-neutr
 | Verification: VCDM 2.0 JSON-LD | `Ed25519Signature2020`, `eddsa-rdfc-2022`, `ecdsa-rdfc-2019` over RDFC-1.0 with bundled contexts; safe mode (undefined terms are reported as unsigned); issuer key control, including key equivalence across DIDs; `assertionMethod`; validity; holder `did:jwk`; Bitstring Status List |
 | Verification: SD-JWT VC | `typ` `dc+sd-jwt`; x5c, DID kid or `jwt-vc-issuer` key resolution; disclosure digests and rejection of unreferenced disclosures; `cnf`; Token Status List |
 | Presentation (OID4VP 1.0 / HAIP) | `request_uri` (GET, or POST with `wallet_metadata` and `wallet_nonce`) with `client_id` required alongside; JAR `typ`, signature, `exp`/`nbf`; `x509_hash`, `x509_san_dns`, `decentralized_identifier`, `redirect_uri`; verifier trust enforced (an `x509_*` verifier must be TRUSTED, a NOT\_TRUSTED one is always refused); DCQL (`credential_sets`, `claim_sets` per candidate, `values`, `trusted_authorities`, holder binding required by default); minimal disclosure by claim path (nothing selectively disclosable when no claims are requested); SD-JWT+KB; mdoc DeviceResponse with OpenID4VPHandover; ldp\_vp; `direct_post` and `direct_post.jwt` (ECDH-ES to a JWK with `alg`, A128GCM/A256GCM); `invalid_request` / `invalid_transaction_data` returned to an authenticated verifier once the user has seen the error |
+| Presentation over the DC API (Android) | OpenID4VP 1.0 Appendix A: `openid4vp-v1-unsigned`, `-signed` and `-multisigned` (HAIP §5.2), `dc_api` and `dc_api.jwt`; the response bound to the Origin the platform reports (`origin:<origin>` as KB-JWT `aud` and ldp\_vp `domain`, also for signed requests), mdoc with OpenID4VPDCAPIHandover; `client_id` and `expected_origins` ignored in unsigned requests, `expected_origins` required to list the Origin in signed ones; `typ` required on every request object, also per signature; a multi-signed request answered as its best signer (TRUSTED before UNKNOWN, `x509_hash` first) that the wallet can authenticate and does not refuse; the verifier named by the trust registry, a self-declared `client_name` marked as such; errors returned only after the user saw them, declines as a plain cancellation that the page sees as `NotAllowedError`, like any abort (§15.9.2) |
 | Display | Issuer, credential and verifier logos as PNG or SVG, from https or `data:` URIs (react-native-svg on devices) |
 
 **Use of the client library.**
@@ -317,9 +318,18 @@ The wallet is a throwaway Expo app over `@vctrust/wallet-core`, a platform-neutr
 - Issuer metadata always comes through `trust.getIssuerMetadata`: fetched from the issuer with the registry's metadata policy applied (through the proxy only in service mode), with the trust decision attached.
 - DID documents (JSON-LD verification methods, SD-JWT DID kids) go through `trust.resolveDid`.
 - Each received credential's issuer is evaluated on the device with its x5c, kid and type.
-- Verifiers are evaluated with client\_id, x5c and `response_uri`.
+- Verifiers are evaluated with client\_id, x5c and `response_uri`. Over the DC API, an unsigned request's verifier is evaluated as `origin:<origin>`, which matches the registry's URL identifiers (the browser authenticated the Origin). Animo's playground is TRUSTED this way; an unknown site is UNKNOWN and left to the user. A signed request is evaluated like any other.
 
 The app shows the decision and its source next to every credential and request.
+
+**Digital Credentials API on Android.** The wallet registers its mdoc and SD-JWT VC credentials (type, claim paths, display names and short values) with Credential Manager through a small native module (`apps/wallet/modules/dc-api`). It uses androidx `OpenId4VpRegistry` with Google's OpenID4VP matcher, so the system picker offers the wallet only for requests it can satisfy. When the user picks it, Play services starts the module's activity:
+
+1. The activity accepts the request only from Credential Manager: a system app, and for Play services one signed with a certificate Google publishes for it. Each launch gets a random token, and an answer completes only the launch it was built for.
+2. It takes the web Origin only for browsers on Google's privileged-browser allowlist, and otherwise uses the calling app's own identity (`android:apk-key-hash:`).
+3. It renders the same React Native consent screen as the redirect flow, inside the activity.
+4. wallet-core builds the response, and the activity hands `{protocol, data}` back to the page.
+
+JSON-LD credentials have no DC API binding in OpenID4VP 1.0, so they use the redirect flow. Expo Go cannot load native modules, so DC API needs the release build (`scripts/android-dcapi.sh`).
 
 **Issuer quirks are configuration, not code.** MOSIP collab needs a pre-registered client and Mimoto's token proxy. Those are expressed as an `IssuerClientRegistration` (client\_id, redirect\_uri, token endpoint override).
 
@@ -340,6 +350,9 @@ The service is a policy decision point that wallets act on, so its answers must 
 | Service signing key compromise | Key in a PKCS#11 HSM or a keystore; rotation keeps previous keys in the JWKS while clients move their pinned thumbprints; a key whose thumbprint is removed from the client configuration is no longer trusted, even if it was stored earlier |
 | Cross-purpose trust | Anchors are partitioned by trust domain (IACA, credential issuer, verifier access, wallet provider, status list), each with its own certificate profile |
 | Malicious XML / CBOR / JSON / DER, oversized or slow bodies | DOCTYPE and external entities disabled, XMLDSig secure validation; DER lengths bounds-checked (no wrap to negative); response bodies capped (8 MiB service, 10 MiB device) under a deadline that covers the body; status lists inflated with a 16 MiB cap; explicit algorithm allow-lists (no `alg: none`) |
+| Origin spoofing over the DC API | The Origin comes from the platform, never from the request: Chrome's origin is accepted only for browsers on Google's privileged-browser allowlist (release signing certificate), any other caller is identified by its own signing certificate. Responses are bound to that Origin (`aud`, `domain`, mdoc transcript), so a presentation obtained for one site is useless at another. Signed requests must list the Origin in `expected_origins` |
+| Forged DC API requests from other apps | The DC API activity is exported for Play services, so it accepts a request only from Credential Manager: the caller (set by the system, not the intent) must be a system app named `com.google.android.gms` or `com.android.credentialmanager`, and Play services must be signed with one of its published certificates. A name alone is not enough, because a sideloaded app can take it where the real one is absent. Otherwise the request, and the origin inside it, is refused. Each launch carries a random token, so an answer cannot complete a different, concurrent request |
+| Demo transport | The release build allows plain http only to `localhost`, `127.0.0.1` and `10.0.2.2` (the trust service through `adb reverse`). Trust decisions do not depend on it: snapshots are signed and pinned by key thumbprint. A production build points at the service over https |
 | Verifier impersonation | JAR `typ`, signature and expiry checks, `x509_hash` / SAN binding, `response_uri` host rule for `x509_san_dns`, `client_id` equality between query and request object; the wallet refuses to present unless the `x509_*` verifier chains to a trusted verifier-access CA |
 | Spoofed issuer metadata | TLS, plus signed metadata where an ecosystem requires it: `x5c` chain to one of the client's credential-issuer anchors, a signer that is not self-signed and is bound to the issuer by SAN, `sub` and `credential_issuer`, `iat`, `exp`. Verified on the device even when it comes through the proxy, and the authorization servers are then taken from the signed metadata |
 | Over-disclosure | Only the claims on the requested DCQL paths are disclosed; credentials without holder binding are offered only when the verifier allows it |
@@ -357,9 +370,9 @@ The demo authenticates clients with API keys and signs with a JWK file. Producti
 
 Testing runs in three layers.
 
-1. **Deterministic suites:** 116 Java, 88 trust-client and 51 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal, notification, batch and deferred issuance).
+1. **Deterministic suites:** 116 Java, 88 trust-client and 62 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal, notification, batch and deferred issuance).
 2. **Live end-to-end suites:** wallet-core against public issuers and verifiers through a running trust service.
-3. **UI tests:** Playwright on the Expo web build, and the same app in Expo Go on an Android emulator (Hermes).
+3. **UI tests:** Playwright on the Expo web build; the same app in Expo Go on an Android emulator (Hermes); and the native release build on an Android 37.2 emulator (Chrome 149, Play services 26.32) for the DC API, driven through Chrome's DevTools and the system UI (`e2e/dcapi-android.mjs`).
 
 No local issuer is used; every credential below was issued by a live third-party service.
 
@@ -383,11 +396,12 @@ No local issuer is used; every credential below was issued by a live third-party
 | Revocation (Animo) | Animo mDL Document Signer against the IACA CRL from https://playground.animo.id/crl, compiled into the snapshot | not revoked, with no extra request (privacy test); the same result when the service decides |
 | Relays | The Animo CRL and the MOSIP Land status list, fetched through the service | verified on the device; MOSIP's list is signed with a key missing from its DID document, so the status is unknown |
 | Wallet web UI (Playwright) | Settings and trust list, mDL issue and present decided on the device, the same decision by the service in service mode, outage; MOSIP JSON-LD (opt-in) | pass |
+| DC API on Android (release build, emulator) | Chrome → Play services picker (Google's OpenID4VP matcher over the wallet's registry) → the wallet's activity → Animo's verifier: PID (SD-JWT) and mDL (mdoc) with signed `x509_hash` requests and `dc_api.jwt`; mDL unsigned with `dc_api.jwt`; PID unsigned with `dc_api`; a decline. A multi-signed request from a local test page signed by a verifier outside the trust lists. The activity started directly by another caller | the four presentations *Verification Successful* (OpenID4VPDCAPIHandover and `origin:` audience accepted), the verifier TRUSTED each time (unsigned: by origin); the decline reaches the page as `NotAllowedError`; the multi-signed request is authenticated (signature, `x509_hash`, `expected_origins`) and sharing is blocked; the direct launch is refused |
 | Wallet on Android (Expo Go, emulator) | Deep-linked Animo offers (pre-authorized; DPoP + wallet attestation), mDL presentation to the Animo verifier, revocation evidence | TRUSTED, *not revoked*; verifier reports `ResponseVerified` |
 
 The offline suites include spec vectors, so wire formats are checked byte for byte:
 
-- the OpenID4VP 1.0 B.2.6.1 SessionTranscript;
+- the OpenID4VP 1.0 B.2.6.1 SessionTranscript and the B.2.6.2 OpenID4VPDCAPIHandover;
 - RFC 7518 Appendix C ECDH-ES Concat KDF;
 - RFC 7638 thumbprint;
 - the did:key P-256 vector;
@@ -431,7 +445,7 @@ scripts/android.sh setup|start  # the wallet in Expo Go on an Android emulator
 - [x] DNS rebinding in the SSRF guard: closed by connecting only to the vetted addresses.
 - [x] Signed issuer metadata: verified wherever it is served; required per client profile (`require-signed-issuer-metadata`) for HAIP ecosystems that ask for it.
 - [x] MOSIP's non-ISO mock mDL: trusted with warnings for wallet profiles that allow relaxed anchors, refused by strict verifiers (`allow-relaxed-profiles: false`).
-- [ ] DC API (`dc_api.jwt`) presentation needs a native wallet registered with the platform's credential manager; the Expo demo uses the redirect flow, which HAIP accepts on its own (§3: a wallet meets the requirements of the flows it implements). The decision engine already supports the `origin:` client\_id prefix.
+- [x] DC API presentation (HAIP §5.2): unsigned, signed and multi-signed requests, `dc_api.jwt`, on Android through Credential Manager (native release build; Expo Go keeps the redirect flow). iOS (IdentityDocumentServices, mdoc only) is not done.
 - [x] Batch issuance: several instances of one credential, a fresh one for each verifier (HAIP §4: in one batch request).
 - [ ] iOS: not tested yet; the app runs on the web and on Android.
 - [ ] File the MOSIP collab defect reports (drafts in `docs/upstream-reports.md`).

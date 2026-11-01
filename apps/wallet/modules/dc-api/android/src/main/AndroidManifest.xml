@@ -1,0 +1,21 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!--
+      Started by Credential Manager (Play services) when the user picks this wallet for a Digital Credentials API
+      request. Exported so Play services can start it; DcApiActivity accepts requests only from Credential Manager.
+    -->
+    <activity
+      android:name="dev.vctrust.dcapi.DcApiActivity"
+      android:exported="true"
+      android:excludeFromRecents="true"
+      android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+      android:windowSoftInputMode="adjustResize">
+      <intent-filter>
+        <action android:name="androidx.credentials.registry.provider.action.GET_CREDENTIAL" />
+        <action android:name="androidx.identitycredentials.action.GET_CREDENTIALS" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

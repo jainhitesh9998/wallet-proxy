@@ -4,7 +4,9 @@ import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { WalletProvider } from './wallet/WalletContext';
+import { WalletProvider, useWallet } from './wallet/WalletContext';
+import { dcApiEntries } from './wallet/dcapi';
+import { dcApiAvailable, registerCredentials } from '../modules/dc-api';
 import { navigationRef, OAUTH_CHANNEL, routeIncoming, type RootStack } from './navigation';
 import HomeScreen from './screens/Home';
 import ReceiveScreen from './screens/Receive';
@@ -29,6 +31,18 @@ function WebOAuthCallback() {
       <Text selectable style={{ marginTop: 8, fontFamily: 'monospace' }}>{window.location.href}</Text>
     </View>
   );
+}
+
+/** Keeps what the wallet offers to Digital Credentials API requests in step with what it holds (Android builds). */
+function DcApiRegistrar() {
+  const { credentials, ready } = useWallet();
+  useEffect(() => {
+    if (!dcApiAvailable || !ready) return;
+    registerCredentials(dcApiEntries(credentials))
+      .then((n) => console.info(`DC API: ${n} credential(s) registered with Credential Manager`))
+      .catch((e: unknown) => console.warn('DC API registration failed', e));
+  }, [credentials, ready]);
+  return null;
 }
 
 export default function App() {
@@ -56,6 +70,7 @@ export default function App() {
           </Stack.Navigator>
         </NavigationContainer>
         <StatusBar style="dark" />
+        <DcApiRegistrar />
       </WalletProvider>
     </SafeAreaProvider>
   );

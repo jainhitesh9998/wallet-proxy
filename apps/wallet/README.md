@@ -26,6 +26,28 @@ npm start                               # Metro on :8081 (or keep `npm run web` 
 The emulator reaches Metro, the trust service and the CORS relay on `localhost` through `adb reverse`, so the default
 trust URL works. Offers and requests arrive as Expo Go deep links (`exp://127.0.0.1:8081/--/receive?offer=…`).
 
+**Digital Credentials API (Android, native build).** A web page's `navigator.credentials.get({digital: …})` reaches the
+wallet through Android's Credential Manager. Expo Go cannot host the native module this needs (`modules/dc-api`), so
+build the app itself. Its JS is bundled, so no Metro is needed:
+
+```sh
+../../scripts/android-dcapi.sh setup    # once: Android 37.2 image (Chrome 149, Play services 26.32) and AVD dcapi-37
+../../scripts/android-dcapi.sh start    # boots it headless, turns off Chrome's first-run screens, adb reverse :8090
+../../scripts/android-dcapi.sh build    # expo prebuild + release APK + install (about 7 min the first time)
+node ../../e2e/dcapi-android.mjs issue  # an mDL and a PID from the Animo playground
+node ../../e2e/dcapi-android.mjs        # six DC API scenarios: Animo's verifier, a decline, a local multi-signed request
+```
+
+By hand:
+1. Open `https://playground.animo.id/?tab=verify` in the emulator's Chrome.
+2. Choose *Digital Credentials API*, then *Verify Credential*.
+3. Chrome asks whether to share with the site, and Play services shows the wallet's matching credential.
+4. *Agree and continue* opens the wallet's screen. It shows the verifier, its origin, the request checks (signature, `x509_hash`, `expected_origins`), trust, and what will be shared.
+5. *Share* returns the response to the page. *Decline* cancels: Play services may show its picker again; closing it gives the page the same `NotAllowedError` as any other abort, so the verifier learns nothing else.
+
+The wallet registers its mdoc and SD-JWT VC credentials with Credential Manager whenever they change. JSON-LD credentials
+are presented through the redirect flow only.
+
 Defaults (Settings):
 - trust service `http://localhost:8090`, API key `demo-wallet-key`, client id `demo-wallet`;
 - **Decide trust: `local`**. Decisions are made on this device from the signed trust list; the service never learns which issuers or verifiers you use.
@@ -80,8 +102,8 @@ that demand it.
 
 ## Limitations
 
-- Tested on the web (Playwright) and in Expo Go on an Android emulator (API 35, Hermes). iOS was not tested.
-- No Digital Credentials API: presentations use the OpenID4VP redirect flow (`openid4vp://`).
+- Tested on the web (Playwright), in Expo Go on an Android emulator (API 35, Hermes) and as a native release build on an Android 37.2 emulator (DC API). iOS was not tested.
+- The Digital Credentials API works in the Android native build only (not on the web, in Expo Go or on iOS); everywhere else, presentations use the OpenID4VP redirect flow (`openid4vp://`).
 - MOSIP's registered redirect is Inji's custom scheme:
   - On the web you paste the redirect URL into the wallet.
   - On iOS, Expo Go's auth session catches it.

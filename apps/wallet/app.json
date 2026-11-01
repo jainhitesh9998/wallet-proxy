@@ -10,7 +10,8 @@
     "android": { "package": "dev.vctrust.wallet" },
     "web": { "bundler": "metro", "output": "single", "name": "VC Trust Wallet" },
     "plugins": [
-      ["expo-camera", { "cameraPermission": "Scan credential offer and presentation request QR codes", "recordAudioAndroid": false }]
+      ["expo-camera", { "cameraPermission": "Scan credential offer and presentation request QR codes", "recordAudioAndroid": false }],
+      "./plugins/with-local-cleartext"
     ]
   }
 }
