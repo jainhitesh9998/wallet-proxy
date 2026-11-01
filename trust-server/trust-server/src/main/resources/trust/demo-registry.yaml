@@ -63,6 +63,10 @@ entities:
       - {type: URL, value: "https://injicertify-mock.collab.mosip.net"}
       - did:web:injicertify-mock.collab.mosip.net
       - did:web:inji.github.io:inji-config:collab:mock-identity
+    # Its SD-JWT root (below) is the deployment's key manager root, which certifies every key it holds: only this vct.
+    authorizations:
+      - {format: dc+sd-jwt, type: MockVerifiableCredential_SD_JWT}
+      - {format: ldp_vc}
 
 anchors:
   # The collab mDL signer does not follow the ISO 18013-5 Document Signer profile (no DS EKU, CA leaf);
@@ -74,4 +78,13 @@ anchors:
     certificateLocation: classpath:trust/certs/mosip-collab-mdl-root.pem
     constraints:
       docTypes: [org.iso.18013.5.1.mDL]
+      relaxProfile: true
+  # The collab mock identity issuer signs SD-JWT VCs with an Ed25519 leaf whose only key usage is keyEncipherment and
+  # that names no issuer (no SAN). Root from GET https://injicertify-mock.collab.mosip.net/v1/certify/system-info/certificate?applicationId=ROOT
+  - id: mosip-collab-mock-root
+    domain: credential-issuer
+    framework: mosip-collab
+    entity: mosip-mock
+    certificateLocation: classpath:trust/certs/mosip-collab-mock-root.pem
+    constraints:
       relaxProfile: true

@@ -6,6 +6,7 @@ import io.vctrust.trust.core.did.DidResolver;
 import io.vctrust.trust.core.model.CredentialAuthorization;
 import io.vctrust.trust.core.model.EntityRole;
 import io.vctrust.trust.core.model.EntityStatus;
+import io.vctrust.trust.core.model.Identifier;
 import io.vctrust.trust.core.model.IdentifierType;
 import io.vctrust.trust.core.model.Provenance;
 import io.vctrust.trust.core.model.TrustAnchor;
@@ -14,6 +15,11 @@ import io.vctrust.trust.core.model.TrustFramework;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.policy.ClientProfile;
 import io.vctrust.trust.core.registry.RegistrySnapshot;
+import io.vctrust.trust.core.registry.TrustSourceManager;
+import io.vctrust.trust.core.spi.OnDemandResolver;
+import io.vctrust.trust.core.spi.SourceDefinition;
+import io.vctrust.trust.core.spi.SourceLoadResult;
+import io.vctrust.trust.core.spi.TrustSource;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.testing.TestPki;
 import io.vctrust.trust.core.x509.Certificates;
@@ -24,7 +30,10 @@ import org.junit.jupiter.api.Test;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -78,6 +87,9 @@ class TrustEvaluatorTest {
     void trustedIssuerByUrl() {
         var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://issuer.example/utopia/", List.of(), null, null, null, all);
         assertThat(d.decision()).isEqualTo(Decision.TRUSTED);
+        // Scheme and host are case-insensitive, the default port is implied.
+        var same = eval(EntityRole.CREDENTIAL_ISSUER, "HTTPS://Issuer.Example:443/utopia", List.of(), null, null, null, all);
+        assertThat(same.entity().id()).isEqualTo("utopia-dmv");
         assertThat(d.entity().id()).isEqualTo("utopia-dmv");
         assertThat(d.framework().id()).isEqualTo("utopia");
     }
@@ -272,5 +284,134 @@ class TrustEvaluatorTest {
                                 new TrustQuery.TrustedAuthority("aki", List.of("nope"))))), all);
         assertThat(d.evidence().trustedAuthorities()).extracting(TrustDecision.TrustedAuthorityMatch::matched)
                 .containsExactly(true, true, false);
+    }
+
+    // ---- on-demand registries are asked where the device asks them (mirrors packages/trust-client/test/binding.test.ts) ----
+
+    static final String EBSI_DID = "did:ebsi:zParityIssuer4LkPq";
+    static final String OTHER_DID = "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9";
+
+    /** A registry too large for the snapshot (OpenID Federation, EBSI) that records what it is asked. */
+    static final class OnDemandRegistry implements TrustSource, OnDemandResolver {
+        final List<TrustedEntity> entities;
+        final List<String> asked = new ArrayList<>();
+
+        OnDemandRegistry(List<TrustedEntity> entities) {
+            this.entities = entities;
+        }
+
+        @Override
+        public SourceDefinition definition() {
+            return new SourceDefinition("federation", "test", "utopia", null, true, Map.of());
+        }
+
+        @Override
+        public SourceLoadResult load() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean canResolve(Identifier id) {
+            // As the real resolvers: OpenID Federation entity ids, EBSI DIDs.
+            return (id.type() == IdentifierType.DID && id.value().startsWith("did:ebsi:"))
+                    || ((id.type() == IdentifierType.URL || id.type() == IdentifierType.FEDERATION_ENTITY) && id.value().startsWith("https://"));
+        }
+
+        @Override
+        public Optional<TrustedEntity> resolve(Identifier id) {
+            asked.add(id.toString());
+            return entities.stream().filter(e -> e.identifiers().stream().anyMatch(i -> i.value().equals(id.value()))).findFirst();
+        }
+    }
+
+    private OnDemandRegistry onDemand() {
+        Provenance prov = Provenance.of("federation", "test", "utopia", "https://fed.example", Instant.now());
+        var registry = new OnDemandRegistry(List.of(
+                TrustedEntity.builder("fed-issuer").framework("utopia").role(EntityRole.CREDENTIAL_ISSUER)
+                        .identifier(IdentifierType.URL, "https://fed.example/issuer").provenance(prov).build(),
+                TrustedEntity.builder("fed-verifier").framework("utopia").role(EntityRole.VERIFIER)
+                        .identifier(IdentifierType.URL, "https://fed.example").provenance(prov).build(),
+                TrustedEntity.builder("fed-rp").framework("utopia").role(EntityRole.VERIFIER)
+                        .identifier(IdentifierType.URL, "https://fed.example/rp").status(EntityStatus.REVOKED).provenance(prov).build(),
+                TrustedEntity.builder("ebsi-issuer").framework("utopia").role(EntityRole.CREDENTIAL_ISSUER)
+                        .identifier(IdentifierType.DID, EBSI_DID).provenance(prov).build()));
+        // The manager publishes what its sources load into a registry of its own; the evaluator keeps the test snapshot.
+        evaluator = new TrustEvaluator(this.registry, new TrustSourceManager(new TrustRegistry(), List.of(), List.of(registry), Clock.systemUTC()),
+                new DidResolver(List.of(new DidKeyDriver(), new DidJwkDriver())), new X509PathValidator(), Clock.systemUTC(), Duration.ofHours(1));
+        return registry;
+    }
+
+    private TrustDecision verifier(String clientId, List<String> x5c) {
+        return evaluator.evaluate(new TrustQuery(EntityRole.VERIFIER, new TrustQuery.Subject(clientId, x5c, null, null),
+                new TrustQuery.Context("oid4vp", null, null, null, null, List.of())), all);
+    }
+
+    @Test
+    void asksAboutAnIssuerUrlMissingFromTheSnapshot() {
+        var od = onDemand();
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://fed.example/issuer/", List.of(), null, null, null, all);
+        assertThat(od.asked.getFirst()).isEqualTo("URL:https://fed.example/issuer");
+        assertThat(d.decision()).isEqualTo(Decision.TRUSTED);
+        assertThat(d.entity().id()).isEqualTo("fed-issuer");
+        assertThat(d.reasons()).extracting(Reason::code).contains("lookup.on_demand");
+        assertThat(d.evidence().matchedIdentifiers()).containsExactly("URL:https://fed.example/issuer (on-demand)");
+    }
+
+    @Test
+    void asksAboutTheOriginOfAnUnsignedDcApiRequest() {
+        var od = onDemand();
+        var d = verifier("origin:https://fed.example", List.of());
+        assertThat(od.asked).containsExactly("URL:https://fed.example");
+        assertThat(d.decision()).isEqualTo(Decision.TRUSTED);
+        assertThat(d.entity().id()).isEqualTo("fed-verifier");
+    }
+
+    @Test
+    void neverAsksAboutAPreRegisteredClientIdOrAPartyTheSnapshotKnows() {
+        var od = onDemand();
+        verifier("my-client", List.of());
+        var known = eval(EntityRole.CREDENTIAL_ISSUER, "https://issuer.example/utopia", List.of(), null, null, null, all);
+        assertThat(od.asked).isEmpty();
+        assertThat(known.entity().id()).isEqualTo("utopia-dmv");
+    }
+
+    @Test
+    void withAKeyAsksAboutTheKeysIdentifiersNotTheClaimedOne() {
+        var od = onDemand();
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://fed.example/issuer", List.of(), EBSI_DID + "#key-1", null, null, all);
+        assertThat(od.asked).containsExactly("DID:" + EBSI_DID);
+        assertThat(d.decision()).as(d.reasons().toString()).isEqualTo(Decision.TRUSTED);
+        assertThat(d.entity().id()).isEqualTo("ebsi-issuer");
+        assertThat(d.reasons()).extracting(Reason::code).contains("did.unresolved");
+    }
+
+    @Test
+    void neverAsksAboutADidThatIsAPublicKeyItself() {
+        var od = onDemand();
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, OTHER_DID, List.of(), OTHER_DID + "#0", null, null, all);
+        assertThat(od.asked).isEmpty();
+        assertThat(d.decision()).isEqualTo(Decision.UNKNOWN);
+    }
+
+    @Test
+    void responseUriHostIsReadAsOnTheDevice() {
+        // java.net.URI has no host for "collector_1.example"; the check must not be skipped (mirrors binding.test.ts).
+        TestPki.Issued leaf = TestPki.leaf("CN=unregistered.example,C=UT", rpCa, List.of("unregistered.example"), null);
+        var d = evaluator.evaluate(new TrustQuery(EntityRole.VERIFIER, new TrustQuery.Subject("x509_san_dns:unregistered.example",
+                List.of(Certificates.toBase64(leaf.certificate())), null, null),
+                new TrustQuery.Context("oid4vp", null, null, null, "https://collector_1.example/cb", List.of())), all);
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.reasons()).filteredOn(Reason::isError).extracting(Reason::code).containsExactly("client_id.response_uri_host");
+    }
+
+    @Test
+    void asksAboutAValidatedCertificatesUriNamesEvenWhenItsAnchorAloneIsTrusted() {
+        var od = onDemand();
+        TestPki.Issued fed = TestPki.leaf("CN=fed.example,C=UT", rpCa, List.of("https://fed.example/rp"), null);
+        var d = verifier("x509_hash:" + Certificates.sha256Thumbprint(fed.certificate()), List.of(Certificates.toBase64(fed.certificate())));
+        assertThat(od.asked).containsExactly("URL:https://fed.example/rp");
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.entity().id()).isEqualTo("fed-rp");
+        assertThat(d.reasons()).filteredOn(Reason::isError).extracting(Reason::code).containsExactly("entity.status");
     }
 }

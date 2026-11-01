@@ -1,6 +1,7 @@
 # @vctrust/trust-client
 
 A TypeScript client for the VC Trust Service, for wallets and verifiers. It runs in Node 20+, browsers and React Native (Hermes).
+Identifiers are matched through the runtime's WHATWG `URL`. Expo provides one; bare React Native needs a polyfill such as `react-native-url-polyfill`, because its own `URL` class is regex-based. The client refuses to evaluate without one.
 There are no platform crypto dependencies: it uses noble curves/hashes plus built-in CBOR, DER and X.509 code.
 
 ## The service compiles, the client decides
@@ -67,7 +68,7 @@ const { decision } = await trust.evaluateCredential(credential, 'mso_mdoc');   /
 | --- | --- | --- |
 | `metadata` | OpenID4VCI discovery at the issuer, with the snapshot's metadata policy applied | Metadata proxy (`/api/v1/issuers/metadata`) |
 | `did` | Snapshot document first, then did:web / did:key / did:jwk on the device | Snapshot document first (local mode), then `/api/v1/did/{did}` |
-| `unknownParties: true` | — | Parties absent from the snapshot are looked up on demand (OpenID Federation, EBSI). Only the identifier is sent. The signed answer is verified and evaluated on the device. |
+| `unknownParties: true` | — | Parties absent from the snapshot are looked up on demand (OpenID Federation, EBSI). The device asks where the service's evaluator would, when no registry entry matches, and only about URLs and registry DIDs (never `did:key`, `did:jwk` or `did:peer`, which are public keys): the key's own (a DID key, a validated certificate's URI names) or else the claimed issuer URL, DID or verifier `origin:` / `redirect_uri:` / `decentralized_identifier:` / `openid_federation:` value. Each lookup names the identifier's type; the signed answer is verified, kept only if the entry carries that identifier, and evaluated on the device for that decision only. |
 | `crl` (also `'none'`) | CRLs not in the snapshot come from the CA's CRL distribution point (the CA learns only which CA's CRL is wanted) | Through the CRL relay (`/api/v1/revocation/crl`); direct while it is unreachable. Default in `service` mode. |
 | `statusLists` | Status lists come from the issuer (default in both modes) | Through the status list relay (`/api/v1/revocation/status-list`): the issuer no longer sees the device, but the service sees which list is checked |
 
@@ -141,4 +142,4 @@ Building blocks are exported for reuse:
 - `applyMetadataPolicy`
 - the `cbor` codec
 
-Tests: `npx vitest run` (88 tests). `npm run test:live` adds the parity test against a running trust service. It runs 34 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.
+Tests: `npx vitest run` (98 tests, including the shared URL vectors under Node's and Expo's `URL` parsers and the on-demand scenarios the Java evaluator test mirrors). `npm run test:live` adds the parity test against a running trust service. It runs 37 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.

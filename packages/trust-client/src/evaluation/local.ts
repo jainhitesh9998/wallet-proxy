@@ -27,13 +27,27 @@ export interface LocalTrustData {
   policy?: { strictAuthorization?: boolean; requireRevocationStatus?: boolean; allowRelaxedProfiles?: boolean };
   snapshot?: SnapshotRef | null;
   stale?: boolean;
+  /**
+   * Asks the service's on-demand registries (OpenID Federation, EBSI) about a party absent from the snapshot. Called
+   * where the service's evaluator asks, when no registry entry matched, with the same identifiers in the same order:
+   * the key's own identifiers, or the identifier when no key is presented (only URLs and DIDs, never key material).
+   */
+  onDemand?: (identifiers: Array<{ type: string; value: string }>) => Promise<{ entity: EntityView; identifier: { type: string; value: string } } | undefined>;
 }
 
+/**
+ * The key an identifier is matched by, as the service indexes it (Identifier.normalize): http(s) URLs as the WHATWG URL
+ * parser reads them, one trailing slash stripped, no fragment or empty query. Shared vectors:
+ * test-ecosystem/vectors/url-identifiers.json.
+ */
 export function normalizeIdentifier(type: string, value: string): string {
+  value = value.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, ''); // as Java's String.trim()
   if (type === 'URL' || type === 'FEDERATION_ENTITY') {
     try {
       const u = new URL(value);
-      return `${u.protocol}//${u.host.toLowerCase()}${u.pathname.replace(/\/$/, '')}${u.search}`;
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') return value;
+      // '^' joined the path percent-encode set in 2024 (Expo's parser has it); older parsers, Node's among them, keep it.
+      return `${u.protocol}//${u.host}${u.pathname.replace(/\^/g, '%5E').replace(/\/$/, '')}${u.search}`;
     } catch {
       return value;
     }
@@ -41,6 +55,15 @@ export function normalizeIdentifier(type: string, value: string): string {
   if (type === 'DID') return value.split('#')[0]!;
   if (type === 'DNS') return value.toLowerCase();
   return value;
+}
+
+/**
+ * Identifiers an on-demand registry can resolve (OpenID Federation entity ids, registry DIDs such as did:ebsi). Key
+ * material is never sent: no fingerprints, and no DIDs that are a public key themselves.
+ */
+function onDemandIdentifier(i: { type: string; value: string }): boolean {
+  if (i.type === 'DID') return !/^did:(key|jwk|peer):/.test(i.value);
+  return (i.type === 'URL' || i.type === 'FEDERATION_ENTITY') && /^https:\/\//i.test(i.value.trim());
 }
 
 export function domainFor(role: TrustQuery['role'], format?: string): string {
@@ -94,11 +117,34 @@ export async function validateChainOnDevice(chain: Certificate[], anchors: Local
   return validateCertificateChain(chain, anchors, { ...opts, revocation: { ...revocation, crls: [...revocation.crls, ...got.crls], failures: got.failures } });
 }
 
+/** The URL class that passed the check (the global can be replaced, as Expo does at startup). */
+let checkedUrl: unknown;
+
+/**
+ * Identifier matching and the response_uri check rely on a WHATWG URL parser. React Native's own URL class is a set of
+ * regular expressions (no default-port, dot-segment or IDN handling, and "https://a\@b" reads as host b); Expo replaces
+ * it with a WHATWG one, bare React Native needs a polyfill such as react-native-url-polyfill.
+ */
+export function assertWhatwgUrl(): void {
+  if (checkedUrl === URL) return;
+  let ok = false;
+  try {
+    const u = new URL('HTTPS://A.Example:443/x/../y?');
+    ok = u.protocol === 'https:' && u.host === 'a.example' && u.pathname === '/y' && u.search === ''
+      && new URL('https://a.example\\@b.example/').host === 'a.example';
+  } catch { /* not a WHATWG parser */ }
+  if (ok) checkedUrl = URL;
+  else throw new Error('This runtime\'s URL class is not a WHATWG URL parser; install a URL polyfill (e.g. react-native-url-polyfill) before using the trust client');
+}
+
 export class LocalEvaluator {
   constructor(private readonly resolveDid: (did: string) => Promise<DidResolutionResult>, private readonly now: () => Date = () => new Date(),
-              private readonly fetchCrls?: CrlFetcher) {}
+              private readonly fetchCrls?: CrlFetcher) {
+    assertWhatwgUrl();
+  }
 
   async evaluate(q: TrustQuery, data: LocalTrustData): Promise<TrustDecision> {
+    assertWhatwgUrl();
     const time = q.context?.time ? new Date(q.context.time) : this.now();
     const reasons: Reason[] = [];
     // ids: proven by the presented key material; identIds: only claimed by the identifier (see the matching rules below)
@@ -128,7 +174,7 @@ export class LocalEvaluator {
           reasons.push({ code: 'client_id.x5c_required', message: `Client identifier prefix ${prefix} requires the request object's x5c chain`, severity: 'ERROR' });
         }
       } else if (ident.startsWith('did:')) identIds.push({ type: 'DID', value: ident });
-      else if (/^https?:\/\//.test(ident)) identIds.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
+      else if (/^https?:\/\//i.test(ident)) identIds.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
       else identIds.push({ type: 'CLIENT_ID', value: ident }, { type: 'OTHER', value: ident });
     }
     // A query names one key: the certificate's or the DID's. With both, the evaluator cannot tell which one the caller
@@ -227,6 +273,14 @@ export class LocalEvaluator {
           + `${chain.length ? 'certificate' : 'key'} is not bound to it`, severity: 'ERROR' });
       }
     }
+    if (candidates.length === 0 && data.onDemand) {
+      // On-demand discovery follows the same rule: the key's identifiers, or the identifier without key material.
+      const found = await data.onDemand((keyMaterial ? ids : identIds).filter(onDemandIdentifier));
+      if (found) {
+        take(found.entity, `${found.identifier.type}:${normalizeIdentifier(found.identifier.type, found.identifier.value)} (on-demand)`, candidates);
+        reasons.push({ code: 'lookup.on_demand', message: 'Not in the trust snapshot; registry entry obtained by an on-demand lookup at the trust service', severity: 'INFO' });
+      }
+    }
     if (wantRole) {
       const withRole = candidates.filter((e) => e.roles.includes(wantRole));
       if (candidates.length > 0 && withRole.length === 0) reasons.push({ code: 'entity.role_mismatch', message: `Matching entity is registered, but not as ${wantRole}`, severity: 'WARNING' });
@@ -285,7 +339,7 @@ export class LocalEvaluator {
     }
     if (expectedDns && q.context?.responseUri) {
       try {
-        const host = new URL(q.context.responseUri).host.split(':')[0]!;
+        const host = new URL(q.context.responseUri).hostname;
         if (host.toLowerCase() !== expectedDns.toLowerCase()) {
           reasons.push({ code: 'client_id.response_uri_host', message: `response_uri host '${host}' does not match x509_san_dns '${expectedDns}'`,
             severity: entity ? 'WARNING' : 'ERROR' });

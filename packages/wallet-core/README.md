@@ -44,5 +44,5 @@ const { dcApi } = await dc.respond();        // hand {protocol, data: dcApi} bac
 ```
 
 Tests:
-- `npx vitest run`: offline suite (62 tests), including the OpenID4VP SessionTranscript (redirect and DC API) and RFC 7518 KDF vectors, and an in-memory HAIP issuer for encryption, attestation proofs, refusal, notifications, batch and deferred issuance.
+- `npx vitest run`: offline suite (65 tests), including the OpenID4VP SessionTranscript (redirect and DC API) and RFC 7518 KDF vectors, and an in-memory HAIP issuer for encryption, attestation proofs, refusal, notifications, batch and deferred issuance.
 - `npm run test:live`: live suites against the Animo playground, MOSIP collab and a local trust server.

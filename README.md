@@ -10,7 +10,7 @@ A spec-agnostic trust service for OpenID4VCI / OpenID4VP wallets and verifiers. 
 - **Client library** (TypeScript, `@vctrust/trust-client`). One API for wallets and verifiers.
   - **By default it decides trust on the device**, from the signed snapshot, with the same rules as the server. The service never learns which issuers or verifiers a user deals with.
   - Lookups that would disclose a counterparty (metadata proxy, DID proxy, on-demand registry lookups) are opt-in.
-- **Demo wallet**. A platform-neutral `@vctrust/wallet-core` (OpenID4VCI 1.0, OpenID4VP 1.0, HAIP 1.0) and an Expo React Native app (`apps/wallet`), which on Android also answers Digital Credentials API requests through Credential Manager. It is tested against live issuers: Animo playground (mDL mdoc, SD-JWT VC) and MOSIP collab (W3C VCDM 2.0 JSON-LD, mDL).
+- **Demo wallet**. A platform-neutral `@vctrust/wallet-core` (OpenID4VCI 1.0, OpenID4VP 1.0, HAIP 1.0) and an Expo React Native app (`apps/wallet`), which on Android also answers Digital Credentials API requests through Credential Manager. It is tested against live issuers: Animo playground (mDL mdoc, SD-JWT VC) and MOSIP collab (W3C VCDM 2.0 JSON-LD, mDL, SD-JWT VC).
 
 Design document: https://claude.ai/artifact/RViVpaEWce3S8yctArPdvk (also in `docs/DESIGN.md`). Configuration reference: [`docs/configuration.md`](docs/configuration.md).
 
@@ -30,7 +30,7 @@ Toolchains are user-local in `~/.local/tools` (JDK 21, Maven 3.9, Node 22). Load
 them permanent, add `source ~/.local/tools/env.sh` to your shell profile.
 
 ```sh
-scripts/build.sh                 # mvn install (116 tests) + npm install + TS builds
+scripts/build.sh                 # mvn install (124 tests) + npm install + TS builds
 scripts/start-trust-server.sh    # http://localhost:8090 — loads live sources (Animo, MOSIP collab, EBSI on demand)
 open http://localhost:8090/swagger-ui.html
 curl -H 'Authorization: Bearer demo-wallet-key' 'localhost:8090/api/v1/issuers?format=mso_mdoc'
@@ -161,8 +161,9 @@ const { dcApi } = await dc.respond();      // {vp_token} or {response: JWE}, bou
 | MOSIP Farmer VCDM 2.0 JSON-LD (eSignet authorization code + PKCE) | valid + TRUSTED (Ed25519Signature2020 over RDFC-1.0, did:web) |
 | MOSIP Land VCDM 2.0 JSON-LD | **refused**: signature invalid (issuer defect, confirmed with Digital Bazaar's reference library); the issuer is sent `credential_failure` |
 | MOSIP mock mDL | valid + TRUSTED under a `relaxProfile` anchor for the wallet profile, with ISO deviations reported; the strict verifier profile refuses it |
+| MOSIP mock identity SD-JWT VC | valid + TRUSTED under a `relaxProfile` anchor (the issuer's published root), with warnings for the signing certificate's key usage, `cnf.kid` instead of `cnf.jwk`, and `expirationDate` instead of `exp` |
 | Decisions on the device (default): mDL issue + present to Animo, MOSIP JSON-LD issue | TRUSTED from the snapshot; the trust service saw only snapshot/JWKS requests; MOSIP DID document from the snapshot |
-| Parity: 34 queries (including revoked / on-hold / CRL-covered Document Signers and a relaxed sandbox anchor) × lenient and strict client profiles, service `/evaluate` vs device | identical decisions, error reasons, entities and per-certificate revocation status |
+| Parity: 37 queries (including revoked / on-hold / CRL-covered Document Signers, a relaxed sandbox anchor, `origin:` verifiers and a URL written differently) × lenient and strict client profiles, service `/evaluate` vs device, the device asking on demand where the service does | identical decisions, error reasons, entities and per-certificate revocation status |
 | Revocation, live: Animo mDL Document Signer against the Animo IACA CRL (`https://playground.animo.id/crl`) | `GOOD`; the CRL comes from the snapshot, with no other request to the service or to Animo |
 | Relays, live: the Animo CRL and a MOSIP status list fetched through the service | verified on the device; MOSIP's list is signed with a key missing from its DID document, so its status is reported as unknown |
 | Trust service outage, `service` mode with a synced snapshot (mDL issue + present, JSON-LD issue) | works; trust from `snapshot`; recovers afterwards |
@@ -181,6 +182,7 @@ Draft defect reports for MOSIP are in [`docs/upstream-reports.md`](docs/upstream
   - The signing key's DID (`did:web:inji.github.io:...`) differs from `issuer`, and `assertionMethod` lists the bare DID. Both are reported as warnings; key equivalence is checked.
   - The pre-authorized flow is broken on collab: tokens from `/v1/certify/oauth/token` are rejected by the credential endpoint, and `credential_offer_uri` is not a URL.
   - The mDL is not ISO-conformant: `{docType, issuerSigned}` wrapper, MSO not tag-24 wrapped, no DS EKU, CA leaf.
+  - The mock identity issuer's SD-JWT VC breaks HAIP §6.1 twice. It names the holder key by reference (`cnf.kid`, a `did:jwk`) instead of in `cnf.jwk`. It states its expiry as `expirationDate` rather than `exp` (or a status). Its Ed25519 signing certificate allows only `keyEncipherment` and names no issuer (no SAN). The wallet resolves the `did:jwk` and checks it is its own key (a `cnf.kid` it cannot read is refused), and reports each deviation. The issuer has no Mimoto entry; it accepts a token from the Land client's eSignet login.
 - **MOSIP status lists:** the Land credential's Bitstring Status List credential is signed with `#0B6e9kc5…`, which is not in `did:web:inji.github.io:inji-config:collab:landregistry`. The wallet reports the status as unknown instead of trusting the bit.
 - **Animo playground:** publishes a real IACA CRL (empty, `nextUpdate` 2027-10-26) covering its Document Signer. The DS certificate has no CRL distribution point, which is allowed because the IACA's complete CRL covers it. mDLs and SD-JWTs carry no status list reference.
 - **Animo playground:** the verifier requires fully specified `ESP256 (-9)` for device authentication. Metadata mixes the 1.0 `credential_metadata` layout with top-level `display`/`claims`; the wallet accepts both.

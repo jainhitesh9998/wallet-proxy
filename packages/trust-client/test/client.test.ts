@@ -291,6 +291,12 @@ describe('TrustClient (local mode, default)', () => {
     expect(d.decision).toBe('TRUSTED');
     expect(d.reasons.map((r) => r.code)).toContain('lookup.on_demand');
     expect(on.calls.find((x) => x.includes('/entities/lookup'))).toContain('onDemand=true');
+    expect(on.calls.find((x) => x.includes('/entities/lookup'))).toContain('type=URL');
+
+    // A genuine signed answer about fed.example, replayed for another identifier, does not vouch for that one.
+    const replayed = await localClient(fakeFetch(routes).fetch, { lookups: { unknownParties: true } }).evaluateIssuer({ credentialIssuer: 'https://attacker.example' });
+    expect(replayed.decision).toBe('UNKNOWN');
+    expect(replayed.entity).toBeNull();
 
     signer = es256Key().privateKey;
     const forged = await localClient(fakeFetch(routes).fetch, { lookups: { unknownParties: true } }).evaluateIssuer({ credentialIssuer: 'https://fed.example' });

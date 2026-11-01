@@ -38,7 +38,9 @@ export function holderBinding(format: string, credential: unknown): { jwk?: Jwk;
       return { jwk: coseKeyToJwk(cbor.mapGet(cbor.mapGet(mso, 'deviceKeyInfo'), 'deviceKey')) ?? undefined };
     }
     if (format === 'dc+sd-jwt' || format === 'vc+sd-jwt') {
-      return { jwk: decodeJws<{ cnf?: { jwk?: Jwk } }>(parseSdJwt(String(credential)).issuerJwt).payload.cnf?.jwk };
+      const cnf = decodeJws<{ cnf?: { jwk?: Jwk; kid?: unknown } }>(parseSdJwt(String(credential)).issuerJwt).payload.cnf;
+      // A key named by reference (cnf.kid, e.g. a did:jwk) binds like a subject DID.
+      return cnf?.jwk ? { jwk: cnf.jwk } : typeof cnf?.kid === 'string' ? { did: cnf.kid.split('#')[0] } : {};
     }
     if (format === 'ldp_vc') {
       const vc = (typeof credential === 'string' ? JSON.parse(credential) : credential) as { credentialSubject?: unknown };

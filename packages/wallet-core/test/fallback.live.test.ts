@@ -29,9 +29,11 @@ async function animoOffer(id: string) {
   return ((await r.json()) as { credentialOffer: string }).credentialOffer;
 }
 
+// The outage is simulated by failing at once; the timeout only guards the live calls made while the service is up,
+// which share the machine with the other live suites.
 function trustClient(f: typeof fetch) {
   return createTrustClient({ baseUrl: TRUST, apiKey: 'demo-wallet-key', clientId: 'demo-wallet', decisions: 'service', fetch: f, cache: new MemoryCacheStore(),
-    retries: 0, timeoutMs: 1500, circuitBreaker: { failureThreshold: 2, resetAfterMs: 1000 }, serviceKeys: { trustOnFirstUse: true } });
+    retries: 0, timeoutMs: 10_000, circuitBreaker: { failureThreshold: 2, resetAfterMs: 1000 }, serviceKeys: { trustOnFirstUse: true } });
 }
 
 describe('trust service outage', () => {

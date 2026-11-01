@@ -18,6 +18,7 @@ import { createPkce, type Pkce } from '../oauth/pkce.js';
 import type { WalletAttester } from '../oauth/attestation.js';
 import { PRE_AUTH, resolveCredentialOffer, type CredentialOffer, type TxCode } from './offer.js';
 import { holderBinding, verifyCredential, type VerificationReport } from '../verify/index.js';
+import { didPublicKey } from '../verify/sdjwt.js';
 
 export interface IssuerClientRegistration {
   /** Pre-registered client_id at this issuer's AS (when not using wallet attestation). */
@@ -728,16 +729,12 @@ function bindInstances(format: string, credentials: unknown[], holders: Holder[]
   const free = [...holders];
   const instances: CredentialInstance[] = [];
   let dropped = 0;
-  // A subject DID binds a key when it is a did:jwk, or when the wallet bound this configuration to DIDs; otherwise it
-  // is just the subject's identifier and the credential pairs like a bearer one.
-  const didKey = (did: string): Jwk | undefined => {
-    if (!did.startsWith('did:jwk:')) return undefined;
-    try { return JSON.parse(bytes.utf8Decode(bytes.base64UrlDecode(did.slice('did:jwk:'.length).split('#')[0]!))) as Jwk; } catch { return undefined; }
-  };
+  // A subject DID binds a key when it is a did:jwk or did:key, or when the wallet bound this configuration to DIDs;
+  // otherwise it is just the subject's identifier and the credential pairs like a bearer one.
   const bindings = credentials.map((c) => {
     const b = holderBinding(format, c);
     if (b.jwk || !b.did) return b;
-    const jwk = didKey(b.did);
+    const jwk = didPublicKey(b.did);
     return jwk ? { jwk } : holders.some((h) => h.did) ? b : {};
   });
   const bound = bindings.filter((b) => b.jwk || b.did).length;

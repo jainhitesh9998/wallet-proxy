@@ -3,7 +3,7 @@
  * Metadata), disclosure digests, validity, cnf holder binding, Token Status List; issuer trust via the client.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytes, decodeJws, verifyJws, parseCertificate, findVerificationMethod, verificationMethodPublicKey, wellKnownInserted,
+import { bytes, decodeJws, verifyJws, parseCertificate, publicKeyToJwk, publicKeyFromMulticodec, decodeMultibase, findVerificationMethod, verificationMethodPublicKey, wellKnownInserted,
   extractIssuerInfo, issuerTrustQuery, type TrustClient, type Jwk, type PublicKey } from '@vctrust/trust-client';
 import { checkTokenStatus, type StatusListReference } from './status.js';
 import { Checks, finish, type VerificationReport } from './report.js';
@@ -21,6 +21,19 @@ export function parseSdJwt(s: string): ParsedSdJwt {
   const kbJwt = last !== '' && parts.length > 1 ? last : undefined;
   const disclosures = parts.slice(1, kbJwt ? -1 : parts.length - 1).filter(Boolean);
   return { issuerJwt, disclosures, kbJwt };
+}
+
+/** The public key a did:jwk or did:key (or a DID URL of one) names, read without resolution; undefined for other DIDs. */
+export function didPublicKey(did: string): Jwk | undefined {
+  const id = did.split('#')[0]!;
+  try {
+    if (id.startsWith('did:key:')) return publicKeyToJwk(publicKeyFromMulticodec(decodeMultibase(id.slice('did:key:'.length))));
+    if (!id.startsWith('did:jwk:')) return undefined;
+    const jwk = JSON.parse(bytes.utf8Decode(bytes.base64UrlDecode(id.slice('did:jwk:'.length)))) as Jwk;
+    return typeof jwk.kty === 'string' && !('d' in jwk) ? jwk : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function disclosureDigest(disclosure: string): string {
@@ -103,7 +116,7 @@ async function issuerKey(header: Record<string, unknown>, payload: Record<string
   throw new Error('No way to resolve the issuer key (x5c, DID kid or https iss)');
 }
 
-export async function verifySdJwtVc(credential: string, opts: { trust?: TrustClient; fetch?: typeof fetch; holderJwk?: Jwk; now?: Date;
+export async function verifySdJwtVc(credential: string, opts: { trust?: TrustClient; fetch?: typeof fetch; holderJwk?: Jwk; holderDid?: string; now?: Date;
   credentialIssuer?: string; checkStatus?: boolean; format?: string }): Promise<VerificationReport> {
   const checks = new Checks();
   const f = opts.fetch ?? fetch;
@@ -138,10 +151,20 @@ export async function verifySdJwtVc(credential: string, opts: { trust?: TrustCli
     const exp = jws.payload.exp as number | undefined;
     const nbf = jws.payload.nbf as number | undefined;
     if ((exp && nowS > exp) || (nbf && nowS < nbf)) checks.fail('sdjwt.validity', 'Validity period', 'Outside exp/nbf');
-    else checks.pass('sdjwt.validity', 'Validity period', exp ? `until ${new Date(exp * 1000).toISOString()}` : 'no expiry');
-    const cnf = (jws.payload.cnf as { jwk?: Jwk } | undefined)?.jwk;
-    if (!cnf) checks.warn('sdjwt.holder', 'Holder binding', 'No cnf key (bearer credential)');
-    else if (opts.holderJwk && (cnf.x !== opts.holderJwk.x || cnf.y !== opts.holderJwk.y)) checks.fail('sdjwt.holder', 'Holder binding', 'cnf.jwk is not this wallet\'s key');
+    else if (!exp && typeof jws.payload.expirationDate === 'string') {
+      // VCDM 1.1's claim name: SD-JWT VC does not define it, so verifiers do not enforce it (HAIP §6.1: exp or status).
+      checks.warn('sdjwt.validity', 'Validity period', `no exp; the credential states expirationDate ${jws.payload.expirationDate}, which SD-JWT VC does not define`);
+    } else checks.pass('sdjwt.validity', 'Validity period', exp ? `until ${new Date(exp * 1000).toISOString()}` : 'no expiry');
+    const cnf = jws.payload.cnf as { jwk?: Jwk; kid?: unknown } | undefined;
+    const kid = !cnf?.jwk && typeof cnf?.kid === 'string' ? cnf.kid : undefined;
+    const bound = cnf?.jwk ?? (kid ? didPublicKey(kid) : undefined);
+    const member = cnf?.jwk ? 'cnf.jwk' : 'cnf.kid';
+    const ownDid = !!kid && !!opts.holderDid && kid.split('#')[0] === opts.holderDid.split('#')[0];
+    if (!cnf?.jwk && !kid) checks.warn('sdjwt.holder', 'Holder binding', 'No cnf key (bearer credential)');
+    // A key this wallet cannot read may be anyone's: the credential is not taken as bound to this wallet.
+    else if (!bound && !ownDid) checks.fail('sdjwt.holder', 'Holder binding', `cnf.kid ${kid} names a key this wallet cannot read (only did:jwk, did:key or its own DID); HAIP §6.1 requires the key in cnf.jwk`);
+    else if (bound && opts.holderJwk && (bound.x !== opts.holderJwk.x || bound.y !== opts.holderJwk.y)) checks.fail('sdjwt.holder', 'Holder binding', `${member} is not this wallet's key`);
+    else if (kid) checks.warn('sdjwt.holder', 'Holder binding', `cnf.kid (${bound ? kid.split(':').slice(0, 2).join(':') : 'this wallet\'s DID'}) names ${opts.holderJwk || ownDid ? 'this wallet\'s' : 'the holder'} key; HAIP §6.1 requires the key in cnf.jwk`);
     else checks.pass('sdjwt.holder', 'Holder binding', 'cnf.jwk');
     statusRef = (jws.payload.status as { status_list?: StatusListReference } | undefined)?.status_list;
   } catch (e) {

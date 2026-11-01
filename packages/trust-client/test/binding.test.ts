@@ -5,7 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { LocalEvaluator, normalizeIdentifier, type LocalTrustData } from '../src/evaluation/local.js';
+import { URL as ExpoURL } from 'whatwg-url-minimum';
+import { LocalEvaluator, assertWhatwgUrl, normalizeIdentifier, type LocalTrustData } from '../src/evaluation/local.js';
 import { parseCertificate } from '../src/x509/certificate.js';
 import { resolveDidJwk } from '../src/did/resolver.js';
 
@@ -23,6 +24,8 @@ const data = (entities: unknown[], anchorExtra: Record<string, unknown> = {}): L
   ] as never[],
   policy: { strictAuthorization: false, requireRevocationStatus: false, allowRelaxedProfiles: false },
 });
+const OTHER_DID = 'did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9';
+const EBSI_DID = 'did:ebsi:zParityIssuer4LkPq';
 const ev = new LocalEvaluator(async (d) => resolveDidJwk(d.split('#')[0]!));
 const codes = (d: { reasons: Array<{ code: string }> }) => d.reasons.map((r) => r.code);
 const bank = entity('bank-verifier', ['VERIFIER'], [{ type: 'DNS', value: 'verifier.example' }]);
@@ -119,29 +122,122 @@ describe('identifiers are bound to the presented key', () => {
     expect(d.entity?.id).toBe('here');
   });
 
+  it('reads the response_uri host as WHATWG does, also with "_" in it (mirrors TrustEvaluatorTest)', async () => {
+    const d = await ev.evaluate({ role: 'verifier', subject: { identifier: 'x509_san_dns:verifier.example', x5c: [b64('rp')] },
+      context: { protocol: 'oid4vp', responseUri: 'https://collector_1.example/cb' } }, data([]));
+    expect(d.decision).toBe('NOT_TRUSTED');
+    expect(d.reasons.filter((r) => r.severity === 'ERROR').map((r) => r.code)).toEqual(['client_id.response_uri_host']);
+  });
+
+  it('matches a URL identifier however its scheme, host and default port are written', async () => {
+    const d = await ev.evaluate({ role: 'issuer', subject: { identifier: 'HTTPS://Verifier.Example:443/' } }, data([gov]));
+    expect([d.decision, d.entity?.id]).toEqual(['TRUSTED', 'gov-issuer']);
+  });
+
   it('treats an empty JWK as no key, as the service does', async () => {
     const d = await ev.evaluate({ role: 'issuer', subject: { identifier: 'https://verifier.example', jwk: {} as never } }, data([gov]));
     expect(d.decision).toBe('TRUSTED');
   });
 });
 
-/** The same vectors are in the Java IdentifierTest: both sides must index URL identifiers identically. */
-export const URL_VECTORS: Array<[string, string]> = [
-  ['https://Issuer.Example:443/a/../b/', 'https://issuer.example/b'],
-  ['https://issuer.example/', 'https://issuer.example'],
-  ['https://issuer.example:8443/x?', 'https://issuer.example:8443/x'],
-  ['https://bücher.example/p', 'https://xn--bcher-kva.example/p'],
-  ['http://issuer.example:80/p?q=1#frag', 'http://issuer.example/p?q=1'],
-  ['https://issuer.example/Path/Case', 'https://issuer.example/Path/Case'],
-  ['https://issuer.example/../x', 'https://issuer.example/x'],
-  ['https://user@Issuer.example/y/', 'https://issuer.example/y'],
-  ['https://issuer.example//', 'https://issuer.example/'],
-  ['https://issuer.example/a//', 'https://issuer.example/a/'],
-  ['https://issuer.example/a/./b/../c', 'https://issuer.example/a/c'],
-];
+/** Shared with the Java IdentifierTest: both sides must index URL identifiers identically. */
+const URL_VECTORS = (JSON.parse(readFileSync(new URL('../../../test-ecosystem/vectors/url-identifiers.json', import.meta.url), 'utf8')) as
+  { vectors: Array<[string, string]> }).vectors;
 
 describe('URL identifier normalization', () => {
-  it('matches the service', () => {
-    for (const [input, want] of URL_VECTORS) expect(normalizeIdentifier('URL', input), input).toBe(want);
+  // Node's parser here; Expo's on the device (React Native's own URL class is replaced at startup).
+  for (const [name, Parser] of [['Node', URL], ['Expo (whatwg-url-minimum)', ExpoURL]] as const) {
+    it(`matches the service with ${name}'s URL parser`, () => {
+      const global = globalThis.URL;
+      globalThis.URL = Parser as typeof URL;
+      try {
+        expect(() => assertWhatwgUrl()).not.toThrow();
+        for (const [input, want] of URL_VECTORS) expect(normalizeIdentifier('URL', input), JSON.stringify(input)).toBe(want);
+      } finally {
+        globalThis.URL = global;
+      }
+    });
+  }
+
+  it('refuses a URL class that is not a WHATWG parser', () => {
+    // React Native's own URL: regular expressions over the text.
+    class RegexURL {
+      constructor(private readonly url: string) {}
+      get protocol() { return /^([a-zA-Z][a-zA-Z\d+\-.]*):/.exec(this.url)?.[1] + ':'; }
+      get host() { return /^https?:\/\/(?:[^@]+@)?([^/?#]+)/.exec(this.url)?.[1] ?? ''; }
+      get pathname() { return /https?:\/\/[^/]+(\/[^?#]*)?/.exec(this.url)?.[1] ?? '/'; }
+      get search() { const m = /\?([^#]*)/.exec(this.url); return m ? `?${m[1]}` : ''; }
+    }
+    const global = globalThis.URL;
+    globalThis.URL = RegexURL as never;
+    try {
+      expect(() => assertWhatwgUrl()).toThrow(/not a WHATWG URL parser/);
+      expect(() => new LocalEvaluator(async () => resolveDidJwk(OTHER_DID))).toThrow(/URL polyfill/);
+    } finally {
+      globalThis.URL = global;
+    }
+    expect(() => assertWhatwgUrl()).not.toThrow();
+  });
+});
+
+describe('on-demand registries are asked where the service asks them', () => {
+  // Mirrors TrustEvaluatorTest's on-demand cases: a registry too large for the snapshot (OpenID Federation, EBSI).
+  const registry = [
+    entity('fed-issuer', ['CREDENTIAL_ISSUER'], [{ type: 'URL', value: 'https://fed.example/issuer' }]),
+    entity('fed-verifier', ['VERIFIER'], [{ type: 'URL', value: 'https://fed.example' }]),
+    entity('fed-rp', ['VERIFIER'], [{ type: 'URL', value: 'https://fed.example/rp' }], { status: 'REVOKED' }),
+    entity('ebsi-issuer', ['CREDENTIAL_ISSUER'], [{ type: 'DID', value: EBSI_DID }]),
+  ];
+  const run = async (q: Parameters<LocalEvaluator['evaluate']>[0], snapshot: unknown[] = [gov]) => {
+    const asked: string[] = [];
+    const d = await ev.evaluate(q, { ...data(snapshot), onDemand: async (ids) => {
+      for (const id of ids) {
+        asked.push(`${id.type}:${normalizeIdentifier(id.type, id.value)}`);
+        const e = registry.find((x) => (x as { identifiers: Array<{ type: string; value: string }> }).identifiers
+          .some((i) => normalizeIdentifier(i.type, i.value) === normalizeIdentifier(i.type, id.value)));
+        if (e) return { entity: e, identifier: id };
+      }
+      return undefined;
+    } });
+    return { d, asked, errors: d.reasons.filter((r) => r.severity === 'ERROR').map((r) => r.code) };
+  };
+
+  it('asks about an issuer URL missing from the snapshot', async () => {
+    const { d, asked } = await run({ role: 'issuer', subject: { identifier: 'https://fed.example/issuer/' } });
+    expect(asked[0]).toBe('URL:https://fed.example/issuer');
+    expect([d.decision, d.entity?.id]).toEqual(['TRUSTED', 'fed-issuer']);
+    expect(codes(d)).toContain('lookup.on_demand');
+    expect(d.evidence?.matchedIdentifiers).toEqual(['URL:https://fed.example/issuer (on-demand)']);
+  });
+
+  it('asks about the origin of an unsigned DC API request', async () => {
+    const { d, asked } = await run({ role: 'verifier', subject: { identifier: 'origin:https://fed.example' } });
+    expect(asked).toEqual(['URL:https://fed.example']);
+    expect([d.decision, d.entity?.id]).toEqual(['TRUSTED', 'fed-verifier']);
+  });
+
+  it('never asks about a pre-registered client id or a party the snapshot knows', async () => {
+    expect((await run({ role: 'verifier', subject: { identifier: 'my-client' } })).asked).toEqual([]);
+    const known = await run({ role: 'issuer', subject: { identifier: 'https://verifier.example' } });
+    expect([known.asked, known.d.entity?.id]).toEqual([[], 'gov-issuer']);
+  });
+
+  it('with a key, asks about the key\'s identifiers, not the claimed one', async () => {
+    const { d, asked } = await run({ role: 'issuer', subject: { identifier: 'https://fed.example/issuer', kid: `${EBSI_DID}#key-1` } });
+    expect(asked).toEqual([`DID:${EBSI_DID}`]);
+    expect([d.decision, d.entity?.id]).toEqual(['TRUSTED', 'ebsi-issuer']);
+    expect(codes(d)).toContain('did.unresolved');
+  });
+
+  it('never sends a DID that is a public key itself', async () => {
+    const { d, asked } = await run({ role: 'issuer', subject: { identifier: OTHER_DID, kid: `${OTHER_DID}#0` } });
+    expect([asked, d.decision]).toEqual([[], 'UNKNOWN']);
+  });
+
+  it('asks about a validated certificate\'s URI names even when its anchor alone is trusted', async () => {
+    const leaf = parseCertificate(pem('rp-uri'));
+    const { d, asked, errors } = await run({ role: 'verifier', subject: { identifier: `x509_hash:${leaf.sha256}`, x5c: [b64('rp-uri')] } });
+    expect(asked).toEqual(['URL:https://fed.example/rp']);
+    expect([d.decision, d.entity?.id, errors]).toEqual(['NOT_TRUSTED', 'fed-rp', ['entity.status']]);
   });
 });

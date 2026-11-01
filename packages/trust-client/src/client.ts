@@ -280,10 +280,15 @@ export class TrustClient {
 
   private async localData(mode: LocalTrustData['mode']): Promise<LocalTrustData> {
     const snap = this.useSnapshot ? await this.snapshots.current().catch(() => null) : null;
-    const now = Date.now();
-    const looked = [...this.onDemand.values()].filter((v) => v.until > now).flatMap((v) => v.entities);
+    // Parties found on demand are not snapshot entries: the evaluator meets them only where the service's would.
+    const onDemand = mode === 'local' && this.lookups.unknownParties && this.transport
+      ? async (ids: Array<{ type: string; value: string }>) => {
+        const hit = await this.lookupOnDemand(ids);
+        return hit ? { entity: hit.entities[0]!, identifier: hit.identifier as { type: string; value: string } } : undefined;
+      } : undefined;
     return {
-      entities: [...(snap?.entities ?? []), ...looked, ...(this.config.fallback?.localEntities ?? [])],
+      onDemand,
+      entities: [...(snap?.entities ?? []), ...(this.config.fallback?.localEntities ?? [])],
       anchors: [...(snap?.anchors ?? []), ...this.localAnchors],
       crls: snap?.crls ?? [],
       frameworks: snap?.frameworks ?? [],
@@ -343,7 +348,7 @@ export class TrustClient {
       async (mode) => {
         const d = await this.localData(mode);
         const found = d.entities.filter((e) => e.identifiers.some((i) => normalizeIdentifier(i.type, i.value) === normalizeIdentifier(i.type, identifier)));
-        return found.length > 0 || mode !== 'local' ? found : this.lookupOnDemand([identifier]);
+        return found.length > 0 || mode !== 'local' ? found : (await this.lookupOnDemand([{ value: identifier }]))?.entities ?? [];
       });
   }
 
@@ -352,25 +357,33 @@ export class TrustClient {
    * snapshot. Only identifiers are sent — never certificates or credential contents — and the answer is a signed
    * registry entry the device evaluates itself.
    */
-  private async lookupOnDemand(identifiers: string[]): Promise<EntityView[]> {
-    if (!this.lookups.unknownParties || !this.transport) return [];
+  private async lookupOnDemand(identifiers: Array<{ type?: string; value: string }>):
+      Promise<{ identifier: { type?: string; value: string }; entities: EntityView[] } | undefined> {
+    if (!this.lookups.unknownParties || !this.transport) return undefined;
+    const seen = new Set<string>();
     for (const id of identifiers) {
-      const hit = this.onDemand.get(id);
+      const key = `${id.type ?? ''}|${id.value}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const hit = this.onDemand.get(key);
       if (hit && hit.until > Date.now()) {
-        if (hit.entities.length > 0) return hit.entities;
+        if (hit.entities.length > 0) return { identifier: id, entities: hit.entities };
         continue;
       }
       try {
-        const r = await this.transport.request<string>('GET', `/api/v1/entities/lookup?identifier=${encodeURIComponent(id)}&onDemand=true`,
-          { accept: 'application/jwt' });
-        const entities = await this.snapshots.verifySigned<EntityView[]>(String(r.body).trim(), 'trust-registry+jwt');
-        this.onDemand.set(id, { entities, until: Date.now() + ON_DEMAND_TTL_MS });
-        if (entities.length > 0) return entities;
+        const r = await this.transport.request<string>('GET', `/api/v1/entities/lookup?identifier=${encodeURIComponent(id.value)}`
+          + `${id.type ? `&type=${id.type}` : ''}&onDemand=true`, { accept: 'application/jwt' });
+        // The signed answer does not name the identifier it answers: keep only entries that carry it, so a replayed
+        // answer about another party cannot stand in for this one.
+        const entities = (await this.snapshots.verifySigned<EntityView[]>(String(r.body).trim(), 'trust-registry+jwt'))
+          .filter((e) => namesIdentifier(e, id));
+        this.onDemand.set(key, { entities, until: Date.now() + ON_DEMAND_TTL_MS });
+        if (entities.length > 0) return { identifier: id, entities };
       } catch (e) {
-        this.config.logger?.warn?.(`on-demand lookup of ${id} failed: ${(e as Error).message}`);
+        this.config.logger?.warn?.(`on-demand lookup of ${id.value} failed: ${(e as Error).message}`);
       }
     }
-    return [];
+    return undefined;
   }
 
   // ---- trust decisions -----------------------------------------------------------------------
@@ -378,15 +391,7 @@ export class TrustClient {
   async evaluate(query: TrustQuery): Promise<TrustDecision> {
     return this.decide(
       async (t) => ({ ...(await t.request<TrustDecision>('POST', '/api/v1/evaluate', { body: query, idempotent: true })).body, source: 'trust-service' as const }),
-      async (mode) => {
-        const d = await this.local.evaluate(query, await this.localData(mode));
-        if (mode !== 'local' || d.decision !== 'UNKNOWN') return d;
-        const found = await this.lookupOnDemand(onDemandIdentifiers(query));
-        if (found.length === 0) return d;
-        const again = await this.local.evaluate(query, await this.localData(mode));
-        again.reasons.push({ code: 'lookup.on_demand', message: 'Not in the trust snapshot; registry entry obtained by an on-demand lookup at the trust service', severity: 'INFO' });
-        return again;
-      });
+      async (mode) => this.local.evaluate(query, await this.localData(mode)));
   }
 
   async evaluateIssuer(args: { credentialIssuer?: string; did?: string; kid?: string; x5c?: string[]; format?: string; type?: string }): Promise<TrustDecision> {
@@ -677,21 +682,11 @@ export class TrustClient {
   }
 }
 
-/**
- * Identifiers an on-demand registry lookup may be asked about: the party's own identifiers, never key material. With
- * key material only the key's DID can identify the party (as in the service), else the identifier.
- */
-function onDemandIdentifiers(q: TrustQuery): string[] {
-  const kidDid = q.subject.kid?.startsWith('did:') ? q.subject.kid.split('#')[0]! : undefined;
-  if ((q.subject.x5c?.length ?? 0) > 0 || Object.keys(q.subject.jwk ?? {}).length > 0) return [];
-  if (kidDid) return [kidDid];
-  const ident = q.subject.identifier;
-  if (!ident) return [];
-  if (q.role === 'verifier') {
-    const m = /^(decentralized_identifier|openid_federation):(.+)$/.exec(ident);
-    return m ? [m[2]!] : [];
-  }
-  return ident.startsWith('did:') || /^https:\/\//.test(ident) ? [ident.split('#')[0]!] : [];
+/** Whether a registry entry carries the identifier: the given type, or the types the service reads an untyped one as. */
+function namesIdentifier(e: EntityView, id: { type?: string; value: string }): boolean {
+  const types = id.type ? [id.type] : id.value.startsWith('did:') ? ['DID']
+    : /^https?:\/\//i.test(id.value) ? ['URL', 'FEDERATION_ENTITY'] : ['CLIENT_ID', 'OTHER'];
+  return e.identifiers.some((i) => types.includes(i.type) && normalizeIdentifier(i.type, i.value) === normalizeIdentifier(i.type, id.value));
 }
 
 export function createTrustClient(config: TrustClientConfig = {}): TrustClient {

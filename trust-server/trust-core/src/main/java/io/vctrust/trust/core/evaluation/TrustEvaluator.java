@@ -28,7 +28,6 @@ import io.vctrust.trust.core.x509.RevocationChecker;
 import io.vctrust.trust.core.x509.ValidationIssue;
 import io.vctrust.trust.core.x509.X509PathValidator;
 
-import java.net.URI;
 import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Duration;
@@ -287,6 +286,8 @@ public class TrustEvaluator {
                 if (od.isPresent() && profile.accepts(od.get().frameworkId())) {
                     candidates.add(od.get());
                     matched.add(id + " (on-demand)");
+                    reasons.add(Reason.info("lookup.on_demand",
+                            "Not in the trust snapshot; registry entry obtained by an on-demand lookup at the trust service"));
                     break;
                 }
             }
@@ -405,7 +406,7 @@ public class TrustEvaluator {
         List<Identifier> out = new ArrayList<>();
         if (identifier.startsWith("did:")) {
             out.add(Identifier.did(identifier));
-        } else if (identifier.startsWith("https://") || identifier.startsWith("http://")) {
+        } else if (identifier.regionMatches(true, 0, "https://", 0, 8) || identifier.regionMatches(true, 0, "http://", 0, 7)) {
             out.add(Identifier.url(identifier));
             out.add(Identifier.of(IdentifierType.FEDERATION_ENTITY, identifier));
         } else {
@@ -507,11 +508,8 @@ public class TrustEvaluator {
         return candidates.stream().filter(e -> e.status().isUsable()).findFirst().orElse(candidates.iterator().next());
     }
 
+    /** As the device reads it (WHATWG): java.net.URI has no host for names with '_' or non-ASCII characters. */
     private static String hostOf(String uri) {
-        try {
-            return URI.create(uri).getHost();
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+        return Identifier.urlHost(uri);
     }
 }

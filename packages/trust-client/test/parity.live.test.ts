@@ -58,6 +58,7 @@ const CASES: Array<[string, TrustQuery]> = [
   ['DS with a CRL distribution point, not revoked', issuer({ x5c: [b64(pem('ds-crldp'))] }, 'mso_mdoc', MDL)],
   ['DS with only an OCSP responder, covered by the IACA CRL', issuer({ x5c: [b64(pem('ds-ocsp'))] }, 'mso_mdoc', MDL)],
   ['issuer URL, authorized type', issuer({ identifier: 'https://dmv.parity.example' }, 'mso_mdoc', MDL)],
+  ['issuer URL written differently (case, default port, dot segment)', issuer({ identifier: 'HTTPS://DMV.Parity.Example:443/./' }, 'mso_mdoc', MDL)],
   ['issuer URL, unauthorized type', issuer({ identifier: 'https://dmv.parity.example' }, 'dc+sd-jwt', 'urn:eudi:pid:1')],
   ['revoked issuer', issuer({ identifier: 'https://revoked.parity.example' })],
   ['issuer without authorizations (strict differs)', issuer({ identifier: 'https://open.parity.example' }, 'dc+sd-jwt', 'urn:eudi:pid:1')],
@@ -74,6 +75,8 @@ const CASES: Array<[string, TrustQuery]> = [
   ['verifier x509_san_dns, SAN mismatch', verifier('x509_san_dns:other.example', [b64(pem('rp'))], 'https://other.example/post')],
   ['verifier x509_hash without x5c', verifier(`x509_hash:${rp.sha256}`)],
   ['verifier redirect_uri', verifier('redirect_uri:https://rp.parity.example/cb')],
+  ['unsigned DC API request, unregistered origin', verifier('origin:https://nobody.parity.example')],
+  ['live: unsigned DC API request from the Animo playground', verifier('origin:https://playground.animo.id')],
   // Identifiers bound to the presented key: a claim alone never makes a key TRUSTED.
   ['verifier x509_san_dns, certificate outside the anchors', verifier('x509_san_dns:verifier.example', [b64(pem('selfsigned-verifier'))], 'https://verifier.example/post')],
   ['issuer URL claimed with an unanchored chain', issuer({ identifier: 'https://dmv.parity.example', x5c: [b64(pem('rogue-ds'))] }, 'mso_mdoc', MDL)],
@@ -118,7 +121,8 @@ describe('evaluator parity: service vs device', () => {
   for (const [clientId, apiKey] of [['demo-wallet', 'demo-wallet-key'], ['demo-verifier', 'demo-verifier-key']] as const) {
     it(`${clientId}: same decisions on the device as in the service`, async () => {
       const thumbprint = ((await (await fetch(`${BASE}/.well-known/trust-service`)).json()) as { signing_key_thumbprint: string }).signing_key_thumbprint;
-      const device = createTrustClient({ baseUrl: BASE, apiKey, clientId, serviceKeys: { thumbprints: [thumbprint] } });
+      // The device also asks the service about parties missing from the snapshot, where the service's evaluator would.
+      const device = createTrustClient({ baseUrl: BASE, apiKey, clientId, serviceKeys: { thumbprints: [thumbprint] }, lookups: { unknownParties: true } });
       const service = createTrustClient({ baseUrl: BASE, apiKey, clientId, decisions: 'service', serviceKeys: { thumbprints: [thumbprint] } });
       await device.syncSnapshot();
       const rows: string[] = [];

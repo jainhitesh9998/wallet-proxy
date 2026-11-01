@@ -4,7 +4,7 @@ import { createPrivateKey, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createTrustClient, bytes, cbor, decodeJws, verifyJws, parseCertificate } from '@vctrust/trust-client';
 import { resolveCredentialOffer, verifySdJwtVc, resolveAuthorizationRequest, evaluateDcql, presentSdJwt, presentMdoc, SoftwareKey,
-  disclosureDigest, sigStructure, type StoredCredential, type DcqlQuery } from '../src/index.js';
+  disclosureDigest, sigStructure, holderBinding, type StoredCredential, type DcqlQuery } from '../src/index.js';
 
 const PKI = new URL('../../trust-client/test/fixtures/pki/', import.meta.url);
 const pem = (n: string) => readFileSync(new URL(`${n}.pem`, PKI), 'utf8');
@@ -34,11 +34,11 @@ describe('credential offers', () => {
 });
 
 // An SD-JWT VC signed by the fixture "rsa-leaf"? No: ES256 issuer leaf "ds" isn't for SD-JWT; use rp (EC leaf) under rp-ca as issuer CA.
-function makeSdJwt(holder: SoftwareKey, tamper = false) {
+function makeSdJwt(holder: SoftwareKey, tamper = false, cnf: object = { jwk: holder.publicJwk }, claims: Record<string, unknown> = {}) {
   const disclosures = [['s1', 'given_name', 'Erika'], ['s2', 'family_name', 'Mustermann'], ['s3', 'birthdate', '1984-01-26']]
     .map((d) => bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify(d))));
   const payload = { iss: 'https://issuer.example', vct: 'urn:eudi:pid:1', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600,
-    _sd_alg: 'sha-256', _sd: disclosures.map(disclosureDigest), cnf: { jwk: holder.publicJwk } };
+    _sd_alg: 'sha-256', _sd: disclosures.map(disclosureDigest), cnf, ...claims };
   const jwt = es256({ alg: 'ES256', typ: 'dc+sd-jwt', x5c: [b64(pem('rp'))] }, payload, 'rp');
   const extra = tamper ? [bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify(['s9', 'admin', true])))] : [];
   return `${jwt}~${[...disclosures, ...extra].join('~')}~`;
@@ -61,6 +61,35 @@ describe('SD-JWT VC verification', () => {
     expect(r.valid).toBe(false);
     expect(r.checks.find((c) => c.id === 'sdjwt.disclosures')?.status).toBe('fail');
     expect(r.checks.find((c) => c.id === 'sdjwt.holder')?.status).toBe('fail');
+  });
+});
+
+describe('SD-JWT VC holder keys given by reference', () => {
+  // MOSIP Inji Certify names the holder key as cnf.kid (a did:jwk); HAIP §6.1 requires it in cnf.jwk.
+  const holder = SoftwareKey.generate();
+  const didJwk = (k: SoftwareKey) => `did:jwk:${enc(k.publicJwk)}`;
+  const holderCheck = async (cred: string) => (await verifySdJwtVc(cred, { holderJwk: holder.publicJwk })).checks.find((c) => c.id === 'sdjwt.holder');
+
+  it('checks a did:jwk kid against the wallet\'s key and warns that HAIP wants the key itself', async () => {
+    const cred = makeSdJwt(holder, false, { kid: `${didJwk(holder)}#0` });
+    expect(await holderCheck(cred)).toMatchObject({ status: 'warn', detail: expect.stringMatching(/this wallet's key; HAIP §6.1 requires the key in cnf.jwk/) });
+    expect(holderBinding('dc+sd-jwt', cred)).toEqual({ did: didJwk(holder) });
+    expect((await holderCheck(makeSdJwt(holder, false, { kid: `${didJwk(SoftwareKey.generate())}#0` })))?.status).toBe('fail');
+  });
+
+  it('reads a did:key kid, and refuses a kid it cannot read', async () => {
+    // A did:key names a key too (Ed25519 here): not this wallet's.
+    expect((await holderCheck(makeSdJwt(holder, false, { kid: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK' })))?.status).toBe('fail');
+    const check = await holderCheck(makeSdJwt(holder, false, { kid: 'did:web:holder.example#key-1' }));
+    expect(check).toMatchObject({ status: 'fail', detail: expect.stringMatching(/names a key this wallet cannot read/) });
+    const own = await verifySdJwtVc(makeSdJwt(holder, false, { kid: 'did:web:holder.example#key-1' }), { holderDid: 'did:web:holder.example' });
+    expect(own.checks.find((c) => c.id === 'sdjwt.holder')).toMatchObject({ status: 'warn', detail: expect.stringMatching(/this wallet's DID/) });
+    expect((await holderCheck(makeSdJwt(holder, false, {})))?.detail).toBe('No cnf key (bearer credential)');
+  });
+
+  it('says that a VCDM expirationDate is not an SD-JWT VC expiry', async () => {
+    const r = await verifySdJwtVc(makeSdJwt(holder, false, undefined, { exp: undefined, expirationDate: '2028-10-31T16:10:48.685Z' }), { holderJwk: holder.publicJwk });
+    expect(r.checks.find((c) => c.id === 'sdjwt.validity')).toMatchObject({ status: 'warn', detail: expect.stringMatching(/no exp; .*expirationDate 2028-10-31/) });
   });
 });
 

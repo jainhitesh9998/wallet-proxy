@@ -57,6 +57,12 @@ Two live ecosystems shape the defaults. **Animo's playground** (Credo) is fully 
 - the signing key's DID differs from the `issuer` DID;
 - `assertionMethod` lists the bare DID;
 - the mDL is non-ISO (non-standard wrapping, no DS EKU). It is trusted only through a `relaxProfile` anchor, and only by client profiles that allow relaxed anchors;
+- the SD-JWT VC of the mock identity issuer has three deviations, and it is trusted the same way: through the issuer's published root as a `relaxProfile` anchor.
+  - Its Ed25519 signing certificate allows only `keyEncipherment` and has no SAN.
+  - It names the holder key as `cnf.kid` (a `did:jwk`), where HAIP §6.1 requires `cnf.jwk`.
+  - It states its expiry as `expirationDate`, where SD-JWT VC and HAIP use `exp`.
+  - The wallet resolves the `did:jwk` and checks it against its own key; a `cnf.kid` it cannot read (not a `did:jwk`, a `did:key` or its own DID) is refused. It flags each deviation.
+  - The root is the deployment's key manager root, which certifies every key it holds, so the entity's authorizations limit SD-JWT VCs under it to the one `vct`;
 - the Land credential's signature does not verify, so wallets refuse it.
 
 Draft defect reports for MOSIP are in `docs/upstream-reports.md` in the repository.
@@ -121,6 +127,10 @@ A query presents one key: the `x5c` chain or a DID key, never both. The evaluato
 
 Without key material, the identifier is a registry lookup. Issuer metadata uses this, as does a key the caller fetched from the identifier itself, such as `jwt-vc-issuer`.
 
+**Unlisted parties.** Registries too large for the snapshot (OpenID Federation, EBSI) answer on demand. Both evaluators ask them at the same point: when no registry entry matched, before the role check. Both ask about the same identifiers, in the same order: the key's own identifiers when key material is presented (the DID of a DID key, the URI names of a validated certificate), otherwise the claimed identifier. A claimed identifier is an issuer URL or DID, or a verifier's `origin:`, `redirect_uri:`, `decentralized_identifier:` or `openid_federation:` value. A device asks only with `lookups.unknownParties`, and only about URLs and registry DIDs. Pre-registered client ids, key fingerprints and DIDs that are a public key (`did:key`, `did:jwk`, `did:peer`) never leave it. Each lookup names the identifier's type. The answer is a signed registry entry, but the signature does not say which identifier it answers, so the device keeps an entry only if it carries that identifier: a replayed answer about another party cannot stand in. It is used for that decision only and never joins the snapshot's entities, so it cannot make another query's identifier look registered.
+
+**URL identifiers.** Both sides read an http(s) URL as the WHATWG URL Standard does, because that is the parser the client compares with: browsers, Node, and Expo's parser in the React Native wallet. The key keeps the lower-case scheme and host (IDN hosts in punycode, IPv4 and IPv6 hosts in canonical form), the port unless it is the default, the path with dot segments resolved and characters percent-encoded where the parser encodes them, and a non-empty query. It drops the userinfo, one trailing slash and the fragment. Other schemes are compared as written. The OpenID4VP `response_uri` host check reads the host the same way: `java.net.URI` has none for names with `_` or non-ASCII characters, and the service would have skipped the check. 106 shared vectors (`test-ecosystem/vectors/url-identifiers.json`) run against the Java normalizer and both JavaScript parsers. The client refuses to evaluate on a runtime whose `URL` class is not a WHATWG parser. React Native's own class is such a case: it reads `https://a\@b` as host `b`.
+
 A self-signed certificate claiming a registered DNS name, or a foreign DID key claiming a registered DID, is therefore `NOT_TRUSTED`, never `TRUSTED`.
 
 ## Server design (Java 21, Spring Boot 4.1)
@@ -162,7 +172,7 @@ The server is three Maven modules with a strict dependency direction: `trust-cor
 - *Client authentication:* API keys (stored as SHA-256 if wanted), OAuth 2.0 JWT access tokens (RFC 9068, client from `client_id`/`azp`, required scope), and mTLS client certificates (from the TLS connector, or a proxy header believed only from trusted proxy addresses), including certificate-bound tokens (RFC 8705). Per-client token-bucket rate limits answer `429` with `Retry-After`.
 - *Availability:* sources load off the startup thread, and `/actuator/health` reports per-source state. A failing source keeps serving its last good data.
 
-Test coverage: 116 tests (core 57, adapters 16, server 43). They use generated PKIs, a signed federation and VICAL, an XMLDSig-signed TL, a JAdES LoTE and the live EU LOTL as a fixture.
+Test coverage: 124 tests (core 65, adapters 16, server 43). They use generated PKIs, a signed federation and VICAL, an XMLDSig-signed TL, a JAdES LoTE and the live EU LOTL as a fixture.
 
 ## Server API
 
@@ -232,7 +242,7 @@ const trust = createTrustClient({
 const { decision } = await trust.evaluateCredential(mdocB64, 'mso_mdoc', { credentialIssuer });   // decided on the device
 ```
 
-Test coverage: 88 unit tests (real MOSIP and Animo artefacts, generated EC and RSA PKI, Node-generated JWS/EdDSA/RSA-PSS, RFC 7638 vector, both decision modes: snapshot-only traffic, rollback and expiry, strict policy, snapshot DID documents with key rotation, metadata policy, signed metadata, signed on-demand lookups, CRL parsing and revocation rules, CRL sources and relays, status lists and their caching, key binding of identifiers, and the hardening regressions: malformed DER, decompression and body caps, service-key un-pinning, CRL and DID cache rules). A live parity test runs 34 queries under a lenient and a strict client profile through `/evaluate` and on the device, and requires identical decisions, error reasons, entities and revocation status.
+Test coverage: 98 unit tests (real MOSIP and Animo artefacts, generated EC and RSA PKI, Node-generated JWS/EdDSA/RSA-PSS, RFC 7638 vector, both decision modes: snapshot-only traffic, rollback and expiry, strict policy, snapshot DID documents with key rotation, metadata policy, signed metadata, signed on-demand lookups and where they are asked, URL keys under Node's and Expo's parsers, CRL parsing and revocation rules, CRL sources and relays, status lists and their caching, key binding of identifiers, and the hardening regressions: malformed DER, decompression and body caps, service-key un-pinning, CRL and DID cache rules). A live parity test runs 37 queries under a lenient and a strict client profile through `/evaluate` and on the device, and requires identical decisions, error reasons, entities and revocation status. On-demand lookups are mirrored by the same scenarios in both languages, and URL keys by the shared vectors.
 
 ## Revocation and credential status
 
@@ -341,8 +351,8 @@ The service is a policy decision point that wallets act on, so its answers must 
 | --- | --- |
 | Forged or replayed trust answers | Snapshots and opt-in responses are ES256 JWTs from the service key, audience-bound to the client. Clients pin the key by RFC 7638 thumbprint, re-verify the stored snapshot on load, and never replace it with an older (`iat`) or expired one; TLS in transit |
 | Fallback that fails open | Only a verified snapshot or a pinned anchor yields `TRUSTED`; otherwise `UNKNOWN`. In service mode the device takes over only on unavailability, never on policy errors. Every decision carries `source` and its snapshot version |
-| Device and service decide differently | One rule set in two implementations, held equal by a live parity test (34 queries under a lenient and a strict profile: same decision, error reasons, entity and revocation status). The snapshot carries the client policy so both apply the same profile |
-| Impersonation by claimed identifiers | Entities are found only through identifiers the presented key proves (see *Identifiers are bound to keys*); a claimed identifier of another registered entity is `NOT_TRUSTED`. A query with both a certificate chain and a DID key is refused, and callers pass only the key they verified. Pinned certificates match only as the leaf, never as extra certificates appended to a chain. URL identifiers are normalized identically on both sides (shared test vectors) |
+| Device and service decide differently | One rule set in two implementations, held equal by a live parity test (37 queries under a lenient and a strict profile: same decision, error reasons, entity and revocation status), mirrored on-demand scenarios and shared URL vectors. The snapshot carries the client policy so both apply the same profile |
+| Impersonation by claimed identifiers | Entities are found only through identifiers the presented key proves (see *Identifiers are bound to keys*); a claimed identifier of another registered entity is `NOT_TRUSTED`. A query with both a certificate chain and a DID key is refused, and callers pass only the key they verified. Pinned certificates match only as the leaf, never as extra certificates appended to a chain. URL identifiers are normalized identically on both sides (106 shared vectors, run against the service's normalizer and the device's WHATWG parser); a runtime without a WHATWG `URL` is refused |
 | Unauthenticated access through path tricks | Paths are judged as the router sees them, and ambiguous spellings are refused; forwarded headers are not trusted unless they come from configured proxies |
 | Tampered or stale trust lists | XMLDSig/XAdES (ETSI TL), JAdES (LoTE), COSE (VICAL) and federation chains are verified against pinned anchors. Expired LoTEs are rejected; `nextUpdate` drives refresh; a failing source keeps its last good data and the failure shows in health |
 | SSRF through the metadata or DID proxy | https only; private, loopback, link-local, CGNAT and ULA targets refused; each host resolved once per connection and connected only at vetted addresses (no DNS-rebinding window), re-checked per redirect hop; 8 MiB cap; timeouts and a total deadline; strict clients can forbid proxying unregistered issuers |
@@ -370,7 +380,7 @@ The demo authenticates clients with API keys and signs with a JWK file. Producti
 
 Testing runs in three layers.
 
-1. **Deterministic suites:** 116 Java, 88 trust-client and 62 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal, notification, batch and deferred issuance).
+1. **Deterministic suites:** 124 Java, 98 trust-client and 65 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal, notification, batch and deferred issuance).
 2. **Live end-to-end suites:** wallet-core against public issuers and verifiers through a running trust service.
 3. **UI tests:** Playwright on the Expo web build; the same app in Expo Go on an Android emulator (Hermes); and the native release build on an Android 37.2 emulator (Chrome 149, Play services 26.32) for the DC API, driven through Chrome's DevTools and the system UI (`e2e/dcapi-android.mjs`).
 
@@ -389,10 +399,11 @@ No local issuer is used; every credential below was issued by a live third-party
 | MOSIP Farmer VCDM 2.0 JSON-LD | Authorization code + PKCE via eSignet, `did:jwk` binding, Ed25519Signature2020, did:web | valid, TRUSTED (warnings for undefined terms) |
 | MOSIP Land VCDM 2.0 JSON-LD | Same | refused: signature invalid (issuer defect; Digital Bazaar library agrees) |
 | MOSIP mock mDL | Non-ISO mdoc | valid, TRUSTED via `relaxProfile` for the wallet profile; deviations flagged; refused under the strict verifier profile |
+| MOSIP mock identity SD-JWT VC | `dc+sd-jwt`, EdDSA, x5c to the issuer's published root; issued through the Land client's eSignet login (the issuer has no Mimoto entry) | valid, TRUSTED via `relaxProfile`; warnings for the certificate's key usage, `cnf.kid` instead of `cnf.jwk`, and `expirationDate` instead of `exp` |
 | Outage with a synced snapshot (service mode) | Fallback: direct discovery, local did:web, local X.509, snapshot decisions, circuit-breaker recovery | issuance and presentation work; source `snapshot` |
 | Outage without a snapshot | Fallback must not fail open | verified; trust `UNKNOWN` |
 | Decisions on the device (default mode) | mDL issue and present (Animo), JSON-LD issue (MOSIP); every request to the trust service recorded | only snapshot and JWKS requests; TRUSTED from the snapshot; MOSIP DID document from the snapshot |
-| Evaluator parity | 34 queries under lenient and strict profiles: mdoc, SD-JWT and verifier chains, revoked and on-hold Document Signers, a relaxed sandbox anchor, DID keys, status, authorizations, trusted\_authorities, identifiers claimed without a bound key, live Animo and MOSIP entries | service and device identical (decision, error reasons, entity, revocation status) |
+| Evaluator parity | 37 queries under lenient and strict profiles: mdoc, SD-JWT and verifier chains, revoked and on-hold Document Signers, a relaxed sandbox anchor, DID keys, status, authorizations, trusted\_authorities, identifiers claimed without a bound key, `origin:` verifiers, a URL written differently, live Animo and MOSIP entries; the device asks on demand where the service does | service and device identical (decision, error reasons, entity, revocation status) |
 | Revocation (Animo) | Animo mDL Document Signer against the IACA CRL from https://playground.animo.id/crl, compiled into the snapshot | not revoked, with no extra request (privacy test); the same result when the service decides |
 | Relays | The Animo CRL and the MOSIP Land status list, fetched through the service | verified on the device; MOSIP's list is signed with a key missing from its DID document, so the status is unknown |
 | Wallet web UI (Playwright) | Settings and trust list, mDL issue and present decided on the device, the same decision by the service in service mode, outage; MOSIP JSON-LD (opt-in) | pass |
@@ -416,7 +427,7 @@ One `application.yml` drives everything: frameworks, sources, clients, HTTP limi
 **Running locally**
 
 ```sh
-scripts/build.sh                # mvn install (116 tests) + npm builds
+scripts/build.sh                # mvn install (124 tests) + npm builds
 scripts/start-trust-server.sh   # :8090, loads Animo / MOSIP / EBSI sources
 scripts/test-all.sh             # offline suites, then live end-to-end (internet)
 scripts/android.sh setup|start  # the wallet in Expo Go on an Android emulator

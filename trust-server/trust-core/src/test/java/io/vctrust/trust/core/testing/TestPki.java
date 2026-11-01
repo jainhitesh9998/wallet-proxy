@@ -200,7 +200,8 @@ public final class TestPki {
             }
             if (dnsNames != null && !dnsNames.isEmpty()) {
                 b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(
-                        dnsNames.stream().map(d -> new GeneralName(GeneralName.dNSName, d)).toArray(GeneralName[]::new)));
+                        dnsNames.stream().map(d -> new GeneralName(d.contains("://") ? GeneralName.uniformResourceIdentifier : GeneralName.dNSName, d))
+                                .toArray(GeneralName[]::new)));
             }
             if (eku != null) {
                 b.addExtension(Extension.extendedKeyUsage, true,
