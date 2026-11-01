@@ -14,6 +14,8 @@ export interface SigningKey {
 export interface KeyStore {
   create(): Promise<SigningKey>;
   get(id: string): Promise<SigningKey | undefined>;
+  /** Removes a key no credential uses any more (optional; hardware stores may manage this themselves). */
+  delete?(id: string): Promise<void>;
 }
 
 export class SoftwareKey implements SigningKey {
@@ -53,13 +55,18 @@ export class SoftwareKey implements SigningKey {
 export class SoftwareKeyStore implements KeyStore {
   private readonly keys = new Map<string, SoftwareKey>();
 
-  constructor(private readonly persist?: { get(k: string): Promise<string | null>; set(k: string, v: string): Promise<void> }) {}
+  constructor(private readonly persist?: { get(k: string): Promise<string | null>; set(k: string, v: string): Promise<void>; remove?(k: string): Promise<void> }) {}
 
   async create(): Promise<SigningKey> {
     const k = SoftwareKey.generate();
     this.keys.set(k.id, k);
     await this.persist?.set(`key:${k.id}`, JSON.stringify(k.exportPrivateJwk()));
     return k;
+  }
+
+  async delete(id: string): Promise<void> {
+    this.keys.delete(id);
+    await this.persist?.remove?.(`key:${id}`);
   }
 
   async get(id: string): Promise<SigningKey | undefined> {

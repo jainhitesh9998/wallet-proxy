@@ -69,8 +69,9 @@ export default function CredentialScreen({ route, navigation }: NativeStackScree
         <KV k="Holder key" v={c.holderDid ?? c.holderKeyId} mono />
         {c.instances?.length ? (() => {
           const all = instancesOf(c);
-          const unused = all.filter((x) => !x.presentations).length;
-          return <KV k="Instances" v={`${all.length}, ${unused} not yet presented${all.some((x) => x.report?.valid === false) ? ' (some failed re-verification)' : ''}`} testID="detail-instances" />;
+          const usable = all.filter((x) => x.report?.valid !== false);
+          const unused = usable.filter((x) => !x.presentations).length;
+          return <KV k="Instances" v={`${usable.length}, ${unused} not yet presented${usable.length < all.length ? ` (${all.length - usable.length} failed re-verification)` : ''}`} testID="detail-instances" />;
         })() : null}
       </Section>
 

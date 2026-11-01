@@ -39,7 +39,7 @@ export function pickInstance(c: IssuedCredential): { index: number; instance: Cr
   const usable = all.map((x, i) => ({ x, i })).filter(({ x }) => x.report?.valid !== false);
   const pool = usable.length ? usable : all.map((x, i) => ({ x, i }));
   const best = pool.reduce((a, b) => ((b.x.presentations ?? 0) < (a.x.presentations ?? 0) ? b : a));
-  return { index: best.i, instance: best.x, fresh: !best.x.presentations, total: all.length };
+  return { index: best.i, instance: best.x, fresh: !best.x.presentations, total: pool.length };
 }
 
 export class Wallet {
@@ -87,8 +87,12 @@ export class Wallet {
     return this.opts.credentials.list();
   }
 
-  remove(id: string): Promise<void> {
-    return this.opts.credentials.remove(id);
+  /** Deletes a credential and the holder keys of all its instances. */
+  async remove(id: string): Promise<void> {
+    const c = await this.opts.credentials.get(id);
+    await this.opts.credentials.remove(id);
+    const keys = new Set([...(c ? instancesOf(c).map((x) => x.holderKeyId) : []), ...(c?.pending?.holderKeyIds ?? [])]);
+    for (const k of keys) await this.opts.keyStore.delete?.(k);
   }
 
   /**
@@ -101,9 +105,13 @@ export class Wallet {
     const verify = (x: CredentialInstance) => verifyCredential(c.format, x.credential, { trust: this.opts.trust, fetch: this.f, holderJwk: x.holderJwk,
       holderDid: x.holderDid, credentialIssuer: c.credentialIssuer });
     const report = await verify(c);
-    const instances: CredentialInstance[] = [];
-    for (const x of c.instances ?? []) instances.push({ ...x, report: await verify(x) });
-    await this.opts.credentials.save({ ...c, report, ...(c.instances ? { instances } : {}) });
+    const reports: VerificationReport[] = [];
+    for (const x of c.instances ?? []) reports.push({ ...(await verify(x)), claims: {} });
+    // Merged into the stored copy as it is now: presentations counted meanwhile are kept, a deleted credential stays deleted.
+    const latest = await this.opts.credentials.get(id);
+    if (latest) {
+      await this.opts.credentials.save({ ...latest, report, ...(latest.instances ? { instances: latest.instances.map((x, i) => ({ ...x, report: reports[i] ?? x.report })) } : {}) });
+    }
     return report;
   }
 

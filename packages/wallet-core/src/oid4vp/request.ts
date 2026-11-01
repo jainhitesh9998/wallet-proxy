@@ -162,7 +162,10 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
     throw new PresentationRequestError(`Unsupported client identifier prefix ${prefix}`, 'invalid_client');
   }
   // Verifier trust. Errors may go back only to a verifier that signed the request and is not refused.
-  const trustDecision = await trust.evaluateVerifier({ clientId, x5c, kid: header?.kid as string | undefined, responseUri });
+  // Only the key the request signature was verified with: the x5c leaf for x509_*, the DID key for decentralized_identifier.
+  const x509 = prefix === 'x509_san_dns' || prefix === 'x509_hash';
+  const trustDecision = await trust.evaluateVerifier({ clientId, x5c: x509 ? x5c : undefined,
+    kid: prefix === 'decentralized_identifier' ? header?.kid as string | undefined : undefined, responseUri });
   const refusal = verifierRefusal(prefix, trustDecision);
   const reportTo = jws && !refusal && responseUri && responseMode.startsWith('direct_post') ? { responseUri, state: raw.state as string | undefined } : undefined;
   // Request well-formedness.

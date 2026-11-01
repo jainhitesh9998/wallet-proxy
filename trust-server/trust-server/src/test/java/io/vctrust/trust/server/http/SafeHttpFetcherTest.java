@@ -139,13 +139,16 @@ class SafeHttpFetcherTest {
             assertThat(crls.get(url("crl.test", "/ok"), null).bodyAsString()).isEqualTo("hello");
             // Every other rule still applies: internal addresses, redirects to them, other schemes.
             assertThatThrownBy(() -> crls.get(url("other.test", "/ok"), null))
-                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
-                    .hasMessageContaining("non-public address");
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class);
             assertThatThrownBy(() -> crls.get(url("crl.test", "/to-internal"), null))
                     .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
                     .hasMessageContaining("internal.test");
             assertThatThrownBy(() -> crls.get(URI.create("ftp://crl.test/x.crl"), null))
                     .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class);
+            // Plain http only on port 80 for public hosts, so the open relays cannot probe other ports.
+            assertThatThrownBy(() -> crls.get(URI.create("http://crl.public.example:8081/x.crl"), null))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
+                    .hasMessageContaining("port 80");
         }
         assertThat(hits).hasValue(2); // /ok and the redirect; the internal target was never reached
     }

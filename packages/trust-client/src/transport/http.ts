@@ -3,6 +3,9 @@ import { CircuitBreaker } from './circuit.js';
 import { TrustServiceError, TrustServiceUnavailableError } from '../errors.js';
 import { fetchWithTimeout } from '../did/resolver.js';
 
+/** The service's own responses (a snapshot with large trust lists and their CRLs) may be bigger than a party's. */
+const MAX_SERVICE_BODY_BYTES = 64 * 1024 * 1024;
+
 export interface TransportOptions {
   baseUrl: string;
   apiKey?: string;
@@ -43,7 +46,7 @@ export class HttpTransport {
       try {
         res = await fetchWithTimeout(this.opts.fetch, this.opts.baseUrl.replace(/\/$/, '') + path, {
           method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body),
-        }, this.opts.timeoutMs);
+        }, this.opts.timeoutMs, MAX_SERVICE_BODY_BYTES);
       } catch (e) {
         lastError = e;
         continue;

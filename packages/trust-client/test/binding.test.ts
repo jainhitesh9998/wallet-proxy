@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { LocalEvaluator, type LocalTrustData } from '../src/evaluation/local.js';
+import { LocalEvaluator, normalizeIdentifier, type LocalTrustData } from '../src/evaluation/local.js';
 import { parseCertificate } from '../src/x509/certificate.js';
 import { resolveDidJwk } from '../src/did/resolver.js';
 
@@ -91,5 +91,54 @@ describe('identifiers are bound to the presented key', () => {
     expect(codes(outsider)).toContain('identifier.unbound');
     const bound = await ev.evaluate(q, data([member, entity('iaca-owner', ['CREDENTIAL_ISSUER'], [])], { entityId: 'iaca-owner' }));
     expect(bound.decision).toBe('NOT_TRUSTED');
+  });
+  it('refuses a query that presents both a certificate chain and a DID key (the caller verified only one)', async () => {
+    const jwk = generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });
+    const d = await ev.evaluate({ role: 'verifier', subject: { identifier: 'x509_san_dns:verifier.example', x5c: [b64('rp')],
+      kid: `did:jwk:${Buffer.from(JSON.stringify(jwk)).toString('base64url')}#0` }, context: { protocol: 'oid4vp' } }, data([bank]));
+    expect(d.decision).toBe('NOT_TRUSTED');
+    expect(codes(d)).toContain('key.ambiguous');
+  });
+
+  it('never lets a framework-wide anchor turn a key bound to one entity into another entity', async () => {
+    const suspended = entity('b', ['CREDENTIAL_ISSUER'], [{ type: 'DNS', value: 'verifier.example' }], { status: 'SUSPENDED' });
+    const active = entity('a', ['CREDENTIAL_ISSUER'], [{ type: 'URL', value: 'https://a.example' }]);
+    const d = await ev.evaluate({ role: 'issuer', subject: { identifier: 'https://a.example', x5c: [b64('rp')] }, context: { credentialFormat: 'dc+sd-jwt' } },
+      data([suspended, active]));
+    expect(d.decision).toBe('NOT_TRUSTED');
+    expect(d.entity?.id).not.toBe('a');
+  });
+
+  it('accepts an identifier listed on two entities when the key is bound to one of them', async () => {
+    const q = { role: 'issuer' as const, subject: { identifier: 'https://issuer.example', x5c: [b64('ds')] },
+      context: { credentialFormat: 'mso_mdoc', credentialType: 'org.iso.18013.5.1.mDL' } };
+    const here = entity('here', ['CREDENTIAL_ISSUER'], [{ type: 'URL', value: 'https://issuer.example' }]);
+    const elsewhere = { ...(entity('elsewhere', ['CREDENTIAL_ISSUER'], [{ type: 'URL', value: 'https://issuer.example' }]) as object), frameworkId: 'other' };
+    const d = await ev.evaluate(q, data([elsewhere, here]));
+    expect(d.decision).toBe('TRUSTED');
+    expect(d.entity?.id).toBe('here');
+  });
+
+  it('treats an empty JWK as no key, as the service does', async () => {
+    const d = await ev.evaluate({ role: 'issuer', subject: { identifier: 'https://verifier.example', jwk: {} as never } }, data([gov]));
+    expect(d.decision).toBe('TRUSTED');
+  });
+});
+
+/** The same vectors are in the Java IdentifierTest: both sides must index URL identifiers identically. */
+export const URL_VECTORS: Array<[string, string]> = [
+  ['https://Issuer.Example:443/a/../b/', 'https://issuer.example/b'],
+  ['https://issuer.example/', 'https://issuer.example'],
+  ['https://issuer.example:8443/x?', 'https://issuer.example:8443/x'],
+  ['https://bücher.example/p', 'https://xn--bcher-kva.example/p'],
+  ['http://issuer.example:80/p?q=1#frag', 'http://issuer.example/p?q=1'],
+  ['https://issuer.example/Path/Case', 'https://issuer.example/Path/Case'],
+  ['https://issuer.example/../x', 'https://issuer.example/x'],
+  ['https://user@Issuer.example/y/', 'https://issuer.example/y'],
+];
+
+describe('URL identifier normalization', () => {
+  it('matches the service', () => {
+    for (const [input, want] of URL_VECTORS) expect(normalizeIdentifier('URL', input), input).toBe(want);
   });
 });

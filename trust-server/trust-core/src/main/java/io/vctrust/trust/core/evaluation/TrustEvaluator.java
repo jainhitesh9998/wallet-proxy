@@ -150,7 +150,12 @@ public class TrustEvaluator {
             }
         }
 
-        // 2. DID from kid
+        // 2. DID from kid. A query names one key: the certificate's or the DID's. With both, the evaluator cannot tell
+        // which one the caller verified the signature with, and the other may be copied from anyone.
+        if (!query.subject().x5c().isEmpty() && query.subject().kid() != null && query.subject().kid().startsWith("did:")) {
+            reasons.add(Reason.error("key.ambiguous",
+                    "The query presents both an x5c chain and a DID key; pass only the key the signature was verified with"));
+        }
         String did = null;
         if (query.subject().kid() != null && query.subject().kid().startsWith("did:")) {
             try {
@@ -260,16 +265,18 @@ public class TrustEvaluator {
                 snap.entity(validatedAnchor.entityId()).filter(e -> profile.accepts(e.frameworkId())).ifPresent(e -> {
                     if (candidates.add(e)) matched.add("ANCHOR:" + e.id());
                 });
-            } else if (validatedAnchor != null && validatedAnchor.frameworkId() != null) {
+            } else if (validatedAnchor != null && validatedAnchor.frameworkId() != null
+                    && candidates.stream().noneMatch(e -> role == null || e.hasRole(role))) {
+                // Only when the key's own names bind no entity in this role: a key bound to one entity is never another's.
                 String fw = validatedAnchor.frameworkId();
                 byIdentifier.forEach((e, how) -> {
                     if (fw.equals(e.frameworkId()) && candidates.add(e)) matched.add(how + " (anchor framework)");
                 });
             }
-            List<TrustedEntity> unbound = byIdentifier.keySet().stream()
-                    .filter(e -> !candidates.contains(e) && (role == null || e.hasRole(role))).toList();
-            if (!unbound.isEmpty()) {
-                reasons.add(Reason.error("identifier.unbound", "The identifier names '" + unbound.getFirst().displayName("en")
+            // Refused when the identifier names entities in this role and the key is bound to none of them.
+            List<TrustedEntity> named = byIdentifier.keySet().stream().filter(e -> role == null || e.hasRole(role)).toList();
+            if (!named.isEmpty() && named.stream().noneMatch(candidates::contains)) {
+                reasons.add(Reason.error("identifier.unbound", "The identifier names '" + named.getFirst().displayName("en")
                         + "', but the presented " + (chain.isEmpty() ? "key" : "certificate") + " is not bound to it"));
             }
         }

@@ -180,6 +180,10 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
         if (!"https".equals(scheme) && !("http".equals(scheme) && (plainHttp || httpHosts.contains(host)))) {
             throw new BlockedRequestException("Only https URLs may be fetched (got " + uri + ")");
         }
+        // Plain http for signed objects stays on the standard port, so the relays cannot be used to probe other services.
+        if ("http".equals(scheme) && !httpHosts.contains(host) && uri.getPort() != -1 && uri.getPort() != 80 && !privateAllowed(host)) {
+            throw new BlockedRequestException("Plain http is fetched only on port 80 (got " + uri + ")");
+        }
     }
 
     private boolean privateAllowed(String host) {

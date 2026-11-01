@@ -168,6 +168,47 @@ class TrustEvaluatorTest {
     }
 
     @Test
+    void certificateAndDidKeyTogetherAreRefused() {
+        var d = evaluator.evaluate(new TrustQuery(EntityRole.VERIFIER, new TrustQuery.Subject("x509_san_dns:verifier.example",
+                List.of(Certificates.toBase64(rp.certificate())), null, DID_KEY + "#" + DID_KEY.substring("did:key:".length())),
+                new TrustQuery.Context("oid4vp", null, null, null, null, List.of())), all);
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.reasons()).extracting(Reason::code).contains("key.ambiguous");
+    }
+
+    @Test
+    void frameworkAnchorNeverMakesAKeyBoundToOneEntityAnother() {
+        Provenance prov = Provenance.of("test", "static", "utopia", null, Instant.now());
+        var suspended = TrustedEntity.builder("b").framework("utopia").role(EntityRole.VERIFIER)
+                .identifier(IdentifierType.DNS, "verifier.example").status(EntityStatus.SUSPENDED).provenance(prov).build();
+        var active = TrustedEntity.builder("a").framework("utopia").role(EntityRole.VERIFIER)
+                .identifier(IdentifierType.CLIENT_ID, "verifier-a").provenance(prov).build();
+        var anchors = List.of(new TrustAnchor(null, TrustDomain.VERIFIER_ACCESS, rpCa.certificate(), "utopia", null, null, null, prov));
+        registry.publish(new RegistrySnapshot(2, Instant.now(), List.of(new TrustFramework("utopia", "Utopia", null, null, null)),
+                List.of(suspended, active), anchors));
+        var d = evaluator.evaluate(new TrustQuery(EntityRole.VERIFIER, new TrustQuery.Subject("verifier-a",
+                List.of(Certificates.toBase64(rp.certificate())), null, null), TrustQuery.Context.EMPTY), all);
+        assertThat(d.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(d.entity() == null ? null : d.entity().id()).isNotEqualTo("a");
+    }
+
+    @Test
+    void identifierOnTwoEntitiesIsFineWhenTheKeyIsBoundToOne() {
+        Provenance prov = Provenance.of("test", "static", "utopia", null, Instant.now());
+        var here = TrustedEntity.builder("here").framework("utopia").role(EntityRole.CREDENTIAL_ISSUER)
+                .identifier(IdentifierType.URL, "https://shared.example").provenance(prov).build();
+        var elsewhere = TrustedEntity.builder("elsewhere").framework("elsewhere").role(EntityRole.CREDENTIAL_ISSUER)
+                .identifier(IdentifierType.URL, "https://shared.example").provenance(prov).build();
+        var anchors = List.of(new TrustAnchor(null, TrustDomain.MDOC_IACA, iaca.certificate(), "utopia", null, null, null, prov));
+        registry.publish(new RegistrySnapshot(3, Instant.now(), List.of(new TrustFramework("utopia", "Utopia", null, null, null),
+                new TrustFramework("elsewhere", "Elsewhere", null, null, null)), List.of(elsewhere, here), anchors));
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://shared.example", List.of(Certificates.toBase64(ds.certificate())), null,
+                "mso_mdoc", "org.iso.18013.5.1.mDL", all);
+        assertThat(d.decision()).as(d.reasons().toString()).isEqualTo(Decision.TRUSTED);
+        assertThat(d.entity().id()).isEqualTo("here");
+    }
+
+    @Test
     void mdocChainFromUnknownIacaIsUnknown() {
         var d = eval(EntityRole.CREDENTIAL_ISSUER, null, List.of(Certificates.toBase64(rogueDs.certificate())), null,
                 "mso_mdoc", "org.iso.18013.5.1.mDL", all);

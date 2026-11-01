@@ -31,6 +31,7 @@ Defaults (Settings):
 - **Decide trust: `local`**. Decisions are made on this device from the signed trust list; the service never learns which issuers or verifiers you use.
 - Issuer metadata and DIDs: `direct`. Asking the service about unlisted parties: off.
 - HAIP options on `auto`.
+- *Instances per credential*: 3. From issuers with batch issuance (Animo advertises `batch_size` 10), each credential arrives as three instances, each bound to its own key. Each verifier gets an instance no verifier has seen; the credential detail shows how many are still unused. Once all have been shown, *Present* warns that the next presentation can be linked to an earlier one.
 
 The demo wallet-provider key that signs wallet and key attestations is generated into `src/config` by `npm run gen:config`.
 It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, not hardware. Attestations bind a separate
@@ -57,6 +58,7 @@ that demand it.
      - the requested claims (only these are disclosed);
      - the matching credential.
    - *Share*. The playground shows the verified presentation.
+   - The candidate line reads *Instance 1 of 3, not shown to any verifier before*. Present again, and the next instance is used.
    - A verifier whose certificate does not chain to a trusted verifier CA is shown with *Sharing is blocked*; only *Decline* is possible. A request the wallet rejects after authenticating it (for example one with `transaction_data`) offers *Tell the verifier*.
 4. **JSON-LD (VCDM 2.0) from MOSIP**
    - *Receive*, then *From trusted issuers*, then *MOSIP Farmer Registry*, then `FarmerCredential_VCDM2.0`.
@@ -72,6 +74,9 @@ that demand it.
    - Receive another Animo offer. Nothing changes for the user: decisions are made on the device anyway, from the stored trust list. Only refreshing the list fails.
    - After 24 h the list expires; decisions then carry a warning for up to 7 days.
    - Without any trust list, the wallet would show **UNKNOWN**, never TRUSTED.
+7. **Deferred issuance**
+   - Create an offer whose issuance is deferred by a minute (the playground's deferral option, `deferBy: 1m` in its API). The wallet waits up to 30 s and then keeps the credential as pending.
+   - Open it and press *Check for the credential* once the minute is up. The wallet asks the issuer's deferred endpoint, using the DPoP-bound token it kept, then verifies and stores the credential.
 
 ## Limitations
 

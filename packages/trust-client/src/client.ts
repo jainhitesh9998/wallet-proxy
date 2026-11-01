@@ -677,20 +677,21 @@ export class TrustClient {
   }
 }
 
-/** Identifiers an on-demand registry lookup may be asked about: the party's own identifiers, never key material. */
+/**
+ * Identifiers an on-demand registry lookup may be asked about: the party's own identifiers, never key material. With
+ * key material only the key's DID can identify the party (as in the service), else the identifier.
+ */
 function onDemandIdentifiers(q: TrustQuery): string[] {
-  const out = new Set<string>();
+  const kidDid = q.subject.kid?.startsWith('did:') ? q.subject.kid.split('#')[0]! : undefined;
+  if ((q.subject.x5c?.length ?? 0) > 0 || Object.keys(q.subject.jwk ?? {}).length > 0) return [];
+  if (kidDid) return [kidDid];
   const ident = q.subject.identifier;
-  if (ident) {
-    if (q.role === 'verifier') {
-      const m = /^(decentralized_identifier|openid_federation):(.+)$/.exec(ident);
-      if (m) out.add(m[2]!);
-    } else if (ident.startsWith('did:') || /^https:\/\//.test(ident)) {
-      out.add(ident.split('#')[0]!);
-    }
+  if (!ident) return [];
+  if (q.role === 'verifier') {
+    const m = /^(decentralized_identifier|openid_federation):(.+)$/.exec(ident);
+    return m ? [m[2]!] : [];
   }
-  if (q.subject.kid?.startsWith('did:')) out.add(q.subject.kid.split('#')[0]!);
-  return [...out];
+  return ident.startsWith('did:') || /^https:\/\//.test(ident) ? [ident.split('#')[0]!] : [];
 }
 
 export function createTrustClient(config: TrustClientConfig = {}): TrustClient {

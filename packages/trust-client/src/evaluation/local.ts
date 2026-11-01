@@ -131,12 +131,17 @@ export class LocalEvaluator {
       else if (/^https?:\/\//.test(ident)) identIds.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
       else identIds.push({ type: 'CLIENT_ID', value: ident }, { type: 'OTHER', value: ident });
     }
+    // A query names one key: the certificate's or the DID's. With both, the evaluator cannot tell which one the caller
+    // verified the signature with, and the other may be copied from anyone (callers pass only the key they checked).
+    if ((q.subject.x5c?.length ?? 0) > 0 && q.subject.kid?.startsWith('did:')) {
+      reasons.push({ code: 'key.ambiguous', message: 'The query presents both an x5c chain and a DID key; pass only the key the signature was verified with', severity: 'ERROR' });
+    }
     let did: string | undefined;
     if (q.subject.kid?.startsWith('did:')) {
       try { did = parseDid(q.subject.kid).did; ids.push({ type: 'DID', value: did }); } catch { reasons.push({ code: 'did.invalid', message: 'kid is not a valid DID URL', severity: 'ERROR' }); }
     } else if (ident?.startsWith('did:')) did = ident.split('#')[0];
-    if (q.subject.jwk) {
-      try { ids.push({ type: 'JWK_THUMBPRINT', value: jwkThumbprint(q.subject.jwk) }); } catch (e) {
+    if (Object.keys(q.subject.jwk ?? {}).length > 0) {
+      try { ids.push({ type: 'JWK_THUMBPRINT', value: jwkThumbprint(q.subject.jwk!) }); } catch (e) {
         reasons.push({ code: 'jwk.invalid', message: `Unparseable JWK: ${(e as Error).message}`, severity: 'WARNING' });
       }
     }
@@ -196,7 +201,9 @@ export class LocalEvaluator {
       return hits;
     };
     const take = (e: EntityView, how: string, into: EntityView[]) => { if (!into.includes(e)) { into.push(e); matched.push(how); } };
-    const keyMaterial = chain.length > 0 || !!q.subject.kid?.startsWith('did:') || !!q.subject.jwk;
+    const keyMaterial = chain.length > 0 || !!q.subject.kid?.startsWith('did:') || Object.keys(q.subject.jwk ?? {}).length > 0;
+    const wantRole = roleName(role);
+    const hasRole = (e: EntityView) => !wantRole || e.roles.includes(wantRole);
     const byIdentifier = lookup(identIds);
     let candidates: EntityView[] = [];
     if (!keyMaterial) byIdentifier.forEach((h) => take(h.e, h.how, candidates));
@@ -207,15 +214,18 @@ export class LocalEvaluator {
       if (anchor?.entityId) {
         const e = data.entities.find((x) => x.id === anchor!.entityId);
         if (e) take(e, `ANCHOR:${e.id}`, candidates);
-      } else if (anchor?.frameworkId) {
+      } else if (anchor?.frameworkId && !candidates.some(hasRole)) {
+        // Only when the key's own names bind no entity in this role: a key bound to one entity is never another's.
         byIdentifier.filter((h) => h.e.frameworkId === anchor!.frameworkId).forEach((h) => take(h.e, `${h.how} (anchor framework)`, candidates));
       }
     }
-    const wantRole = roleName(role);
     if (keyMaterial) {
-      const unbound = byIdentifier.filter((h) => !candidates.includes(h.e) && (!wantRole || h.e.roles.includes(wantRole)));
-      if (unbound.length) reasons.push({ code: 'identifier.unbound', message: `The identifier names '${pickName(unbound[0]!.e)}', but the presented `
-        + `${chain.length ? 'certificate' : 'key'} is not bound to it`, severity: 'ERROR' });
+      // Refused when the identifier names entities in this role and the key is bound to none of them.
+      const named = byIdentifier.filter((h) => hasRole(h.e));
+      if (named.length && !named.some((h) => candidates.includes(h.e))) {
+        reasons.push({ code: 'identifier.unbound', message: `The identifier names '${pickName(named[0]!.e)}', but the presented `
+          + `${chain.length ? 'certificate' : 'key'} is not bound to it`, severity: 'ERROR' });
+      }
     }
     if (wantRole) {
       const withRole = candidates.filter((e) => e.roles.includes(wantRole));

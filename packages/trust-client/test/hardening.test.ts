@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { checkTokenStatus, extractIssuerInfo, fetchIssuerMetadata, issuerTrustQuery, jwkThumbprint, MemoryCacheStore, publicKeyFromJwk,
-  TrustClient } from '../src/index.js';
+  TrustClient, type Jwk } from '../src/index.js';
 import { LocalEvaluator } from '../src/evaluation/local.js';
 import { SnapshotManager } from '../src/snapshot/snapshot.js';
 import { fetchWithTimeout } from '../src/did/resolver.js';
@@ -18,7 +18,7 @@ const es256 = (header: object, payload: object, key: import('node:crypto').KeyOb
 };
 const serviceKey = (kid: string) => {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  return { privateKey, jwk: { ...(publicKey.export({ format: 'jwk' }) as Record<string, string>), kid } };
+  return { privateKey, jwk: { ...(publicKey.export({ format: 'jwk' }) as Record<string, string>), kid } as unknown as Jwk & { kid: string } };
 };
 const snapshotJwt = (k: ReturnType<typeof serviceKey>, iat: number, policy: Record<string, unknown> = {}) =>
   es256({ alg: 'ES256', typ: 'trust-snapshot+jwt', kid: k.jwk.kid }, { iat, exp: iat + 86400, aud: 'w', version: iat, policy, entities: [], anchors: [] }, k.privateKey);

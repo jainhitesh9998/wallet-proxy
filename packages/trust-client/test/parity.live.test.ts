@@ -79,6 +79,8 @@ const CASES: Array<[string, TrustQuery]> = [
   ['issuer URL claimed with an unanchored chain', issuer({ identifier: 'https://dmv.parity.example', x5c: [b64(pem('rogue-ds'))] }, 'mso_mdoc', MDL)],
   ['issuer URL of another entity than the anchor', issuer({ identifier: 'https://open.parity.example', x5c: [b64(pem('ds'))] }, 'mso_mdoc', MDL)],
   ['DID issuer claimed with another DID key', issuer({ identifier: DID, kid: `${OTHER_DID}#0` }, 'ldp_vc')],
+  ['certificate chain and a DID key together', { role: 'verifier', subject: { identifier: `x509_hash:${rp.sha256}`, x5c: [b64(pem('rp'))], kid: `${OTHER_DID}#0` },
+    context: { protocol: 'oid4vp', responseUri: 'https://verifier.example/post' } }],
   ['live: Animo issuer metadata URL', issuer({ identifier: ANIMO }, 'mso_mdoc', MDL)],
   ['live: MOSIP did:web issuer key', issuer({ identifier: 'https://injicertify-farmer.collab.mosip.net', kid: FARMER_KID }, 'ldp_vc', 'FarmerCredential')],
   ['live: MOSIP did:web, unknown key', issuer({ identifier: 'https://injicertify-farmer.collab.mosip.net', kid: `${FARMER_KID.split('#')[0]}#rotated` }, 'ldp_vc')],

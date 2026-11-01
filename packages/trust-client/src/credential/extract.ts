@@ -111,7 +111,9 @@ function mostSpecific(types: string[]): string | undefined {
 export function issuerTrustQuery(info: IssuerInfo, credentialIssuer?: string, protocol = 'oid4vci'): TrustQuery {
   return {
     role: 'issuer',
-    subject: { identifier: info.issuer ?? credentialIssuer, x5c: info.x5c, kid: info.kid?.startsWith('did:') ? info.kid : undefined },
+    // Only the key the signature is verified with: the x5c leaf when there is one (SD-JWT VC, JWT VC), else the DID key.
+    subject: { identifier: info.issuer ?? credentialIssuer, x5c: info.x5c,
+      kid: !info.x5c?.length && info.kid?.startsWith('did:') ? info.kid : undefined },
     // A W3C VC asserts all its types: each specific one must be authorized, not only the first.
     context: { protocol, credentialFormat: info.format, credentialType: info.credentialType,
       ...(info.types && info.types.filter((t) => !GENERIC_TYPES.has(t)).length > 1 ? { credentialTypes: info.types.filter((t) => !GENERIC_TYPES.has(t)) } : {}) },

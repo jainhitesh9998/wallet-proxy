@@ -30,7 +30,7 @@ Toolchains are user-local in `~/.local/tools` (JDK 21, Maven 3.9, Node 22). Load
 them permanent, add `source ~/.local/tools/env.sh` to your shell profile.
 
 ```sh
-scripts/build.sh                 # mvn install (112 tests) + npm install + TS builds
+scripts/build.sh                 # mvn install (116 tests) + npm install + TS builds
 scripts/start-trust-server.sh    # http://localhost:8090 — loads live sources (Animo, MOSIP collab, EBSI on demand)
 open http://localhost:8090/swagger-ui.html
 curl -H 'Authorization: Bearer demo-wallet-key' 'localhost:8090/api/v1/issuers?format=mso_mdoc'
@@ -157,7 +157,7 @@ await p.respond();                         // refused unless an x509 verifier is
 | MOSIP Land VCDM 2.0 JSON-LD | **refused**: signature invalid (issuer defect, confirmed with Digital Bazaar's reference library); the issuer is sent `credential_failure` |
 | MOSIP mock mDL | valid + TRUSTED under a `relaxProfile` anchor for the wallet profile, with ISO deviations reported; the strict verifier profile refuses it |
 | Decisions on the device (default): mDL issue + present to Animo, MOSIP JSON-LD issue | TRUSTED from the snapshot; the trust service saw only snapshot/JWKS requests; MOSIP DID document from the snapshot |
-| Parity: 33 queries (including revoked / on-hold / CRL-covered Document Signers and a relaxed sandbox anchor) × lenient and strict client profiles, service `/evaluate` vs device | identical decisions, error reasons, entities and per-certificate revocation status |
+| Parity: 34 queries (including revoked / on-hold / CRL-covered Document Signers and a relaxed sandbox anchor) × lenient and strict client profiles, service `/evaluate` vs device | identical decisions, error reasons, entities and per-certificate revocation status |
 | Revocation, live: Animo mDL Document Signer against the Animo IACA CRL (`https://playground.animo.id/crl`) | `GOOD`; the CRL comes from the snapshot, with no other request to the service or to Animo |
 | Relays, live: the Animo CRL and a MOSIP status list fetched through the service | verified on the device; MOSIP's list is signed with a key missing from its DID document, so its status is reported as unknown |
 | Trust service outage, `service` mode with a synced snapshot (mDL issue + present, JSON-LD issue) | works; trust from `snapshot`; recovers afterwards |

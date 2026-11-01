@@ -94,6 +94,8 @@ export async function evaluateDcql(query: DcqlQuery, credentials: StoredCredenti
     const candidates: StoredCredential[] = [];
     const claimsFor: Record<string, DcqlClaim[]> = {};
     for (const c of credentials) {
+      // Deferred credentials still pending have nothing to present yet.
+      if (c.pending || c.credential === undefined || c.credential === null) continue;
       if (!typeMatches(q, c)) continue;
       // require_cryptographic_holder_binding defaults to true (OpenID4VP §6.1).
       if (q.require_cryptographic_holder_binding !== false && !holderBound(c)) continue;

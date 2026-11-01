@@ -56,8 +56,8 @@ export class KeyValueCredentialStore implements CredentialStore {
   }
 
   async save(c: StoredCredential) {
+    const ids = await this.ids(); // migrates first, so the old copy cannot overwrite this one
     await this.kv.set(this.entry(c.id), JSON.stringify(c));
-    const ids = await this.ids();
     if (!ids.includes(c.id)) await this.kv.set(this.key, JSON.stringify([...ids, c.id]));
   }
 

@@ -18,7 +18,7 @@ By default (`decisions: 'local'`) every trust decision is made **on the device**
   - the DID of the `kid`, the JWK thumbprint, or the pinned leaf certificate;
   - once the chain validates: the leaf's names and the anchor's entity.
 
-  A claimed `client_id`, `iss` or issuer DID counts only when that key also matches the entity, or when an anchor that isn't tied to one entity vouches for its own framework. A self-signed certificate claiming `x509_san_dns:bank.example` is `NOT_TRUSTED` (`identifier.unbound`), not `TRUSTED`. Every type a W3C VC asserts must be authorized.
+  A claimed `client_id`, `iss` or issuer DID counts only when that key also matches the entity, or when an anchor that isn't tied to one entity vouches for its own framework (and the key binds no entity of its own). Pass only the key you verified the signature with: a query with both `x5c` and a DID `kid` is refused (`key.ambiguous`). A self-signed certificate claiming `x509_san_dns:bank.example` is `NOT_TRUSTED` (`identifier.unbound`), not `TRUSTED`. Every type a W3C VC asserts must be authorized.
 
 ### Revocation
 Every certificate below the trust anchor is checked against a CRL that its issuer signed:
@@ -136,4 +136,4 @@ Building blocks are exported for reuse:
 - `applyMetadataPolicy`
 - the `cbor` codec
 
-Tests: `npx vitest run` (83 tests). `npm run test:live` adds the parity test against a running trust service. It runs 33 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.
+Tests: `npx vitest run` (88 tests). `npm run test:live` adds the parity test against a running trust service. It runs 34 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.

@@ -62,6 +62,7 @@ entities:
     identifiers:
       - {type: URL, value: "https://injicertify-mock.collab.mosip.net"}
       - did:web:injicertify-mock.collab.mosip.net
+      - did:web:inji.github.io:inji-config:collab:mock-identity
 
 anchors:
   # The collab mDL signer does not follow the ISO 18013-5 Document Signer profile (no DS EKU, CA leaf);
