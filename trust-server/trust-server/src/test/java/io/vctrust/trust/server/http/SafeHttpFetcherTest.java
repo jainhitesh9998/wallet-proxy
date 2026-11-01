@@ -140,6 +140,9 @@ class SafeHttpFetcherTest {
             // Every other rule still applies: internal addresses, redirects to them, other schemes.
             assertThatThrownBy(() -> crls.get(url("other.test", "/ok"), null))
                     .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class);
+            assertThatThrownBy(() -> crls.get(URI.create("http://other.test/ok"), null))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
+                    .hasMessageContaining("non-public address");
             assertThatThrownBy(() -> crls.get(url("crl.test", "/to-internal"), null))
                     .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
                     .hasMessageContaining("internal.test");

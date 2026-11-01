@@ -54,7 +54,7 @@ public record Identifier(IdentifierType type, String value) {
      */
     public static String normalizeUrl(String value) {
         try {
-            URI uri = URI.create(value).normalize();
+            URI uri = URI.create(value);
             if (uri.getScheme() == null) {
                 return value;
             }
@@ -79,10 +79,7 @@ public record Identifier(IdentifierType type, String value) {
             if (("https".equals(scheme) && port == 443) || ("http".equals(scheme) && port == 80)) {
                 port = -1;
             }
-            String path = uri.getRawPath() == null ? "" : uri.getRawPath();
-            while (path.equals("/..") || path.startsWith("/../")) {
-                path = path.substring(3);
-            }
+            String path = removeDotSegments(uri.getRawPath() == null ? "" : uri.getRawPath());
             if (path.endsWith("/")) {
                 path = path.substring(0, path.length() - 1);
             }
@@ -98,6 +95,36 @@ public record Identifier(IdentifierType type, String value) {
         } catch (IllegalArgumentException e) {
             return value;
         }
+    }
+
+    /** RFC 3986 §5.2.4, as the WHATWG parser applies it: empty segments ("//") are kept, unlike URI.normalize(). */
+    static String removeDotSegments(String path) {
+        StringBuilder in = new StringBuilder(path);
+        StringBuilder out = new StringBuilder();
+        while (!in.isEmpty()) {
+            String s = in.toString();
+            if (s.startsWith("../")) {
+                in.delete(0, 3);
+            } else if (s.startsWith("./")) {
+                in.delete(0, 2);
+            } else if (s.startsWith("/./")) {
+                in.delete(0, 2);
+            } else if (s.equals("/.")) {
+                in.replace(0, 2, "/");
+            } else if (s.startsWith("/../") || s.equals("/..")) {
+                in.replace(0, s.equals("/..") ? 3 : 4, "/");
+                int slash = out.lastIndexOf("/");
+                out.setLength(Math.max(slash, 0));
+            } else if (s.equals(".") || s.equals("..")) {
+                in.setLength(0);
+            } else {
+                int next = s.indexOf('/', s.startsWith("/") ? 1 : 0);
+                int end = next < 0 ? s.length() : next;
+                out.append(s, 0, end);
+                in.delete(0, end);
+            }
+        }
+        return out.toString();
     }
 
     @Override

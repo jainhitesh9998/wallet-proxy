@@ -90,7 +90,9 @@ export interface IssuedCredential extends CredentialInstance {
    * the access token (DPoP-bound when dpopKeyId is set) and the holder keys of the requested instances.
    */
   pending?: { transactionId: string; interval: number; accessToken?: string; tokenType?: string; refreshToken?: string; dpopKeyId?: string;
-    holderKeyIds?: string[] };
+    holderKeyIds?: string[];
+    /** how the token request authenticated, repeated for the refresh: wallet attestation, a client_id, or anonymously */
+    tokenAuth?: { attested: boolean; clientId?: string } };
   /** Further instances of the same credential from a batch, each bound to its own key. */
   instances?: CredentialInstance[];
   /**
@@ -109,6 +111,8 @@ interface Holder {
 export class IssuanceError extends Error {
   /** credentials of the same offer issued before this failure; store or discard them */
   issued: IssuedCredential[] = [];
+  /** a pending credential whose tokens were refreshed before this failure; store it so the new refresh token is kept */
+  updatedPending?: IssuedCredential;
 
   constructor(message: string, readonly code?: string, readonly status?: number, readonly report?: VerificationReport) {
     super(message);
@@ -181,6 +185,8 @@ export class IssuanceSession {
   private redirectUri: string;
   /** OAuth-Client-Attestation-Challenge from the last AS response, for the next attestation PoP */
   private attestationChallenge?: string;
+  /** how the last token request authenticated (a refresh repeats it) */
+  private tokenAuth?: { attested: boolean; clientId?: string };
 
   constructor(private readonly client: Oid4vciClient, readonly offer: CredentialOffer, readonly metadata: IssuerMetadataResult) {
     this.im = metadata.credentialIssuerMetadata;
@@ -363,6 +369,7 @@ export class IssuanceSession {
     if (!endpoint) throw new IssuanceError('Authorization server has no token_endpoint');
     const r = await this.asPost(endpoint, form, attest);
     if (!r.ok) throw await this.error('Token request', r);
+    if (form.grant_type !== 'refresh_token') this.tokenAuth = { attested: attest, ...(form.client_id ? { clientId: form.client_id } : {}) };
     const t = (await r.json()) as TokenResponse;
     if (this.usesDpop && t.token_type?.toLowerCase() !== 'dpop') throw new IssuanceError(`Expected a DPoP-bound token, got ${t.token_type}`);
     return t;
@@ -456,43 +463,47 @@ export class IssuanceSession {
     let token: TokenResponse = { access_token: p.accessToken, token_type: p.tokenType ?? 'Bearer', refresh_token: p.refreshToken };
     let sealed = this.seal({ transaction_id: p.transactionId });
     let r = await this.credentialPost(endpoint, sealed, token);
+    let refreshed = false;
     if (r.status === 401 && p.refreshToken) {
-      // The access token expired while the issuer worked: refresh it (same DPoP key) and ask once more.
-      token = await this.token({ grant_type: 'refresh_token', refresh_token: p.refreshToken }, this.attestationWanted());
+      // The access token expired while the issuer worked: refresh it (same DPoP key, same client authentication as the
+      // original token request) and ask once more.
+      const auth = p.tokenAuth ?? { attested: false };
+      token = await this.token({ grant_type: 'refresh_token', refresh_token: p.refreshToken, ...(auth.clientId ? { client_id: auth.clientId } : {}) },
+        auth.attested);
       token.refresh_token ??= p.refreshToken;
+      refreshed = true;
       sealed = this.seal({ transaction_id: p.transactionId });
       r = await this.credentialPost(endpoint, sealed, token);
     }
-    const stillPending = (interval?: number) => ({ ...c, pending: { ...p, accessToken: token.access_token, tokenType: token.token_type,
+    const stillPending = (interval?: number): IssuedCredential => ({ ...c, pending: { ...p, accessToken: token.access_token, tokenType: token.token_type,
       refreshToken: token.refresh_token, interval: interval ?? p.interval } });
     if (r.status === 202) return stillPending(((await this.open(r, sealed)) as { interval?: number }).interval);
-    if (r.status === 400) {
-      // Pre-1.0 issuers answer issuance_pending instead of 202.
-      const err = (await r.clone().json().catch(() => ({}))) as { error?: string; interval?: number };
-      if (err.error === 'issuance_pending') return stillPending(err.interval);
+    const pendingInterval = await issuancePending(r);
+    if (pendingInterval !== undefined) return stillPending(pendingInterval || undefined);
+    if (!r.ok) {
+      const err = await this.error('Deferred credential request', r);
+      if (refreshed) err.updatedPending = stillPending(); // a rotated refresh token must not be lost
+      throw err;
     }
-    if (!r.ok) throw await this.error('Deferred credential request', r);
-    const done = await this.complete(c.configurationId, this.configurations[0]!.config, await this.open(r, sealed), holders, token);
+    const done = await this.complete(c.configurationId, this.configurations[0]!.config, await this.open(r, sealed), holders, token, true);
     done.id = c.id;
     return done;
   }
 
   /** Pairs the received credentials with their keys, verifies them and refuses invalid ones (or records a pending issuance). */
   private async complete(configId: string, config: Record<string, unknown>, payload: { credentials?: Array<{ credential: unknown }>; credential?: unknown;
-    transaction_id?: string; interval?: number; notification_id?: string }, holders: Holder[], token: TokenResponse): Promise<IssuedCredential> {
+    transaction_id?: string; interval?: number; notification_id?: string }, holders: Holder[], token: TokenResponse, retry = false): Promise<IssuedCredential> {
     const opts = this.client.opts;
     const format = String(config.format);
     const meta = (config.credential_metadata ?? {}) as Record<string, unknown>;
     const received = payload.credentials?.map((c) => c.credential) ?? (payload.credential !== undefined ? [payload.credential] : []);
     const paired = received.length ? bindInstances(format, received, holders) : { instances: [], dropped: 0 };
+    // A refused fresh issuance keeps no keys; a refused retry keeps them for the pending entry, which removing deletes.
+    const dropKeys = async (keep: Set<string>) => { for (const h of holders) if (!keep.has(h.key.id)) await opts.keyStore.delete?.(h.key.id); };
     if (paired.error) {
       await this.notifier(token, payload.notification_id)?.('credential_failure', paired.error.slice(0, 200));
+      if (!retry) await dropKeys(new Set());
       throw new IssuanceError(paired.error, 'invalid_credential');
-    }
-    // Keys the issuer issued nothing for are not kept (a pending issuance still needs them all).
-    if (!payload.transaction_id || received.length) {
-      const used = new Set(paired.instances.map((x) => x.holderKeyId));
-      for (const h of holders) if (!used.has(h.key.id)) await opts.keyStore.delete?.(h.key.id);
     }
     const [primary, ...more] = paired.instances.length ? paired.instances : [{ credential: undefined, holderKeyId: holders[0]!.key.id,
       holderJwk: holders[0]!.key.publicJwk, ...(holders[0]!.did ? { holderDid: holders[0]!.did } : {}) }];
@@ -504,7 +515,7 @@ export class IssuanceSession {
     };
     if (!issued.credential && payload.transaction_id) {
       issued.pending = { transactionId: payload.transaction_id, interval: payload.interval ?? 5, accessToken: token.access_token, tokenType: token.token_type,
-        ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
+        ...(token.refresh_token ? { refreshToken: token.refresh_token, ...(this.tokenAuth ? { tokenAuth: this.tokenAuth } : {}) } : {}),
         ...(this.dpop && token.token_type?.toLowerCase() === 'dpop' ? { dpopKeyId: this.dpop.key.id } : {}), holderKeyIds: holders.map((h) => h.key.id) };
       return issued;
     }
@@ -527,9 +538,12 @@ export class IssuanceSession {
       if (refused) {
         const reason = more.length ? `${refused.reason} (one of ${more.length + 1} batch instances)` : refused.reason!;
         await notify?.('credential_failure', reason.slice(0, 200));
+        if (!retry) await dropKeys(new Set());
         throw new IssuanceError(reason, 'invalid_credential', undefined, refused.report);
       }
     }
+    // Keys the issuer issued nothing for are not kept.
+    await dropKeys(new Set([issued, ...more].map((x) => x.holderKeyId)));
     // The primary keeps its full report; further instances keep the outcome without a second copy of the claims.
     for (const x of more) if (x.report) x.report = { ...x.report, claims: {} };
     if (notify) Object.defineProperty(issued, 'notify', { value: notify, enumerable: false });
@@ -675,6 +689,8 @@ export class IssuanceSession {
       const r = await this.credentialPost(endpoint, sealed, token);
       if (r.status === 200) return (await this.open(r, sealed)) as { credentials?: Array<{ credential: unknown }>; notification_id?: string };
       if (r.status === 202) { wait = ((await this.open(r, sealed)) as { interval?: number }).interval ?? wait; continue; }
+      const pendingInterval = await issuancePending(r);
+      if (pendingInterval !== undefined) { wait = pendingInterval || wait; continue; }
       throw await this.error('Deferred credential request', r);
     }
     return undefined;
@@ -693,6 +709,13 @@ export class IssuanceSession {
   }
 }
 
+/** A pre-1.0 "issuance_pending" answer (400): its interval (0 when none is given), or undefined for anything else. */
+async function issuancePending(r: Response): Promise<number | undefined> {
+  if (r.status !== 400) return undefined;
+  const err = (await r.clone().json().catch(() => ({}))) as { error?: string; interval?: number };
+  return err.error === 'issuance_pending' ? (typeof err.interval === 'number' ? err.interval : 0) : undefined;
+}
+
 const json = (body: Record<string, unknown>): SealedRequest => ({ body: JSON.stringify(body), contentType: 'application/json' });
 
 /**
@@ -705,7 +728,18 @@ function bindInstances(format: string, credentials: unknown[], holders: Holder[]
   const free = [...holders];
   const instances: CredentialInstance[] = [];
   let dropped = 0;
-  const bindings = credentials.map((c) => holderBinding(format, c));
+  // A subject DID binds a key when it is a did:jwk, or when the wallet bound this configuration to DIDs; otherwise it
+  // is just the subject's identifier and the credential pairs like a bearer one.
+  const didKey = (did: string): Jwk | undefined => {
+    if (!did.startsWith('did:jwk:')) return undefined;
+    try { return JSON.parse(bytes.utf8Decode(bytes.base64UrlDecode(did.slice('did:jwk:'.length).split('#')[0]!))) as Jwk; } catch { return undefined; }
+  };
+  const bindings = credentials.map((c) => {
+    const b = holderBinding(format, c);
+    if (b.jwk || !b.did) return b;
+    const jwk = didKey(b.did);
+    return jwk ? { jwk } : holders.some((h) => h.did) ? b : {};
+  });
   const bound = bindings.filter((b) => b.jwk || b.did).length;
   if (bound > 0 && bound < credentials.length) return { instances, dropped, error: 'The batch mixes credentials bound to a key with bearer credentials' };
   const sameKey = (h: Holder, b: { jwk?: Jwk; did?: string }) => (b.jwk ? h.key.publicJwk.x === b.jwk.x && h.key.publicJwk.y === b.jwk.y : h.did === b.did);

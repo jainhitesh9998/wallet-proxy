@@ -357,7 +357,7 @@ The demo authenticates clients with API keys and signs with a JWK file. Producti
 
 Testing runs in three layers.
 
-1. **Deterministic suites:** 116 Java, 88 trust-client and 46 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal, notification, batch and deferred issuance).
+1. **Deterministic suites:** 116 Java, 88 trust-client and 51 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal, notification, batch and deferred issuance).
 2. **Live end-to-end suites:** wallet-core against public issuers and verifiers through a running trust service.
 3. **UI tests:** Playwright on the Expo web build, and the same app in Expo Go on an Android emulator (Hermes).
 

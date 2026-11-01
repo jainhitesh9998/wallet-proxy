@@ -147,7 +147,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
                           <Text style={s.hint}>issued {shortDate(c.issuedAt)} · {c.report?.trust?.decision ?? '?'} ({c.report?.trust?.source ?? '-'})</Text>
                           {next.total > 1 ? (
                             <Text testID={`instance-${m.query.id}-${i}`} style={[s.hint, !next.fresh && { color: colors.amber }]}>
-                              {next.fresh ? `Instance ${next.index + 1} of ${next.total}, not shown to any verifier before`
+                              {next.fresh ? `Instance ${next.ordinal} of ${next.total}, not shown to any verifier before`
                                 : `All ${next.total} instances were presented before: this verifier could link this presentation to an earlier one`}
                             </Text>
                           ) : null}

@@ -126,6 +126,11 @@ const status = await trust.checkTokenStatus({ idx, uri }, { form: 'cwt', signerX
 if (status.status === 'revoked' || status.status === 'suspended') reject(status.detail);
 ```
 
+**Evaluate the key you verified with.** `evaluateCredential` (and `issuerTrustQuery`) take the `x5c` leaf when the
+credential carries one (SD-JWT VC, JWT VC) and otherwise the DID `kid` or verification method. Verify the signature with
+that same key. If you verified a JWT VC with its DID `kid` while it also carries an `x5c`, build the query yourself with
+only the `kid`; a query that carries both is refused (`key.ambiguous`).
+
 Building blocks are exported for reuse:
 - `LocalEvaluator`, `parseCertificate`, `validateCertificateChain`, `validateChainOnDevice`
 - `parseCrl`, `checkRevocation`, `verifyX509Signature`

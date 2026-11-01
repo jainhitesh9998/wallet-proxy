@@ -45,7 +45,7 @@ interface MockIssuer { fetch: typeof fetch; notifications: string[]; requests: {
 function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credential: (holderJwk: Record<string, unknown>, configId: string, n: number) => string;
   proofTypes?: Record<string, unknown>; tokenAuthMethods?: string[]; zip?: boolean; batchSize?: number; deferred?: number;
   /** the access token expires once the first deferred answer was given; a refresh token replaces it */
-  expiring?: boolean; legacyPending?: boolean; respond?: (keys: Record<string, unknown>[]) => string[] }): MockIssuer {
+  expiring?: boolean; legacyPending?: boolean; respond?: (keys: Record<string, unknown>[]) => string[]; format?: string }): MockIssuer {
   const issuerKey = SoftwareKey.generate();
   const notifications: string[] = [];
   const requests: MockIssuer['requests'] = [];
@@ -55,7 +55,7 @@ function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credent
   const metadata: Record<string, unknown> = {
     credential_issuer: ISSUER, credential_endpoint: `${ISSUER}/credential`, nonce_endpoint: `${ISSUER}/nonce`, notification_endpoint: `${ISSUER}/notification`,
     deferred_credential_endpoint: `${ISSUER}/deferred`,
-    credential_configurations_supported: Object.fromEntries(['pid', 'pid2'].map((id) => [id, { format: 'dc+sd-jwt', vct: 'urn:eudi:pid:1',
+    credential_configurations_supported: Object.fromEntries(['pid', 'pid2'].map((id) => [id, { format: opts.format ?? 'dc+sd-jwt', vct: 'urn:eudi:pid:1',
       cryptographic_binding_methods_supported: ['jwk'], proof_types_supported: opts.proofTypes ?? { jwt: { proof_signing_alg_values_supported: ['ES256'] } } }])),
     ...(opts.requestEnc ? { credential_request_encryption: { jwks: { keys: [{ ...issuerKey.publicJwk, alg: 'ECDH-ES', use: 'enc', kid: 'req-key' }] },
       enc_values_supported: ['A128GCM'], encryption_required: true } } : {}),
@@ -338,17 +338,77 @@ describe('deferred issuance (OID4VCI §9)', () => {
   });
 });
 
+describe('batch pairing of W3C credentials', () => {
+  const didJwk = (jwk: Record<string, unknown>) => `did:jwk:${bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y })))}`;
+  const vc = (subject: string) => JSON.stringify({ '@context': ['https://www.w3.org/ns/credentials/v2'], type: ['VerifiableCredential'], issuer: 'did:example:issuer',
+    credentialSubject: { id: subject, name: 'Erika' } });
+  const ldpWallet = (issuer: MockIssuer) => walletFor(issuer, { batchSize: 2 });
+  const accept = async (issuer: MockIssuer) => {
+    const w = ldpWallet(issuer);
+    (w.oid4vci.opts as { verify?: boolean }).verify = false;
+    return (await w.receive(offer)).acceptPreAuthorized();
+  };
+
+  it('treats a subject DID that is not a key binding as the subject, not as a foreign key', async () => {
+    const [cred] = await accept(mockIssuer({ format: 'ldp_vc', batchSize: 2, credential: () => '', respond: () => [vc('did:example:erika'), vc('did:example:erika')] }));
+    expect(cred!.instances).toHaveLength(1);
+  });
+
+  it('pairs did:jwk subjects with their keys, and refuses one bound to a key the wallet did not send', async () => {
+    const [cred] = await accept(mockIssuer({ format: 'ldp_vc', batchSize: 2, credential: () => '', respond: (k) => [vc(didJwk(k[1]!)), vc(didJwk(k[0]!))] }));
+    expect(JSON.parse(String(cred!.credential)).credentialSubject.id).toBe(didJwk(cred!.holderJwk as never));
+    const stranger = SoftwareKey.generate().publicJwk as unknown as Record<string, unknown>;
+    await expect(accept(mockIssuer({ format: 'ldp_vc', batchSize: 2, credential: () => '', respond: (k) => [vc(didJwk(k[0]!)), vc(didJwk(stranger))] })))
+      .rejects.toThrow(/did not send/);
+  });
+});
+
 describe('deferred issuance after the access token expired', () => {
   it('refreshes the token, and treats a pre-1.0 issuance_pending answer as pending', async () => {
     const issuer = mockIssuer({ deferred: 1, expiring: true, legacyPending: true, credential: (jwk) => issueFor(jwk) });
-    const wallet = walletFor(issuer);
+    // An attester is configured, but the token request went out anonymously: the refresh must too.
+    const wallet = walletFor(issuer, { attester: demoAttester() });
     (wallet.oid4vci.opts as { deferredWaitSeconds?: number }).deferredWaitSeconds = 0;
     const [pending] = await wallet.store(await (await wallet.receive(offer)).acceptPreAuthorized());
     expect(pending!.pending?.refreshToken).toBe('rt');
     expect((await wallet.retrieveDeferred(pending!.id)).pending).toBeDefined();
     const done = await wallet.retrieveDeferred(pending!.id);
     expect(done.report?.trusted).toBe(true);
-    expect(issuer.requests.filter((r) => r.contentType === 'token').map((r) => r.body.grant_type)).toContain('refresh_token');
+    const refresh = issuer.requests.find((r) => r.contentType === 'token' && r.body.grant_type === 'refresh_token')!;
+    expect(refresh.body).toMatchObject({ attested: false });
+    expect(refresh.body.client_id).toBeUndefined();
+  });
+
+  it('keeps polling through issuance_pending answers during the first wait', async () => {
+    const issuer = mockIssuer({ deferred: 1, legacyPending: true, credential: (jwk) => issueFor(jwk) });
+    const wallet = walletFor(issuer);
+    (wallet.oid4vci.opts as { deferredWaitSeconds?: number }).deferredWaitSeconds = 4;
+    const [cred] = await (await wallet.receive(offer)).acceptPreAuthorized();
+    expect(cred!.pending).toBeUndefined();
+    expect(cred!.report?.trusted).toBe(true);
+  }, 10_000);
+
+  it('keeps the keys of a pending credential whose retrieval was refused, and deletes those of a discarded one', async () => {
+    const keyStore = new SoftwareKeyStore();
+    const rogue = mockIssuer({ deferred: 0, credential: (jwk) => issueFor(jwk, { signer: 'rogue-ds' }) });
+    const wallet = walletFor(rogue, { keyStore });
+    (wallet.oid4vci.opts as { deferredWaitSeconds?: number }).deferredWaitSeconds = 0;
+    // deferred: 0 answers the first poll at once, so make the credential endpoint defer by asking with wait 0
+    const [pending] = await wallet.store(await (await wallet.receive(offer)).acceptPreAuthorized());
+    expect(pending!.pending).toBeDefined();
+    await expect(wallet.retrieveDeferred(pending!.id)).rejects.toThrow(/not trusted/);
+    expect(await keyStore.get(pending!.holderKeyId)).toBeDefined();
+    const fresh = mockIssuer({ credential: (jwk) => issueFor(jwk) });
+    const w2 = walletFor(fresh, { keyStore });
+    const issued = await (await w2.receive(offer)).acceptPreAuthorized();
+    await w2.discard(issued);
+    expect(await keyStore.get(issued[0]!.holderKeyId)).toBeUndefined();
+  });
+
+  it('numbers instances among the usable ones', () => {
+    const inst = (valid: boolean, presentations = 0) => ({ credential: 'x', holderKeyId: 'k', holderJwk: {} as never, report: { valid } as never, presentations });
+    const c = { ...inst(false), id: 'c', format: 'dc+sd-jwt', configurationId: 'p', credentialIssuer: ISSUER, issuedAt: '', instances: [inst(true, 1), inst(true)] };
+    expect(pickInstance(c as never)).toMatchObject({ index: 2, ordinal: 2, total: 2, fresh: true });
   });
 
   it('leaves pending credentials out of presentation requests', async () => {

@@ -16,6 +16,9 @@ class IdentifierTest {
             {"https://issuer.example/Path/Case", "https://issuer.example/Path/Case"},
             {"https://issuer.example/../x", "https://issuer.example/x"},
             {"https://user@Issuer.example/y/", "https://issuer.example/y"},
+            {"https://issuer.example//", "https://issuer.example/"},
+            {"https://issuer.example/a//", "https://issuer.example/a/"},
+            {"https://issuer.example/a/./b/../c", "https://issuer.example/a/c"},
     };
 
     @Test

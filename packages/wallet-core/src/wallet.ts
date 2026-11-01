@@ -2,7 +2,7 @@
 import type { TrustClient } from '@vctrust/trust-client';
 import type { KeyStore } from './crypto/keys.js';
 import type { WalletAttester } from './oauth/attestation.js';
-import { Oid4vciClient, type CredentialInstance, type IssuanceSession, type IssuedCredential, type IssuerClientRegistration } from './oid4vci/client.js';
+import { IssuanceError, Oid4vciClient, type CredentialInstance, type IssuanceSession, type IssuedCredential, type IssuerClientRegistration } from './oid4vci/client.js';
 import type { CredentialStore, StoredCredential } from './store/credentials.js';
 import { verifyCredential, type VerificationReport } from './verify/index.js';
 import { PresentationRequestError, resolveAuthorizationRequest, type AuthorizationRequest, type VerifierView } from './oid4vp/request.js';
@@ -34,12 +34,13 @@ export function instancesOf(c: IssuedCredential): CredentialInstance[] {
  * The instance to present next: the least-presented one among those that verified, so each verifier sees a different
  * instance until the batch is used up (OID4VCI §15.4). {@code fresh} is false once every instance has been shown.
  */
-export function pickInstance(c: IssuedCredential): { index: number; instance: CredentialInstance; fresh: boolean; total: number } {
+export function pickInstance(c: IssuedCredential): { index: number; instance: CredentialInstance; fresh: boolean; total: number; ordinal: number } {
   const all = instancesOf(c);
   const usable = all.map((x, i) => ({ x, i })).filter(({ x }) => x.report?.valid !== false);
   const pool = usable.length ? usable : all.map((x, i) => ({ x, i }));
   const best = pool.reduce((a, b) => ((b.x.presentations ?? 0) < (a.x.presentations ?? 0) ? b : a));
-  return { index: best.i, instance: best.x, fresh: !best.x.presentations, total: pool.length };
+  // index: position among all instances (for markPresented); ordinal: 1-based position among the usable ones (for display)
+  return { index: best.i, instance: best.x, fresh: !best.x.presentations, total: pool.length, ordinal: pool.indexOf(best) + 1 };
 }
 
 export class Wallet {
@@ -72,7 +73,13 @@ export class Wallet {
   async retrieveDeferred(id: string): Promise<StoredCredential> {
     const c = await this.opts.credentials.get(id);
     if (!c?.pending) throw new Error(`No pending credential ${id}`);
-    const next = await this.oid4vci.retrieveDeferred(c);
+    let next: IssuedCredential;
+    try {
+      next = await this.oid4vci.retrieveDeferred(c);
+    } catch (e) {
+      if (e instanceof IssuanceError && e.updatedPending) await this.opts.credentials.save(e.updatedPending);
+      throw e;
+    }
     if (next.pending) await this.opts.credentials.save(next);
     else await this.store([next]);
     return next;
@@ -80,7 +87,10 @@ export class Wallet {
 
   /** The user declined freshly issued credentials: nothing is stored and the issuers hear credential_deleted. */
   async discard(issued: IssuedCredential[]): Promise<void> {
-    for (const c of issued) await c.notify?.('credential_deleted', 'Declined by the user');
+    for (const c of issued) {
+      await c.notify?.('credential_deleted', 'Declined by the user');
+      for (const x of instancesOf(c)) await this.opts.keyStore.delete?.(x.holderKeyId);
+    }
   }
 
   list(): Promise<StoredCredential[]> {
