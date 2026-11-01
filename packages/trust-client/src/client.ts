@@ -1,24 +1,34 @@
 /**
- * The TrustClient facade. Every operation follows the same chain:
- *   1. the trust service (authoritative, cached),
- *   2. on unavailability only: cached service answers, the verified offline snapshot, and standard
- *      mechanisms (direct OpenID4VCI discovery, local DID resolution, local X.509 validation).
- * Policy answers from the service (e.g. 403 issuer not registered) are never bypassed by fallback.
+ * The TrustClient facade.
+ *
+ * decisions: 'local' (default; wallets). Trust decisions are made on this device from the signed trust snapshot
+ * the service compiles for this client: the service never learns which credentials, issuers or verifiers the user
+ * deals with. The client contacts the service only to refresh the snapshot, plus the lookups enabled in
+ * {@link LookupPolicy} — each of which discloses a counterparty and is therefore opt-in. Certificates are checked
+ * for revocation against the anchors' CRLs carried in the snapshot; other CRLs are fetched per the policy. OCSP is
+ * never used: it would name the certificate being checked.
+ *
+ * decisions: 'service' (verifier backends, thin clients). The service evaluates; when it is unreachable the client
+ * falls back to the same device-side evaluation over the snapshot and to standard mechanisms. Policy answers from
+ * the service (e.g. 403 issuer not registered) are never bypassed by fallback.
  */
 import { CircuitBreaker } from './transport/circuit.js';
 import { HttpTransport } from './transport/http.js';
 import { ExpiringCache, MemoryCacheStore, type CacheStore } from './cache/store.js';
-import { SnapshotManager, type ServiceKeyPolicy, type SnapshotData } from './snapshot/snapshot.js';
-import { LocalEvaluator, type LocalTrustData, normalizeIdentifier } from './evaluation/local.js';
-import { resolveDidLocally } from './did/resolver.js';
-import { didError } from './did/did.js';
+import { SnapshotManager, snapshotRef, type ServiceKeyPolicy, type SnapshotData } from './snapshot/snapshot.js';
+import { LocalEvaluator, type LocalTrustData, normalizeIdentifier, validateChainOnDevice, type CrlFetchResult } from './evaluation/local.js';
+import { fetchWithTimeout, resolveDidLocally } from './did/resolver.js';
+import { didError, findVerificationMethod } from './did/did.js';
 import { fetchIssuerMetadata } from './metadata/issuer.js';
 import { parseCertificate } from './x509/certificate.js';
-import { validateCertificateChain, type LocalAnchor } from './x509/validate.js';
+import { type LocalAnchor } from './x509/validate.js';
+import { parseCrl } from './x509/crl.js';
+import type { HeldCrl } from './x509/revocation.js';
+import { base64Decode, base64Encode } from './util/bytes.js';
 import { extractIssuerInfo, issuerTrustQuery, type IssuerInfo } from './credential/extract.js';
 import { TrustServiceError, TrustServiceUnavailableError } from './errors.js';
-import type { DidResolutionResult, EntityFilter, EntityView, IssuerMetadataResult, Page, PathValidationResult,
-  ServiceDiscovery, ServiceStatus, ServiceStatusEvent, TrustDecision, TrustFramework, TrustQuery, TrustedAuthorityQuery } from './types.js';
+import type { DataSource, DidResolutionResult, EntityFilter, EntityView, IssuerMetadataResult, Page, PathValidationResult,
+  ServiceDiscovery, ServiceStatus, ServiceStatusEvent, SnapshotRef, TrustDecision, TrustFramework, TrustQuery, TrustedAuthorityQuery } from './types.js';
 
 export interface Logger {
   debug?(msg: string, ...args: unknown[]): void;
@@ -35,25 +45,56 @@ export interface LocalAnchorConfig {
   constraints?: Record<string, unknown>;
 }
 
+/** Where trust decisions are made. */
+export type DecisionMode = 'local' | 'service';
+
+/**
+ * Online lookups beyond the snapshot refresh. Each one tells the trust service which party the user is dealing
+ * with, so in 'local' mode they default to standard, direct mechanisms.
+ */
+export interface LookupPolicy {
+  /** Issuer metadata from the issuer's well-known endpoints ('direct') or through the service proxy ('service'). */
+  metadata?: 'direct' | 'service';
+  /** DIDs not in the snapshot: resolved on this device ('direct': did:web, did:key, did:jwk) or by the service ('service'). */
+  did?: 'direct' | 'service';
+  /** Ask the service about parties absent from the snapshot (registries too large to ship, e.g. OpenID Federation, EBSI). */
+  unknownParties?: boolean;
+  /**
+   * CRLs the snapshot does not carry (CAs below the trust anchors): from the CA's CRL distribution point ('direct'),
+   * through the service's CRL relay ('service'), or not at all ('none'; their certificates' status stays unknown).
+   */
+  crl?: 'direct' | 'service' | 'none';
+  /** Credential status lists: from the issuer ('direct') or through the service's relay ('service', which hides the device from the issuer). */
+  statusLists?: 'direct' | 'service';
+}
+
 export interface TrustClientConfig {
   /** Trust service base URL; omit to run purely on standard mechanisms and local configuration. */
   baseUrl?: string;
   apiKey?: string;
   /** Expected audience of signed snapshots (the client id the API key belongs to). */
   clientId?: string;
+  /** Where trust decisions are made (default 'local'). */
+  decisions?: DecisionMode;
+  /**
+   * Online lookups; defaults: 'local' → metadata / did / crl 'direct', no unknown-party lookups; 'service' → metadata /
+   * did / crl 'service'. Status lists default to 'direct' in both modes.
+   */
+  lookups?: LookupPolicy;
   fetch?: typeof fetch;
   timeoutMs?: number;
   retries?: number;
   backoffMs?: number;
   circuitBreaker?: { failureThreshold?: number; resetAfterMs?: number };
   cache?: CacheStore;
+  /** Keys the snapshot must be signed with. Pin thumbprints in production; without any, no snapshot is accepted. */
   serviceKeys?: ServiceKeyPolicy;
   fallback?: {
-    /** Use standard mechanisms when the service is unavailable (default true). */
+    /** 'service' mode: use standard mechanisms when the service is unavailable (default true). */
     enabled?: boolean;
-    /** Use the verified offline snapshot when unavailable (default true). */
+    /** Use the verified snapshot (default true). */
     useSnapshot?: boolean;
-    /** How long past its exp a snapshot may still be used offline (default 7 days). */
+    /** How long past its exp a snapshot may still be used (default 7 days); decisions then carry a warning. */
     snapshotGraceMs?: number;
     /** Trust anchors bundled with the app (pinned out of band). */
     localAnchors?: LocalAnchorConfig[];
@@ -62,8 +103,10 @@ export interface TrustClientConfig {
     /** Hosts allowed over plain http for did:web (development only). */
     didWebHttpHosts?: string[];
   };
-  /** Refresh the snapshot in the background after successful calls when older than this (default 1 h). */
+  /** Refresh the snapshot when older than this (default 1 h); refreshes run in the background while one is usable. */
   snapshotRefreshMs?: number;
+  /** Retry interval after a failed snapshot refresh (default 30 s). */
+  snapshotRetryMs?: number;
   logger?: Logger;
 }
 
@@ -72,7 +115,27 @@ export interface CredentialTrustResult {
   decision: TrustDecision;
 }
 
+export interface SnapshotInfo extends SnapshotRef {
+  entities: number;
+  anchors: number;
+  didDocuments: number;
+  crls: number;
+  strictAuthorization: boolean;
+  requireRevocationStatus: boolean;
+}
+
+/** A status list as fetched, before verification (it is signed by its issuer and verified by the caller). */
+export interface FetchedStatusList {
+  body: Uint8Array;
+  contentType: string;
+  source: DataSource;
+}
+
+const ON_DEMAND_TTL_MS = 10 * 60_000;
+
 export class TrustClient {
+  readonly decisions: DecisionMode;
+  readonly lookups: Required<LookupPolicy>;
   private readonly transport: HttpTransport | null;
   private readonly cache: ExpiringCache;
   private readonly store: CacheStore;
@@ -80,18 +143,30 @@ export class TrustClient {
   private readonly local: LocalEvaluator;
   private readonly fetchFn: typeof fetch;
   private readonly fallbackEnabled: boolean;
+  private readonly useSnapshot: boolean;
   private readonly localAnchors: LocalAnchor[];
   private _status: ServiceStatus = 'unknown';
   private readonly listeners = new Set<(e: ServiceStatusEvent) => void>();
-  private lastSnapshotSync = 0;
+  private nextSyncAt = 0;
+  private readonly onDemand = new Map<string, { entities: EntityView[]; until: number }>();
 
   constructor(private readonly config: TrustClientConfig = {}) {
     const f = config.fetch ?? (globalThis.fetch?.bind(globalThis) as typeof fetch | undefined);
     if (!f) throw new Error('No fetch implementation available');
     this.fetchFn = f;
+    this.decisions = config.decisions ?? 'local';
+    const viaService = this.decisions === 'service';
+    this.lookups = {
+      metadata: config.lookups?.metadata ?? (viaService ? 'service' : 'direct'),
+      did: config.lookups?.did ?? (viaService ? 'service' : 'direct'),
+      unknownParties: config.lookups?.unknownParties ?? false,
+      crl: config.lookups?.crl ?? (viaService ? 'service' : 'direct'),
+      statusLists: config.lookups?.statusLists ?? 'direct',
+    };
     this.store = config.cache ?? new MemoryCacheStore();
     this.cache = new ExpiringCache(this.store);
     this.fallbackEnabled = config.fallback?.enabled ?? true;
+    this.useSnapshot = config.fallback?.useSnapshot ?? true;
     this.transport = config.baseUrl ? new HttpTransport({
       baseUrl: config.baseUrl, apiKey: config.apiKey, fetch: f, timeoutMs: config.timeoutMs ?? 4000,
       retries: config.retries ?? 1, backoffMs: config.backoffMs ?? 200,
@@ -100,7 +175,7 @@ export class TrustClient {
     }) : null;
     this.snapshots = new SnapshotManager(this.transport, this.store, config.serviceKeys ?? {}, config.clientId,
       config.fallback?.snapshotGraceMs ?? 7 * 24 * 3600_000);
-    this.local = new LocalEvaluator((did) => this.resolveDidLocal(did));
+    this.local = new LocalEvaluator((did) => this.resolveDidOnDevice(did), undefined, (urls) => this.fetchCrls(urls));
     this.localAnchors = (config.fallback?.localAnchors ?? []).map((a) => ({
       certificate: parseCertificate(a.certificate), domain: a.domain, frameworkId: a.frameworkId, entityId: a.entityId, constraints: a.constraints,
     }));
@@ -123,7 +198,7 @@ export class TrustClient {
     for (const l of this.listeners) l({ status: s, reason });
   }
 
-  /** Runs {@code remote}; on unavailability (only) runs {@code fallback}. */
+  /** 'service' mode: runs {@code remote}; on unavailability (only) runs {@code fallback}. */
   private async withFallback<T>(remote: (t: HttpTransport) => Promise<T>, fallback: () => Promise<T>): Promise<T> {
     if (this.transport) {
       try {
@@ -140,28 +215,69 @@ export class TrustClient {
     return fallback();
   }
 
+  // ---- trust snapshot ------------------------------------------------------------------------------
+
   private maybeRefreshSnapshot(): void {
-    const every = this.config.snapshotRefreshMs ?? 3600_000;
-    if (!this.transport || (this.config.fallback?.useSnapshot ?? true) === false || Date.now() - this.lastSnapshotSync < every) return;
-    this.lastSnapshotSync = Date.now();
-    this.snapshots.sync().catch((e) => this.config.logger?.warn?.(`snapshot sync failed: ${(e as Error).message}`));
+    if (this.transport && this.useSnapshot && Date.now() >= this.nextSyncAt) void this.refreshSnapshot();
+  }
+
+  /** Refreshes the snapshot, never throwing; schedules the next refresh (or retry). */
+  private refreshSnapshot(): Promise<void> {
+    this.nextSyncAt = Date.now() + (this.config.snapshotRetryMs ?? 30_000);
+    return this.snapshots.sync().then(() => {
+      this.nextSyncAt = Date.now() + (this.config.snapshotRefreshMs ?? 3600_000);
+    }, (e: unknown) => {
+      this.config.logger?.warn?.(`snapshot refresh failed: ${(e as Error).message}`);
+    });
+  }
+
+  /**
+   * Device-side decisions need a usable snapshot: wait for a refresh only when none is usable (missing or past its
+   * expiry); otherwise refresh in the background when due.
+   */
+  private async ensureSnapshot(): Promise<void> {
+    if (!this.transport || !this.useSnapshot || Date.now() < this.nextSyncAt) return;
+    const cur = await this.snapshots.current().catch(() => null);
+    if (cur && !cur.stale) void this.refreshSnapshot();
+    else await this.refreshSnapshot();
   }
 
   /** Forces a snapshot download and verification. */
   async syncSnapshot(): Promise<SnapshotData> {
-    this.lastSnapshotSync = Date.now();
-    return this.snapshots.sync();
+    const s = await this.snapshots.sync();
+    this.nextSyncAt = Date.now() + (this.config.snapshotRefreshMs ?? 3600_000);
+    return s;
   }
 
-  private async localData(): Promise<LocalTrustData> {
-    const snap = (this.config.fallback?.useSnapshot ?? true) ? await this.snapshots.current().catch(() => null) : null;
+  /** The snapshot device-side decisions are made from (null when none is usable). */
+  async snapshotInfo(): Promise<SnapshotInfo | null> {
+    const s = await this.snapshots.current().catch(() => null);
+    return s ? { ...snapshotRef(s), entities: s.entities.length, anchors: s.anchors.length,
+      didDocuments: Object.keys(s.didDocuments).length, crls: s.crls.length, strictAuthorization: s.policy.strictAuthorization,
+      requireRevocationStatus: s.policy.requireRevocationStatus } : null;
+  }
+
+  private async localData(mode: LocalTrustData['mode']): Promise<LocalTrustData> {
+    const snap = this.useSnapshot ? await this.snapshots.current().catch(() => null) : null;
+    const now = Date.now();
+    const looked = [...this.onDemand.values()].filter((v) => v.until > now).flatMap((v) => v.entities);
     return {
-      entities: [...(snap?.entities ?? []), ...(this.config.fallback?.localEntities ?? [])],
+      entities: [...(snap?.entities ?? []), ...looked, ...(this.config.fallback?.localEntities ?? [])],
       anchors: [...(snap?.anchors ?? []), ...this.localAnchors],
+      crls: snap?.crls ?? [],
       frameworks: snap?.frameworks ?? [],
       source: snap ? 'snapshot' : 'fallback',
-      stale: snap?.stale,
+      mode, policy: snap?.policy, snapshot: snap ? snapshotRef(snap) : null, stale: snap?.stale,
     };
+  }
+
+  /** Runs {@code onDevice} in local mode, or the service call with device-side fallback in service mode. */
+  private async decide<T>(remote: (t: HttpTransport) => Promise<T>, onDevice: (mode: LocalTrustData['mode']) => Promise<T>): Promise<T> {
+    if (this.decisions === 'local') {
+      await this.ensureSnapshot();
+      return onDevice('local');
+    }
+    return this.withFallback(remote, () => onDevice('outage'));
   }
 
   // ---- discovery & registry -------------------------------------------------------------------
@@ -172,9 +288,9 @@ export class TrustClient {
   }
 
   async frameworks(): Promise<TrustFramework[]> {
-    return this.withFallback(
+    return this.decide(
       async (t) => (await t.request<(TrustFramework & { entityCount: number })[]>('GET', '/api/v1/frameworks')).body,
-      async () => (await this.localData()).frameworks);
+      async (mode) => (await this.localData(mode)).frameworks);
   }
 
   issuers(filter: EntityFilter = {}): Promise<Page<EntityView> & { source: string }> {
@@ -187,34 +303,69 @@ export class TrustClient {
 
   private entities(path: string, role: string, filter: EntityFilter): Promise<Page<EntityView> & { source: string }> {
     const qs = new URLSearchParams(Object.entries(filter).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
-    return this.withFallback(
+    return this.decide(
       async (t) => ({ ...(await t.request<Page<EntityView>>('GET', `${path}${qs ? `?${qs}` : ''}`)).body, source: 'trust-service' }),
-      async () => {
-        const d = await this.localData();
+      async (mode) => {
+        const d = await this.localData(mode);
         const fmt = filter.format === 'vc+sd-jwt' ? 'dc+sd-jwt' : filter.format;
         const items = d.entities.filter((e) => e.roles.includes(role)
           && (!filter.framework || e.frameworkId === filter.framework)
           && (!fmt && !filter.type || e.authorizations.some((a) => (!fmt || a.format === fmt) && (!filter.type || a.type === filter.type)))
           && (!filter.q || JSON.stringify([e.id, e.display, e.identifiers]).toLowerCase().includes(filter.q.toLowerCase())));
-        return { items, total: items.length, page: 0, size: items.length, registryVersion: -1, source: d.source };
+        return { items, total: items.length, page: 0, size: items.length, registryVersion: d.snapshot?.version ?? -1, source: d.source };
       });
   }
 
   async lookup(identifier: string): Promise<EntityView[]> {
-    return this.withFallback(
+    return this.decide(
       async (t) => (await t.request<EntityView[]>('GET', `/api/v1/entities/lookup?identifier=${encodeURIComponent(identifier)}`)).body,
-      async () => {
-        const d = await this.localData();
-        return d.entities.filter((e) => e.identifiers.some((i) => normalizeIdentifier(i.type, i.value) === normalizeIdentifier(i.type, identifier)));
+      async (mode) => {
+        const d = await this.localData(mode);
+        const found = d.entities.filter((e) => e.identifiers.some((i) => normalizeIdentifier(i.type, i.value) === normalizeIdentifier(i.type, identifier)));
+        return found.length > 0 || mode !== 'local' ? found : this.lookupOnDemand([identifier]);
       });
+  }
+
+  /**
+   * Opt-in ({@code lookups.unknownParties}): asks the service's registries about identifiers absent from the
+   * snapshot. Only identifiers are sent — never certificates or credential contents — and the answer is a signed
+   * registry entry the device evaluates itself.
+   */
+  private async lookupOnDemand(identifiers: string[]): Promise<EntityView[]> {
+    if (!this.lookups.unknownParties || !this.transport) return [];
+    for (const id of identifiers) {
+      const hit = this.onDemand.get(id);
+      if (hit && hit.until > Date.now()) {
+        if (hit.entities.length > 0) return hit.entities;
+        continue;
+      }
+      try {
+        const r = await this.transport.request<string>('GET', `/api/v1/entities/lookup?identifier=${encodeURIComponent(id)}&onDemand=true`,
+          { accept: 'application/jwt' });
+        const entities = await this.snapshots.verifySigned<EntityView[]>(String(r.body).trim(), 'trust-registry+jwt');
+        this.onDemand.set(id, { entities, until: Date.now() + ON_DEMAND_TTL_MS });
+        if (entities.length > 0) return entities;
+      } catch (e) {
+        this.config.logger?.warn?.(`on-demand lookup of ${id} failed: ${(e as Error).message}`);
+      }
+    }
+    return [];
   }
 
   // ---- trust decisions -----------------------------------------------------------------------
 
   async evaluate(query: TrustQuery): Promise<TrustDecision> {
-    return this.withFallback(
+    return this.decide(
       async (t) => ({ ...(await t.request<TrustDecision>('POST', '/api/v1/evaluate', { body: query, idempotent: true })).body, source: 'trust-service' as const }),
-      async () => this.local.evaluate(query, await this.localData()));
+      async (mode) => {
+        const d = await this.local.evaluate(query, await this.localData(mode));
+        if (mode !== 'local' || d.decision !== 'UNKNOWN') return d;
+        const found = await this.lookupOnDemand(onDemandIdentifiers(query));
+        if (found.length === 0) return d;
+        const again = await this.local.evaluate(query, await this.localData(mode));
+        again.reasons.push({ code: 'lookup.on_demand', message: 'Not in the trust snapshot; registry entry obtained by an on-demand lookup at the trust service', severity: 'INFO' });
+        return again;
+      });
   }
 
   async evaluateIssuer(args: { credentialIssuer?: string; did?: string; kid?: string; x5c?: string[]; format?: string; type?: string }): Promise<TrustDecision> {
@@ -236,55 +387,151 @@ export class TrustClient {
     return { issuer, decision: await this.evaluate(q) };
   }
 
-  // ---- metadata proxy --------------------------------------------------------------------------
+  // ---- issuer metadata ---------------------------------------------------------------------------
 
   async getIssuerMetadata(credentialIssuer: string): Promise<IssuerMetadataResult> {
-    const key = `md:${credentialIssuer}`;
+    if (this.lookups.metadata === 'direct') return this.metadataDirect(credentialIssuer, 'direct');
     return this.withFallback<IssuerMetadataResult>(async (t) => {
       const r = await t.request<IssuerMetadataResult>('GET', `/api/v1/issuers/metadata?credential_issuer=${encodeURIComponent(credentialIssuer)}`);
       const result = { ...r.body, source: (r.body.stale ? 'cache' : 'trust-service') as IssuerMetadataResult['source'] };
-      await this.cache.set(key, result, Math.max(60_000, new Date(result.expiresAt).getTime() - Date.now()));
+      if (this.decisions === 'local') result.trust = await this.evaluateIssuerUrl(credentialIssuer);
+      await this.cache.set(`md:${credentialIssuer}`, result, Math.max(60_000, new Date(result.expiresAt).getTime() - Date.now()));
       return result;
-    }, async () => {
-      const cached = await this.cache.get<IssuerMetadataResult>(key);
-      const trust = await this.local.evaluate({ role: 'issuer', subject: { identifier: credentialIssuer }, context: { protocol: 'oid4vci' } }, await this.localData());
-      if (cached?.fresh) return { ...cached.value, trust, source: 'cache' };
-      try {
-        const md = await fetchIssuerMetadata(credentialIssuer, this.fetchFn, this.config.timeoutMs ?? 8000);
-        const now = new Date();
-        return { ...md, policyApplied: false, fetchedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
-          stale: false, entityId: trust.entity?.id ?? null, trust, source: 'fallback' };
-      } catch (e) {
-        if (cached) return { ...cached.value, trust, stale: true, source: 'cache' };
-        throw e;
-      }
-    });
+    }, () => this.metadataDirect(credentialIssuer, 'fallback'));
+  }
+
+  private evaluateIssuerUrl(credentialIssuer: string, mode?: LocalTrustData['mode']): Promise<TrustDecision> {
+    const q: TrustQuery = { role: 'issuer', subject: { identifier: credentialIssuer }, context: { protocol: 'oid4vci' } };
+    return mode === 'outage' ? this.localData('outage').then((d) => this.local.evaluate(q, d)) : this.evaluate(q);
+  }
+
+  /**
+   * Standard OpenID4VCI discovery from the issuer itself, with the registry's metadata policy from the snapshot
+   * applied. {@code how}: 'direct' as the configured path, 'fallback' because the service proxy is unreachable.
+   */
+  private async metadataDirect(credentialIssuer: string, how: 'direct' | 'fallback'): Promise<IssuerMetadataResult> {
+    const key = `md:${credentialIssuer}`;
+    const cached = await this.cache.get<IssuerMetadataResult>(key);
+    const trust = await this.evaluateIssuerUrl(credentialIssuer, how === 'fallback' ? 'outage' : undefined);
+    if (cached?.fresh) return { ...cached.value, trust, source: 'cache' };
+    try {
+      const md = await fetchIssuerMetadata(credentialIssuer, this.fetchFn, this.config.timeoutMs ?? 8000, trust.entity?.metadataPolicy);
+      const now = new Date();
+      const result: IssuerMetadataResult = { ...md, signedMetadata: null, signedMetadataVerified: null, fetchedAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 300_000).toISOString(), stale: false, entityId: trust.entity?.id ?? null, trust, source: how };
+      await this.cache.set(key, result, 300_000);
+      return result;
+    } catch (e) {
+      if (cached) return { ...cached.value, trust, stale: true, source: 'cache' };
+      throw e;
+    }
   }
 
   // ---- X.509 -------------------------------------------------------------------------------------
 
   async validateChain(chain: string[], domain: string, opts: { docType?: string; expectedDnsName?: string; time?: string } = {}): Promise<PathValidationResult & { entity?: EntityView; source: string }> {
-    return this.withFallback(async (t) => {
+    return this.decide(async (t) => {
       const r = await t.request<{ result: PathValidationResult; entity?: EntityView }>('POST', '/api/v1/x509/validate',
         { body: { chain, domain, ...opts }, idempotent: true });
       return { ...r.body.result, entity: r.body.entity, source: 'trust-service' };
-    }, async () => {
-      const d = await this.localData();
-      const { anchorRef, ...r } = validateCertificateChain(chain, d.anchors.filter((a) => a.domain === domain),
-        { domain, docType: opts.docType, expectedDnsName: opts.expectedDnsName, time: opts.time ? new Date(opts.time) : undefined });
+    }, async (mode) => {
+      const d = await this.localData(mode);
+      const { anchorRef, ...r } = await validateChainOnDevice(chain.map((c) => parseCertificate(c)), d.anchors.filter((a) => a.domain === domain),
+        { domain, docType: opts.docType, expectedDnsName: opts.expectedDnsName, time: opts.time ? new Date(opts.time) : undefined }, d,
+        (urls) => this.fetchCrls(urls));
       const entity = anchorRef?.entityId ? d.entities.find((e) => e.id === anchorRef.entityId) : undefined;
       return { ...r, entity, source: d.source };
     });
   }
 
+  // ---- revocation ---------------------------------------------------------------------------------
+
+  /**
+   * CRLs the snapshot does not carry, per {@code lookups.crl}: from the CA's distribution point ('direct'), through
+   * the service's relay ('service'; direct while it is unreachable), or not at all ('none'). Cached until their
+   * nextUpdate. Callers verify each CRL against the issuing CA, so neither the cache nor the relay is trusted.
+   */
+  async fetchCrls(urls: string[]): Promise<CrlFetchResult> {
+    const out: CrlFetchResult = { crls: [], failures: {} };
+    for (const url of new Set(urls)) {
+      if (this.lookups.crl === 'none') { out.failures[url] = 'CRL downloads are disabled on this device'; continue; }
+      const key = `crl:${url}`;
+      const cached = await this.cache.get<string>(key);
+      const fromCache = (): HeldCrl | null => {
+        try { return cached ? { crl: parseCrl(base64Decode(cached.value)), url, source: 'cache' } : null; } catch { return null; }
+      };
+      if (cached?.fresh) {
+        const c = fromCache();
+        if (c) { out.crls.push(c); continue; }
+      }
+      try {
+        const { der, source } = await this.downloadCrl(url);
+        const crl = parseCrl(der);
+        const ttl = Math.min(24 * 3600_000, Math.max(60_000, (crl.nextUpdate?.getTime() ?? Date.now() + 3600_000) - Date.now()));
+        await this.cache.set(key, base64Encode(crl.der), ttl);
+        out.crls.push({ crl, url, source });
+      } catch (e) {
+        const stale = fromCache();
+        if (stale) out.crls.push(stale);
+        else out.failures[url] = (e as Error).message;
+      }
+    }
+    return out;
+  }
+
+  private async downloadCrl(url: string): Promise<{ der: Uint8Array; source: DataSource }> {
+    const direct = async (label: Extract<DataSource, 'direct' | 'fallback'>): Promise<{ der: Uint8Array; source: DataSource }> => {
+      if (!/^https?:\/\//i.test(url)) throw new Error(`Unsupported CRL URL ${url}`);
+      const res = await fetchWithTimeout(this.fetchFn, url, { headers: { Accept: 'application/pkix-crl' } }, this.config.timeoutMs ?? 8000);
+      if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
+      return { der: new Uint8Array(await res.arrayBuffer()), source: label };
+    };
+    if (this.lookups.crl !== 'service' || !this.transport) return direct('direct');
+    return this.withFallback(async (t) => {
+      const r = await t.request<Uint8Array>('GET', `/api/v1/revocation/crl?url=${encodeURIComponent(url)}`, { accept: 'application/pkix-crl', binary: true });
+      return { der: r.body, source: 'trust-service' as const };
+    }, () => direct('fallback'));
+  }
+
+  /**
+   * Fetches a credential status list (IETF Token Status List, W3C Bitstring Status List credential) per
+   * {@code lookups.statusLists}: from the issuer ('direct') or through the service's relay ('service'; direct while
+   * it is unreachable). Status lists are signed by their issuer; the caller verifies them either way.
+   */
+  async fetchStatusList(uri: string, accept: string): Promise<FetchedStatusList> {
+    const contentType = (h: Headers) => (h.get('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase();
+    const direct = async (label: Extract<DataSource, 'direct' | 'fallback'>): Promise<FetchedStatusList> => {
+      const res = await fetchWithTimeout(this.fetchFn, uri, { headers: { Accept: accept } }, this.config.timeoutMs ?? 8000);
+      if (!res.ok) throw new Error(`Status list ${uri}: HTTP ${res.status}`);
+      return { body: new Uint8Array(await res.arrayBuffer()), contentType: contentType(res.headers), source: label };
+    };
+    if (this.lookups.statusLists !== 'service' || !this.transport) return direct('direct');
+    return this.withFallback(async (t) => {
+      const r = await t.request<Uint8Array>('GET', `/api/v1/revocation/status-list?uri=${encodeURIComponent(uri)}`, { accept, binary: true });
+      return { body: r.body, contentType: contentType(r.headers), source: 'trust-service' as const };
+    }, () => direct('fallback'));
+  }
+
   // ---- DID resolution ----------------------------------------------------------------------------
 
-  async resolveDid(did: string): Promise<DidResolutionResult> {
-    const key = `did:${did.split('#')[0]}`;
+  /**
+   * Resolves a DID (a DID URL is accepted; its fragment selects the verification method the caller needs).
+   * Local mode: the snapshot's document first — unless it lacks the requested verification method (key rotation) —
+   * then the cache, then the DID's own method on this device ({@code lookups.did: 'direct'}) or the service.
+   */
+  async resolveDid(didUrl: string): Promise<DidResolutionResult> {
+    if (this.decisions === 'local') {
+      await this.ensureSnapshot();
+      const fromSnapshot = await this.didFromSnapshot(didUrl);
+      if (fromSnapshot) return fromSnapshot;
+    }
+    if (this.lookups.did === 'direct') return this.resolveDidDirect(didUrl.split('#')[0]!, 'direct');
+    const did = didUrl.split('#')[0]!;
+    const key = `did:${did}`;
     return this.withFallback(async (t) => {
       let body: DidResolutionResult;
       try {
-        body = (await t.request<DidResolutionResult>('GET', `/api/v1/did/${did.split('#')[0]}`)).body;
+        body = (await t.request<DidResolutionResult>('GET', `/api/v1/did/${did}`)).body;
       } catch (e) {
         // Resolution errors (404/400) are answers, not outages.
         if (e instanceof TrustServiceError && e.problem && 'didResolutionMetadata' in e.problem) body = e.problem as unknown as DidResolutionResult;
@@ -292,19 +539,51 @@ export class TrustClient {
       }
       if (body.didDocument) await this.cache.set(key, body, 15 * 60_000);
       return { ...body, didResolutionMetadata: { ...body.didResolutionMetadata, source: 'trust-service' } };
-    }, async () => {
-      const cached = await this.cache.get<DidResolutionResult>(key);
-      if (cached?.fresh) return { ...cached.value, didResolutionMetadata: { ...cached.value.didResolutionMetadata, source: 'cache' } };
-      const r = await this.resolveDidLocal(did);
-      if (didError(r) && cached) return { ...cached.value, didResolutionMetadata: { ...cached.value.didResolutionMetadata, source: 'cache', stale: true } };
-      return r;
-    });
+    }, () => this.resolveDidDirect(did, 'fallback'));
   }
 
-  private async resolveDidLocal(did: string): Promise<DidResolutionResult> {
-    const r = await resolveDidLocally(did, { fetch: this.fetchFn, httpHosts: this.config.fallback?.didWebHttpHosts, timeoutMs: this.config.timeoutMs ?? 8000 });
-    return { ...r, didResolutionMetadata: { ...r.didResolutionMetadata, source: 'fallback' } };
+  /** The snapshot's DID document, when the snapshot is fresh and the document has the requested verification method. */
+  private async didFromSnapshot(didUrl: string): Promise<DidResolutionResult | null> {
+    const snap = this.useSnapshot ? await this.snapshots.current().catch(() => null) : null;
+    const doc = snap && !snap.stale ? snap.didDocuments[didUrl.split('#')[0]!] : undefined;
+    if (!doc || (didUrl.includes('#') && !findVerificationMethod(doc, didUrl))) return null;
+    return { didDocument: doc, didDocumentMetadata: {},
+      didResolutionMetadata: { contentType: 'application/did+ld+json', source: 'snapshot', snapshotVersion: snap!.version } };
   }
+
+  /** Device-side resolution used by the local evaluator: snapshot, then cache / direct (never the service). */
+  private async resolveDidOnDevice(didUrl: string): Promise<DidResolutionResult> {
+    return (await this.didFromSnapshot(didUrl)) ?? this.resolveDidDirect(didUrl.split('#')[0]!, this.decisions === 'local' ? 'direct' : 'fallback');
+  }
+
+  private async resolveDidDirect(did: string, label: Extract<DataSource, 'direct' | 'fallback'>): Promise<DidResolutionResult> {
+    const key = `did:${did}`;
+    const cached = await this.cache.get<DidResolutionResult>(key);
+    if (cached?.fresh) return { ...cached.value, didResolutionMetadata: { ...cached.value.didResolutionMetadata, source: 'cache' } };
+    const r = await resolveDidLocally(did, { fetch: this.fetchFn, httpHosts: this.config.fallback?.didWebHttpHosts, timeoutMs: this.config.timeoutMs ?? 8000 });
+    if (didError(r)) {
+      if (cached) return { ...cached.value, didResolutionMetadata: { ...cached.value.didResolutionMetadata, source: 'cache', stale: true } };
+    } else if (r.didDocument) {
+      await this.cache.set(key, r, 15 * 60_000);
+    }
+    return { ...r, didResolutionMetadata: { ...r.didResolutionMetadata, source: label } };
+  }
+}
+
+/** Identifiers an on-demand registry lookup may be asked about: the party's own identifiers, never key material. */
+function onDemandIdentifiers(q: TrustQuery): string[] {
+  const out = new Set<string>();
+  const ident = q.subject.identifier;
+  if (ident) {
+    if (q.role === 'verifier') {
+      const m = /^(decentralized_identifier|openid_federation):(.+)$/.exec(ident);
+      if (m) out.add(m[2]!);
+    } else if (ident.startsWith('did:') || /^https:\/\//.test(ident)) {
+      out.add(ident.split('#')[0]!);
+    }
+  }
+  if (q.subject.kid?.startsWith('did:')) out.add(q.subject.kid.split('#')[0]!);
+  return [...out];
 }
 
 export function createTrustClient(config: TrustClientConfig = {}): TrustClient {

@@ -1,6 +1,7 @@
 /**
- * Trust service outage: the wallet keeps working on standard mechanisms (direct OpenID4VCI discovery, local DID
- * resolution, local X.509 validation) and decides trust from the signed offline snapshot — or reports UNKNOWN.
+ * 'service' decision mode during a trust service outage: the wallet keeps working on standard mechanisms (direct
+ * OpenID4VCI discovery, local DID resolution, local X.509 validation) and decides trust on the device from the signed
+ * snapshot — or reports UNKNOWN. (In the default 'local' mode the device decides anyway; see privacy.live.test.ts.)
  */
 import { describe, expect, it } from 'vitest';
 import { createTrustClient, MemoryCacheStore } from '@vctrust/trust-client';
@@ -29,7 +30,7 @@ async function animoOffer(id: string) {
 }
 
 function trustClient(f: typeof fetch) {
-  return createTrustClient({ baseUrl: TRUST, apiKey: 'demo-wallet-key', clientId: 'demo-wallet', fetch: f, cache: new MemoryCacheStore(),
+  return createTrustClient({ baseUrl: TRUST, apiKey: 'demo-wallet-key', clientId: 'demo-wallet', decisions: 'service', fetch: f, cache: new MemoryCacheStore(),
     retries: 0, timeoutMs: 1500, circuitBreaker: { failureThreshold: 2, resetAfterMs: 1000 }, serviceKeys: { trustOnFirstUse: true } });
 }
 

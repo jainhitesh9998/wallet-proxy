@@ -1,9 +1,9 @@
 import { it } from 'vitest';
+import { liveTrust } from './live-trust.js';
 import { readFileSync } from 'node:fs';
-import { createTrustClient } from '@vctrust/trust-client';
 import { verifyCredential } from '../src/verify/index.js';
 it('samples', async () => {
-  const trust = createTrustClient({ baseUrl: 'http://localhost:8090', apiKey: 'demo-wallet-key' });
+  const trust = await liveTrust();
   const S = 'tools/mosip-issuance/samples/';
   for (const [file, fmt, iss] of [['Land-LandStatementCredential_VCDM2.0.json', 'ldp_vc', 'https://injicertify-landregistry.collab.mosip.net'],
     ['Farmer-FarmerCredential_VCDM2.0.json', 'ldp_vc', 'https://injicertify-farmer.collab.mosip.net'],

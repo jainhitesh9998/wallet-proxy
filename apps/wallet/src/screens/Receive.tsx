@@ -91,7 +91,7 @@ function TrustedIssuers({ onStart }: { onStart: (issuer: string, configs: string
     );
   }
   return (
-    <Section title="Issuers from the trust service" right={<SourcePill source={list?.source} testID="issuers-source" />}>
+    <Section title="Trusted issuers (trust list)" right={<SourcePill source={list?.source} testID="issuers-source" />}>
       {!list && !error ? <Info message="Loading…" /> : null}
       <ErrorBox message={error} />
       {list?.items.length === 0 ? <Info message="No issuers registered." /> : null}

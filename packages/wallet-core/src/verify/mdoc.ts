@@ -1,11 +1,13 @@
 /**
  * ISO/IEC 18013-5 mdoc (IssuerSigned) verification: COSE_Sign1 issuerAuth with the Document Signer key,
- * every IssuerSignedItem digest against the MSO, validity window, docType and device key binding, and issuer
- * trust (DS chain → IACA) through the trust client.
+ * every IssuerSignedItem digest against the MSO, validity window, docType and device key binding, issuer
+ * trust (DS chain → IACA, with CRL revocation) through the trust client, and the MSO's status
+ * (Token Status List in CWT form).
  */
 import { cbor, bytes, coseAlgToJose, decodeIssuerSigned, digest, parseCertificate, parseCoseSign1, coseX5chain,
   verifySignature, type Jwk, type TrustClient, extractIssuerInfo, issuerTrustQuery } from '@vctrust/trust-client';
 import { Checks, finish, type VerificationReport } from './report.js';
+import { checkTokenStatus, type StatusListReference } from './status.js';
 
 const { Tagged, mapGet } = cbor;
 
@@ -73,7 +75,7 @@ export function issuerSignedItems(issuerSigned: unknown): Map<string, IssuerSign
 }
 
 export async function verifyMdoc(credential: string, opts: { trust?: TrustClient; holderJwk?: Jwk; now?: Date; credentialIssuer?: string;
-  expectedDocType?: string }): Promise<VerificationReport> {
+  expectedDocType?: string; fetch?: typeof fetch; checkStatus?: boolean }): Promise<VerificationReport> {
   const checks = new Checks();
   const now = opts.now ?? new Date();
   const claims: Record<string, Record<string, unknown>> = {};
@@ -81,6 +83,7 @@ export async function verifyMdoc(credential: string, opts: { trust?: TrustClient
   let validFrom: Date | undefined;
   let validUntil: Date | undefined;
   let docType: string | undefined;
+  let statusRef: StatusListReference | undefined;
   try {
     const raw = cbor.decode(bytes.base64UrlDecode(credential));
     if (!mapGet(raw, 'issuerAuth')) {
@@ -141,12 +144,27 @@ export async function verifyMdoc(credential: string, opts: { trust?: TrustClient
       if (same) checks.pass('mdoc.device_key', 'Holder binding', 'deviceKey is this wallet\'s key');
       else checks.fail('mdoc.device_key', 'Holder binding', 'deviceKey does not match the wallet key');
     } else checks.pass('mdoc.device_key', 'Holder binding', `deviceKey ${deviceKey.crv}`);
+
+    const status = mapGet(mso, 'status');
+    const ref = mapGet(status, 'status_list');
+    if (ref !== undefined) {
+      const certificate = mapGet(ref, 'certificate');
+      statusRef = { idx: Number(mapGet(ref, 'idx')), uri: String(mapGet(ref, 'uri')), certificate: certificate instanceof Uint8Array ? certificate : undefined };
+    } else if (mapGet(status, 'identifier_list') !== undefined) {
+      checks.warn('mdoc.status', 'Status', 'Identifier lists are not supported; status not checked');
+    }
   } catch (e) {
     checks.fail('mdoc.parse', 'Credential structure', (e as Error).message);
   }
   let trust = null;
   if (opts.trust && issuerInfo.x5c) {
     trust = await opts.trust.evaluate(issuerTrustQuery({ ...issuerInfo, credentialType: issuerInfo.credentialType ?? docType }, opts.credentialIssuer));
+  }
+  if (statusRef && opts.checkStatus !== false) {
+    const s = await checkTokenStatus(statusRef, { trust: opts.trust, fetch: opts.fetch ?? fetch, signerX5c: issuerInfo.x5c, decision: trust, now }, 'cwt');
+    if (s.status === 'valid') checks.pass('mdoc.status', 'Status', s.detail);
+    else if (s.status === 'unknown') checks.warn('mdoc.status', 'Status', s.detail);
+    else checks.fail('mdoc.status', 'Status', `${s.status}: ${s.detail}`);
   }
   return finish('mso_mdoc', checks, issuerInfo, trust, claims, { credentialType: docType,
     validFrom: validFrom?.toISOString(), validUntil: validUntil?.toISOString() });

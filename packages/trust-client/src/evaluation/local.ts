@@ -1,20 +1,29 @@
 /**
- * Offline evaluation mirroring the service's semantics over the verified snapshot plus app-provided anchors
- * and entities. A local decision can only be TRUSTED when backed by a verified snapshot or a pinned anchor;
- * otherwise it is UNKNOWN — the fallback never upgrades an unknown party.
+ * Device-side trust evaluation with the service's semantics (TrustEvaluator), over the verified trust snapshot plus
+ * app-provided anchors and entities. Used for every decision in 'local' mode, and when the service is unreachable
+ * in 'service' mode. A decision can only be TRUSTED when backed by a verified snapshot or a pinned anchor;
+ * otherwise it is UNKNOWN — missing data never upgrades an unknown party.
  */
 import { parseCertificate, type Certificate } from '../x509/certificate.js';
-import { validateCertificateChain, type LocalAnchor } from '../x509/validate.js';
+import { validateCertificateChain, type LocalAnchor, type ValidateOptions } from '../x509/validate.js';
+import { crlUrlsToFetch, type HeldCrl } from '../x509/revocation.js';
 import { findVerificationMethod, hasRelationship, didError, parseDid } from '../did/did.js';
 import { jwkThumbprint } from '../crypto/keys.js';
-import type { DidEvidence, DidResolutionResult, EntityView, PathValidationResult, Reason, TrustDecision, TrustFramework,
+import type { DidEvidence, DidResolutionResult, EntityView, PathValidationResult, Reason, SnapshotRef, TrustDecision, TrustFramework,
   TrustQuery, TrustedAuthorityMatch } from '../types.js';
 
 export interface LocalTrustData {
   entities: EntityView[];
   anchors: LocalAnchor[];
+  /** CRLs held for revocation checks (the snapshot's anchor CRLs) */
+  crls?: HeldCrl[];
   frameworks: TrustFramework[];
+  /** 'snapshot' when a verified snapshot backs the data; 'fallback' when only app-bundled anchors/entities exist */
   source: 'snapshot' | 'fallback';
+  /** 'local': device-side decisions are the normal path; 'outage': the service (normally deciding) is unreachable */
+  mode: 'local' | 'outage';
+  policy?: { strictAuthorization?: boolean; requireRevocationStatus?: boolean };
+  snapshot?: SnapshotRef | null;
   stale?: boolean;
 }
 
@@ -35,6 +44,7 @@ export function normalizeIdentifier(type: string, value: string): string {
 export function domainFor(role: TrustQuery['role'], format?: string): string {
   if (role === 'verifier') return 'verifier-access';
   if (role === 'wallet_provider') return 'wallet-provider';
+  if (role === 'status_list_provider') return 'status-list';
   return format === 'mso_mdoc' ? 'mdoc-iaca' : 'credential-issuer';
 }
 
@@ -44,14 +54,41 @@ function roleName(role: TrustQuery['role']): string | undefined {
     case 'verifier': return 'VERIFIER';
     case 'wallet_provider': return 'WALLET_PROVIDER';
     case 'authorization_server': return 'AUTHORIZATION_SERVER';
+    case 'status_list_provider': return 'STATUS_LIST_PROVIDER';
     default: return undefined;
   }
 }
 
 const canonicalFormat = (f?: string | null) => (f === 'vc+sd-jwt' ? 'dc+sd-jwt' : f);
+/** OpenID4VP 1.0 §5.9.3 client identifier prefixes; anything else is a pre-registered client_id. */
+const CLIENT_ID_PREFIXES = new Set(['redirect_uri', 'x509_san_dns', 'x509_hash', 'decentralized_identifier', 'verifier_attestation', 'openid_federation', 'origin']);
+const pickName = (e: EntityView) => (e.display.find((d) => d.locale?.startsWith('en')) ?? e.display[0])?.name ?? e.id;
+
+export interface CrlFetchResult {
+  crls: HeldCrl[];
+  /** error per CRL URL that could not be obtained */
+  failures: Record<string, string>;
+}
+export type CrlFetcher = (urls: string[]) => Promise<CrlFetchResult>;
+
+/**
+ * Path validation with revocation: first against the CRLs already held (the snapshot's), then — only for
+ * certificates whose status is still unknown and that name a CRL distribution point — against CRLs fetched by
+ * {@code fetchCrls}. Certificates under unknown anchors never trigger a download.
+ */
+export async function validateChainOnDevice(chain: Certificate[], anchors: LocalAnchor[], opts: ValidateOptions,
+                                            data: Pick<LocalTrustData, 'crls' | 'policy'>, fetchCrls?: CrlFetcher) {
+  const revocation = { crls: data.crls ?? [], require: data.policy?.requireRevocationStatus === true };
+  const r = validateCertificateChain(chain, anchors, { ...opts, revocation });
+  const urls = fetchCrls && r.anchorFound ? crlUrlsToFetch(chain, r.revocation) : [];
+  if (urls.length === 0) return r;
+  const got = await fetchCrls!(urls);
+  return validateCertificateChain(chain, anchors, { ...opts, revocation: { ...revocation, crls: [...revocation.crls, ...got.crls], failures: got.failures } });
+}
 
 export class LocalEvaluator {
-  constructor(private readonly resolveDid: (did: string) => Promise<DidResolutionResult>, private readonly now: () => Date = () => new Date()) {}
+  constructor(private readonly resolveDid: (did: string) => Promise<DidResolutionResult>, private readonly now: () => Date = () => new Date(),
+              private readonly fetchCrls?: CrlFetcher) {}
 
   async evaluate(q: TrustQuery, data: LocalTrustData): Promise<TrustDecision> {
     const time = q.context?.time ? new Date(q.context.time) : this.now();
@@ -66,27 +103,32 @@ export class LocalEvaluator {
     if (ident) {
       if (role === 'verifier') {
         const i = ident.indexOf(':');
-        const prefix = i > 0 ? ident.slice(0, i) : 'pre-registered';
-        const val = i > 0 ? ident.slice(i + 1) : ident;
+        const known = i > 0 && CLIENT_ID_PREFIXES.has(ident.slice(0, i));
+        const prefix = known ? ident.slice(0, i) : 'pre-registered';
+        const val = known ? ident.slice(i + 1) : ident;
         ids.push({ type: 'CLIENT_ID', value: ident });
         if (prefix === 'x509_san_dns') { expectedDns = val; ids.push({ type: 'DNS', value: val }); }
         else if (prefix === 'x509_hash') { expectedHash = val; ids.push({ type: 'X509_SHA256', value: val }); }
         else if (prefix === 'decentralized_identifier') ids.push({ type: 'DID', value: val });
         else if (prefix === 'redirect_uri' || prefix === 'origin') ids.push({ type: 'URL', value: val });
         else if (prefix === 'openid_federation') ids.push({ type: 'FEDERATION_ENTITY', value: val }, { type: 'URL', value: val });
+        else if (prefix === 'verifier_attestation') reasons.push({ code: 'client_id.verifier_attestation',
+          message: 'Verifier attestation JWT must be validated by the wallet; matching registry by client_id only', severity: 'INFO' });
         if ((prefix === 'x509_san_dns' || prefix === 'x509_hash') && !q.subject.x5c?.length) {
           reasons.push({ code: 'client_id.x5c_required', message: `Client identifier prefix ${prefix} requires the request object's x5c chain`, severity: 'ERROR' });
         }
       } else if (ident.startsWith('did:')) ids.push({ type: 'DID', value: ident });
       else if (/^https?:\/\//.test(ident)) ids.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
-      else ids.push({ type: 'CLIENT_ID', value: ident });
+      else ids.push({ type: 'CLIENT_ID', value: ident }, { type: 'OTHER', value: ident });
     }
     let did: string | undefined;
     if (q.subject.kid?.startsWith('did:')) {
       try { did = parseDid(q.subject.kid).did; ids.push({ type: 'DID', value: did }); } catch { reasons.push({ code: 'did.invalid', message: 'kid is not a valid DID URL', severity: 'ERROR' }); }
     } else if (ident?.startsWith('did:')) did = ident.split('#')[0];
     if (q.subject.jwk) {
-      try { ids.push({ type: 'JWK_THUMBPRINT', value: jwkThumbprint(q.subject.jwk) }); } catch { /* ignore */ }
+      try { ids.push({ type: 'JWK_THUMBPRINT', value: jwkThumbprint(q.subject.jwk) }); } catch (e) {
+        reasons.push({ code: 'jwk.invalid', message: `Unparseable JWK: ${(e as Error).message}`, severity: 'WARNING' });
+      }
     }
 
     let chain: Certificate[] = [];
@@ -106,16 +148,18 @@ export class LocalEvaluator {
       }
       const domain = domainFor(role, format);
       const anchors = data.anchors.filter((a) => a.domain === domain);
-      const r = validateCertificateChain(chain, anchors, { time, domain, expectedDnsName: expectedDns, docType: format === 'mso_mdoc' ? type : undefined });
+      const r = await validateChainOnDevice(chain, anchors, { time, domain, expectedDnsName: expectedDns, docType: format === 'mso_mdoc' ? type : undefined },
+        data, this.fetchCrls);
       const { anchorRef, ...result } = r;
       x509 = result;
       if (r.valid) {
         anchor = anchorRef;
         leaf.dnsNames.forEach((n) => ids.push({ type: 'DNS', value: n }));
         leaf.uriNames.forEach((u) => ids.push({ type: 'URL', value: u }));
-        reasons.push({ code: 'x509.valid', message: `Certificate chain validates to a trust anchor in domain '${domain}'`, severity: 'INFO' });
+        reasons.push({ code: 'x509.valid', message: `Certificate chain validates to trust anchor ${anchorRef?.certificate.subject ?? ''} in domain ${domain}`, severity: 'INFO' });
+        reasons.push(...r.issues.filter((i) => i.code.startsWith('x509.revocation') && i.severity === 'WARNING'));
       } else if (!r.anchorFound) {
-        reasons.push({ code: 'x509.no_anchor', message: anchors.length === 0 ? `No trust anchors available offline for domain '${domain}'`
+        reasons.push({ code: 'x509.no_anchor', message: anchors.length === 0 ? `No trust anchors configured for domain '${domain}' in accepted frameworks`
           : `Certificate chain does not lead to any trust anchor in domain '${domain}'`, severity: 'WARNING' });
         if (expectedDns && !leaf.dnsNames.some((d) => d.toLowerCase() === expectedDns!.toLowerCase())) {
           reasons.push({ code: 'client_id.san_dns_mismatch', message: 'Leaf certificate has no SAN dNSName equal to the x509_san_dns client_id', severity: 'ERROR' });
@@ -150,7 +194,8 @@ export class LocalEvaluator {
 
     let didEv: DidEvidence | null = null;
     if (did && q.subject.kid) {
-      const res = await this.resolveDid(did);
+      // The DID URL lets the resolver skip a snapshot document that lacks this (e.g. rotated) key.
+      const res = await this.resolveDid(q.subject.kid.includes('#') ? q.subject.kid : did);
       const err = didError(res);
       if (err || !res.didDocument) {
         reasons.push({ code: 'did.unresolved', message: `DID ${did} could not be resolved: ${err ?? 'no document'}`, severity: 'WARNING' });
@@ -173,17 +218,23 @@ export class LocalEvaluator {
     }
 
     let authorization: { format?: string | null; type?: string | null; authorized: boolean; rule?: string } | null = null;
+    const strict = data.policy?.strictAuthorization === true;
     if (entity) {
+      const from = entity.validFrom ? new Date(entity.validFrom) : undefined;
       const until = entity.validUntil ? new Date(entity.validUntil) : undefined;
-      if (entity.status !== 'ACTIVE' || (until && time > until)) {
-        reasons.push({ code: 'entity.status', message: `Entity '${entity.id}' is ${entity.status}`, severity: 'ERROR' });
+      if (entity.status !== 'ACTIVE' || (until && time > until) || (from && time < from)) {
+        reasons.push({ code: 'entity.status', message: `Entity '${entity.id}' is ${entity.status}${until && time > until ? ' (expired)' : ''}`, severity: 'ERROR' });
       }
       if (format || type) {
-        const ok = entity.authorizations.length === 0 || entity.authorizations.some((a) =>
+        const ok = entity.authorizations.length === 0 ? !strict : entity.authorizations.some((a) =>
           (!a.format || !format || canonicalFormat(a.format) === format) && (!a.type || !type || a.type === type));
-        authorization = { format, type, authorized: ok, rule: entity.authorizations.length === 0 ? 'unconstrained' : 'registered authorizations' };
+        authorization = { format, type, authorized: ok, rule: entity.authorizations.length === 0
+          ? (strict ? 'strict: no authorizations registered' : 'unconstrained') : 'registered authorizations' };
         if (!ok) reasons.push({ code: 'entity.not_authorized', message: `Entity '${entity.id}' is not authorized for ${format ?? ''} ${type ?? ''}`.trim(), severity: 'ERROR' });
       }
+    }
+    if (anchor?.frameworkId && entity && anchor.frameworkId !== entity.frameworkId) {
+      reasons.push({ code: 'framework.mixed', message: `Chain anchor framework '${anchor.frameworkId}' differs from entity framework '${entity.frameworkId}'`, severity: 'INFO' });
     }
     if (expectedDns && q.context?.responseUri) {
       try {
@@ -201,29 +252,46 @@ export class LocalEvaluator {
         const hit = ta.values.find((v) => akis.has(v));
         return { type: ta.type, values: ta.values, matched: !!hit, matchedValue: hit ?? null };
       }
+      if (ta.type !== 'etsi_tl' && ta.type !== 'openid_federation') return { type: ta.type, values: ta.values, matched: false, matchedValue: null };
       const attr = ta.type === 'etsi_tl' ? 'trustedListUri' : 'trustAnchor';
-      const have = [anchor?.constraints?.[attr], entity?.attributes?.[attr], entity?.provenance?.sourceUri].filter(Boolean).map(String);
+      const have = [anchor?.constraints?.[attr], anchor?.provenance?.sourceUri, entity?.attributes?.[attr], entity?.provenance?.sourceUri]
+        .filter(Boolean).map(String);
       const hit = ta.values.find((v) => have.includes(v));
       return { type: ta.type, values: ta.values, matched: !!hit, matchedValue: hit ?? null };
     });
 
     const errors = reasons.filter((r) => r.severity === 'ERROR');
-    const offline = data.source === 'snapshot' ? 'offline snapshot' : 'local fallback';
-    reasons.push({ code: `fallback.${data.source}`, message: `Trust service unavailable; evaluated from ${offline}${data.stale ? ' (snapshot past its expiry)' : ''}`, severity: 'WARNING' });
+    const snap = data.snapshot;
+    const basis = data.source === 'snapshot' ? `trust snapshot v${snap?.version ?? '?'}` : 'app-bundled trust anchors only (no trust snapshot)';
+    if (data.mode === 'outage') {
+      reasons.push({ code: `fallback.${data.source}`, message: `Trust service unavailable; evaluated on this device from ${basis}`, severity: 'WARNING' });
+    } else {
+      reasons.push({ code: `local.${data.source}`, message: `Evaluated on this device from ${basis}`, severity: data.source === 'snapshot' ? 'INFO' : 'WARNING' });
+    }
+    if (data.stale) reasons.push({ code: 'snapshot.stale', message: `Trust snapshot expired at ${snap?.expiresAt ?? '?'} and could not be refreshed`, severity: 'WARNING' });
     let decision: TrustDecision['decision'];
     let summary: string;
     if (errors.length > 0) { decision = 'NOT_TRUSTED'; summary = errors[0]!.message; }
     else if (entity || anchor) {
       decision = 'TRUSTED';
-      summary = entity ? `Trusted ${wantRole?.toLowerCase().replace('_', ' ') ?? 'entity'} '${entity.display[0]?.name ?? entity.id}' (${offline})`
-        : `Certificate chain validates to a trusted anchor (${offline})`;
-    } else { decision = 'UNKNOWN'; summary = `No trust information available offline (${offline})`; }
+      summary = entity ? `Trusted ${wantRole?.toLowerCase().replace('_', ' ') ?? 'entity'} '${pickName(entity)}'${entity.frameworkId ? ` in framework '${entity.frameworkId}'` : ''}`
+        : `Certificate chain validates to trusted anchor in framework '${anchor!.frameworkId ?? 'local'}'`;
+    } else {
+      decision = 'UNKNOWN';
+      summary = data.source === 'snapshot' ? 'No trust information found for the subject in accepted frameworks' : 'No trust information available on this device';
+    }
     const frameworkId = entity?.frameworkId ?? anchor?.frameworkId;
+    // Valid until the earliest of: the decision TTL, the snapshot's expiry, the entity's validity, the leaf certificate.
+    let validUntil = time.getTime() + 3600_000;
+    if (snap && !data.stale) validUntil = Math.min(validUntil, new Date(snap.expiresAt).getTime());
+    if (entity?.validUntil) validUntil = Math.min(validUntil, new Date(entity.validUntil).getTime());
+    if (chain[0]) validUntil = Math.min(validUntil, chain[0].notAfter.getTime());
+    if (data.stale) validUntil = Math.min(validUntil, time.getTime() + 5 * 60_000);
     return {
       decision, summary, reasons, entity: entity ?? null,
       framework: data.frameworks.find((f) => f.id === frameworkId) ?? null,
       evidence: { x509, did: didEv, authorization, trustedAuthorities: taMatches, matchedIdentifiers: matched },
-      evaluatedAt: time.toISOString(), validUntil: new Date(time.getTime() + 5 * 60_000).toISOString(), source: data.source,
+      evaluatedAt: time.toISOString(), validUntil: new Date(validUntil).toISOString(), source: data.source, snapshot: snap ?? null,
     };
   }
 }

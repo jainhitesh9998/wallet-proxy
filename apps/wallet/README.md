@@ -16,7 +16,8 @@ npm start                               # Expo Go: scan the QR. In Settings, set
 
 Defaults (Settings):
 - trust service `http://localhost:8090`, API key `demo-wallet-key`, client id `demo-wallet`;
-- fallback on;
+- **Decide trust: `local`**. Decisions are made on this device from the signed trust list; the service never learns which issuers or verifiers you use.
+- Issuer metadata and DIDs: `direct`. Asking the service about unlisted parties: off.
 - HAIP options on `auto`.
 
 The demo wallet-provider key that signs wallet and key attestations is generated into `src/config` by `npm run gen:config`.
@@ -25,14 +26,15 @@ It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, n
 ## Demo script (about 5 minutes)
 
 1. **Settings**
-   - Save, then press *Sync offline snapshot*. The page shows the snapshot version, verified with the service key.
-   - The status pill reads *Trust service: online*.
+   - Save, then press *Sync trust list*. The page shows the trust list (snapshot) version, verified with the service key. It also shows its contents: entities, trust anchors, DID documents and CRLs, and the policy.
+   - The status pill reads *Trust service: online* and *Decisions on this device · trust list vN*.
 2. **mDL from the Animo playground**
    - Open https://playground.animo.id. Choose *Issue*, issuer *Utopia Government*, *Driving Licence*, `mso_mdoc`. Optionally enable DPoP and wallet attestation.
    - Copy the offer link.
-   - In the wallet, choose *Receive*, paste the link, then *Load offer*. The issuer appears as **TRUSTED**, *source: trust-service*, with the framework.
+   - In the wallet, choose *Receive*, paste the link, then *Load offer*. The issuer appears as **TRUSTED**, *decided by: device · list vN*, with the framework. *Metadata via: direct*, so the metadata came from the issuer, not the trust service.
    - *Accept*. The new card shows TRUSTED and *✓ valid signature*.
    - Open the card. The detail view shows these checks: COSE signature, 14 digests, validity, device key, issuer trust. It also shows the X.509 path to the Animo IACA.
+   - *Certificate 0 status: not revoked · CRL https://playground.animo.id/crl, next update …*. This is Animo's real IACA CRL, which the service fetched and put in the trust list; the wallet verified it against the IACA and needed no extra request.
 3. **Present to the Animo verifier**
    - On the playground, choose *Verify*, *Driving Licence* (mdoc), response mode `direct_post.jwt`. Copy the `openid4vp://` link.
    - In the wallet, choose *Present* and paste the link. The view shows:
@@ -45,10 +47,15 @@ It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, n
    - Sign in with eSignet in the new tab: UIN `2154189532`, OTP `111111`.
    - On web, paste the final `io.mosip.residentapp.inji://oauthredirect?...` URL into the wallet (the custom scheme cannot return to a web page).
    - The credential shows the Ed25519Signature2020 checks, the issuer DID resolved through the trust service, and warnings for MOSIP's quirks.
-5. **Trust service outage**
-   - In Settings, turn on *Simulate trust-service outage*. The pill turns *offline (fallback)*.
-   - Receive another Animo offer. Issuance still works: metadata comes from the cache or direct discovery, and trust comes from **source: snapshot**.
-   - Without a snapshot, the wallet would show **UNKNOWN**, never TRUSTED.
+5. **Who decides**
+   - In Settings, switch *Decide trust* to `service` and *Issuer metadata & DIDs* to `service`, then load another offer. The badge now reads *decided by: trust service*, and the metadata comes through the proxy.
+   - Switch both back to `local`/`direct`. This is the privacy-preserving default.
+   - *Other CRLs* and *Status lists* choose between fetching from the CA or issuer (`direct`) and the trust service relay (`service`). The relay hides the device from the issuer, but the service then sees which list was checked. Either way the wallet verifies what it receives.
+6. **Trust service outage**
+   - In Settings, turn on *Simulate trust-service outage*. The pill turns *offline*.
+   - Receive another Animo offer. Nothing changes for the user: decisions are made on the device anyway, from the stored trust list. Only refreshing the list fails.
+   - After 24 h the list expires; decisions then carry a warning for up to 7 days.
+   - Without any trust list, the wallet would show **UNKNOWN**, never TRUSTED.
 
 ## Limitations
 
@@ -64,8 +71,9 @@ It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, n
 ## Tests
 
 From the repo root, `cd e2e && npm test` runs Playwright on the web build:
-1. Settings and snapshot.
+1. Settings and trust list.
 2. Animo mDL issuance, then presentation; the verifier reports `ResponseVerified`.
-3. Outage fallback.
+3. The same decision made by the service in `service` mode.
+4. An outage: decisions continue from the stored trust list.
 
 `npm run test:mosip` adds the MOSIP JSON-LD flow.

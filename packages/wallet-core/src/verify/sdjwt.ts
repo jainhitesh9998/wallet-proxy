@@ -5,7 +5,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytes, decodeJws, verifyJws, parseCertificate, findVerificationMethod, verificationMethodPublicKey, wellKnownInserted,
   extractIssuerInfo, issuerTrustQuery, type TrustClient, type Jwk, type PublicKey } from '@vctrust/trust-client';
-import { checkTokenStatus } from './status.js';
+import { checkTokenStatus, type StatusListReference } from './status.js';
 import { Checks, finish, type VerificationReport } from './report.js';
 
 export interface ParsedSdJwt {
@@ -84,7 +84,7 @@ async function issuerKey(header: Record<string, unknown>, payload: Record<string
   const iss = typeof payload.iss === 'string' ? payload.iss : undefined;
   if (kid?.startsWith('did:') || (iss?.startsWith('did:') && kid)) {
     const vmId = kid!.startsWith('did:') ? kid! : `${iss}${kid!.startsWith('#') ? kid : `#${kid}`}`;
-    const r = trust ? await trust.resolveDid(vmId.split('#')[0]!) : null;
+    const r = trust ? await trust.resolveDid(vmId) : null;
     const vm = r?.didDocument ? findVerificationMethod(r.didDocument, vmId) : undefined;
     if (!vm) throw new Error(`Cannot dereference ${vmId}`);
     return { key: verificationMethodPublicKey(vm), how: `DID ${vmId}` };
@@ -112,6 +112,7 @@ export async function verifySdJwtVc(credential: string, opts: { trust?: TrustCli
   let claims: Record<string, unknown> = {};
   let issuerInfo = { format: 'dc+sd-jwt' } as ReturnType<typeof extractIssuerInfo>;
   let vct: string | undefined;
+  let statusRef: StatusListReference | undefined;
   try {
     issuerInfo = extractIssuerInfo(credential, 'dc+sd-jwt');
     const { issuerJwt, disclosures } = parseSdJwt(credential);
@@ -138,16 +139,16 @@ export async function verifySdJwtVc(credential: string, opts: { trust?: TrustCli
     if (!cnf) checks.warn('sdjwt.holder', 'Holder binding', 'No cnf key (bearer credential)');
     else if (opts.holderJwk && (cnf.x !== opts.holderJwk.x || cnf.y !== opts.holderJwk.y)) checks.fail('sdjwt.holder', 'Holder binding', 'cnf.jwk is not this wallet\'s key');
     else checks.pass('sdjwt.holder', 'Holder binding', 'cnf.jwk');
-    const sl = (jws.payload.status as { status_list?: { idx: number; uri: string } } | undefined)?.status_list;
-    if (sl && opts.checkStatus !== false) {
-      const s = await checkTokenStatus(sl, f, opts.trust);
-      if (s.status === 'valid') checks.pass('sdjwt.status', 'Status', s.detail);
-      else if (s.status === 'unknown') checks.warn('sdjwt.status', 'Status', s.detail);
-      else checks.fail('sdjwt.status', 'Status', `${s.status}: ${s.detail}`);
-    }
+    statusRef = (jws.payload.status as { status_list?: StatusListReference } | undefined)?.status_list;
   } catch (e) {
     checks.fail('sdjwt.parse', 'Credential structure', (e as Error).message);
   }
   const trust = opts.trust ? await opts.trust.evaluate(issuerTrustQuery(issuerInfo, opts.credentialIssuer)) : null;
+  if (statusRef && opts.checkStatus !== false) {
+    const s = await checkTokenStatus(statusRef, { trust: opts.trust, fetch: f, signerX5c: issuerInfo.x5c, decision: trust, now });
+    if (s.status === 'valid') checks.pass('sdjwt.status', 'Status', s.detail);
+    else if (s.status === 'unknown') checks.warn('sdjwt.status', 'Status', s.detail);
+    else checks.fail('sdjwt.status', 'Status', `${s.status}: ${s.detail}`);
+  }
   return finish('dc+sd-jwt', checks, issuerInfo, trust, claims, { credentialType: vct });
 }

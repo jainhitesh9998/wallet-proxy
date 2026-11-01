@@ -25,7 +25,8 @@ public class ClientRegistry {
                 throw new IllegalArgumentException("Client " + c.getId() + " has no api-key");
             }
             ClientProfile p = new ClientProfile(c.getId(), c.getName() == null ? c.getId() : c.getName(),
-                    Set.copyOf(c.getFrameworks()), c.isStrictAuthorization(), c.isAllowUnregisteredMetadata(), c.isAdmin());
+                    Set.copyOf(c.getFrameworks()), c.isStrictAuthorization(), c.isAllowUnregisteredMetadata(), c.isAdmin(),
+                    c.isRequireRevocationStatus());
             byKeyHash.put(hash(c.getApiKey()), p);
             byId.put(c.getId(), p);
         }

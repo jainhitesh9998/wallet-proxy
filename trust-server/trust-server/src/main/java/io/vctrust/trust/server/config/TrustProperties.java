@@ -16,6 +16,7 @@ public class TrustProperties {
     private Http http = new Http();
     private Cache cache = new Cache();
     private Did did = new Did();
+    private Revocation revocation = new Revocation();
     private Anonymous anonymous = new Anonymous();
     private List<Framework> frameworks = new ArrayList<>();
     private List<Source> sources = new ArrayList<>();
@@ -30,6 +31,11 @@ public class TrustProperties {
         private Duration decisionTtl = Duration.ofHours(1);
         private Duration snapshotTtl = Duration.ofHours(24);
         private Duration signedResponseTtl = Duration.ofMinutes(10);
+        /** Embed the DID documents of registered DID identifiers in snapshots (offline, private verification). */
+        private boolean snapshotDidDocuments = true;
+        private int snapshotMaxDidDocuments = 200;
+        /** Upper bound on DID resolution while building a snapshot; slower documents are left out. */
+        private Duration snapshotDidDeadline = Duration.ofSeconds(5);
 
         public String getIssuer() { return issuer; }
         public void setIssuer(String issuer) { this.issuer = issuer; }
@@ -41,6 +47,12 @@ public class TrustProperties {
         public void setSnapshotTtl(Duration snapshotTtl) { this.snapshotTtl = snapshotTtl; }
         public Duration getSignedResponseTtl() { return signedResponseTtl; }
         public void setSignedResponseTtl(Duration signedResponseTtl) { this.signedResponseTtl = signedResponseTtl; }
+        public boolean isSnapshotDidDocuments() { return snapshotDidDocuments; }
+        public void setSnapshotDidDocuments(boolean v) { this.snapshotDidDocuments = v; }
+        public int getSnapshotMaxDidDocuments() { return snapshotMaxDidDocuments; }
+        public void setSnapshotMaxDidDocuments(int v) { this.snapshotMaxDidDocuments = v; }
+        public Duration getSnapshotDidDeadline() { return snapshotDidDeadline; }
+        public void setSnapshotDidDeadline(Duration v) { this.snapshotDidDeadline = v; }
     }
 
     public static class Http {
@@ -113,6 +125,48 @@ public class TrustProperties {
         public void setUniversalResolverMethods(List<String> v) { this.universalResolverMethods = v; }
     }
 
+    /** Certificate revocation (CRLs, optional OCSP) and the CRL / status list relays. */
+    public static class Revocation {
+        private boolean enabled = true;
+        /** Anchor CRLs are re-fetched after min(refresh, nextUpdate - now), at least a minute apart. */
+        private Duration refresh = Duration.ofHours(1);
+        private int maxCrlBytes = 1024 * 1024;
+        /** Larger CRLs are not embedded in snapshots (clients fetch them per their lookup policy). */
+        private int snapshotMaxCrlBytes = 256 * 1024;
+        /** Fetch the CRL distribution points of non-anchor issuers during server-side checks. */
+        private boolean fetchOnDemand = true;
+        /** OCSP for certificates without CRL coverage (server-side decisions only; devices never use OCSP). */
+        private boolean ocsp = false;
+        private boolean relayCrls = true;
+        private boolean relayStatusLists = true;
+        private Duration statusListMaxTtl = Duration.ofHours(1);
+        private Duration statusListDefaultTtl = Duration.ofMinutes(5);
+        private int maxStatusListBytes = 2 * 1024 * 1024;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean v) { this.enabled = v; }
+        public Duration getRefresh() { return refresh; }
+        public void setRefresh(Duration v) { this.refresh = v; }
+        public int getMaxCrlBytes() { return maxCrlBytes; }
+        public void setMaxCrlBytes(int v) { this.maxCrlBytes = v; }
+        public int getSnapshotMaxCrlBytes() { return snapshotMaxCrlBytes; }
+        public void setSnapshotMaxCrlBytes(int v) { this.snapshotMaxCrlBytes = v; }
+        public boolean isFetchOnDemand() { return fetchOnDemand; }
+        public void setFetchOnDemand(boolean v) { this.fetchOnDemand = v; }
+        public boolean isOcsp() { return ocsp; }
+        public void setOcsp(boolean v) { this.ocsp = v; }
+        public boolean isRelayCrls() { return relayCrls; }
+        public void setRelayCrls(boolean v) { this.relayCrls = v; }
+        public boolean isRelayStatusLists() { return relayStatusLists; }
+        public void setRelayStatusLists(boolean v) { this.relayStatusLists = v; }
+        public Duration getStatusListMaxTtl() { return statusListMaxTtl; }
+        public void setStatusListMaxTtl(Duration v) { this.statusListMaxTtl = v; }
+        public Duration getStatusListDefaultTtl() { return statusListDefaultTtl; }
+        public void setStatusListDefaultTtl(Duration v) { this.statusListDefaultTtl = v; }
+        public int getMaxStatusListBytes() { return maxStatusListBytes; }
+        public void setMaxStatusListBytes(int v) { this.maxStatusListBytes = v; }
+    }
+
     public static class Anonymous {
         private boolean enabled = true;
         private List<String> frameworks = new ArrayList<>();
@@ -175,6 +229,8 @@ public class TrustProperties {
         private boolean strictAuthorization = false;
         private boolean allowUnregisteredMetadata = true;
         private boolean admin = false;
+        /** An undeterminable certificate revocation status fails validation (otherwise a warning). */
+        private boolean requireRevocationStatus = false;
 
         public String getId() { return id; }
         public void setId(String v) { this.id = v; }
@@ -190,6 +246,8 @@ public class TrustProperties {
         public void setAllowUnregisteredMetadata(boolean v) { this.allowUnregisteredMetadata = v; }
         public boolean isAdmin() { return admin; }
         public void setAdmin(boolean v) { this.admin = v; }
+        public boolean isRequireRevocationStatus() { return requireRevocationStatus; }
+        public void setRequireRevocationStatus(boolean v) { this.requireRevocationStatus = v; }
     }
 
     public Service getService() { return service; }
@@ -200,6 +258,8 @@ public class TrustProperties {
     public void setCache(Cache v) { this.cache = v; }
     public Did getDid() { return did; }
     public void setDid(Did v) { this.did = v; }
+    public Revocation getRevocation() { return revocation; }
+    public void setRevocation(Revocation v) { this.revocation = v; }
     public Anonymous getAnonymous() { return anonymous; }
     public void setAnonymous(Anonymous v) { this.anonymous = v; }
     public List<Framework> getFrameworks() { return frameworks; }

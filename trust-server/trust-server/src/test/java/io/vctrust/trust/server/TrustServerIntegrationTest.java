@@ -8,7 +8,9 @@ import com.sun.net.httpserver.HttpServer;
 import io.vctrust.trust.core.json.Json;
 import io.vctrust.trust.core.testing.TestPki;
 import io.vctrust.trust.core.x509.Certificates;
+import io.vctrust.trust.core.x509.RevocationChecker;
 import io.vctrust.trust.server.config.SourceBootstrap;
+import io.vctrust.trust.server.service.CrlService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -39,6 +43,8 @@ class TrustServerIntegrationTest {
     static final TestPki.Issued DS = TestPki.documentSigner("CN=Test DS,C=UT", IACA);
     static final TestPki.Issued ROGUE_IACA = TestPki.rootCa("CN=Rogue IACA,C=UT");
     static final TestPki.Issued ROGUE_DS = TestPki.documentSigner("CN=Rogue DS,C=UT", ROGUE_IACA);
+    static final TestPki.Issued REVOKED_DS = TestPki.documentSigner("CN=Revoked DS,C=UT", IACA);
+    static final TestPki.Issued PUSHED_IACA = TestPki.rootCa("CN=Pushed IACA,C=UT");
     static final HttpServer UPSTREAM;
     static final String UPSTREAM_BASE;
     static Path dataDir;
@@ -59,10 +65,23 @@ class TrustServerIntegrationTest {
                      "credential_configurations_supported":{}}""".formatted(UPSTREAM_BASE, UPSTREAM_BASE));
             route("/.well-known/openid-credential-issuer/liar", """
                     {"credential_issuer":"https://elsewhere.example","credential_endpoint":"x","credential_configurations_supported":{}}""");
+            raw("/crl/iaca.crl", "application/pkix-crl", TestPki.crl(IACA, TestPki.Revoked.of(REVOKED_DS, 1)).getEncoded());
+            raw("/status/token", "application/statuslist+jwt", "eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6e319.c2ln".getBytes(StandardCharsets.UTF_8));
+            raw("/status/page", "text/html", "<html></html>".getBytes(StandardCharsets.UTF_8));
             UPSTREAM.start();
-        } catch (IOException e) {
+        } catch (IOException | java.security.cert.CRLException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    static void raw(String path, String type, byte[] body) {
+        UPSTREAM.createContext(path, ex -> {
+            ex.getResponseHeaders().add("Content-Type", type);
+            ex.getResponseHeaders().add("Cache-Control", "max-age=60");
+            ex.sendResponseHeaders(200, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        });
     }
 
     static void route(String path, String json) {
@@ -112,9 +131,11 @@ class TrustServerIntegrationTest {
                   - domain: mdoc-iaca
                     framework: fw-a
                     entity: test-issuer
+                    constraints:
+                      crlUrls: ["%s/crl/iaca.crl"]
                     certificate: |
                 %s
-                """.formatted(UPSTREAM_BASE, UPSTREAM_BASE, Certificates.toPem(IACA.certificate()).indent(6)));
+                """.formatted(UPSTREAM_BASE, UPSTREAM_BASE, UPSTREAM_BASE, Certificates.toPem(IACA.certificate()).indent(6)));
         r.add("spring.datasource.url", () -> "jdbc:h2:mem:trust-it;DB_CLOSE_DELAY=-1;MODE=PostgreSQL");
         r.add("trust.service.signing-key-file", () -> dataDir.resolve("key.jwk").toString());
         r.add("trust.service.issuer", () -> "https://trust.test");
@@ -139,16 +160,20 @@ class TrustServerIntegrationTest {
         r.add("trust.clients[1].api-key", () -> "key-strict");
         r.add("trust.clients[1].frameworks[0]", () -> "fw-a");
         r.add("trust.clients[1].allow-unregistered-metadata", () -> "false");
+        r.add("trust.clients[1].require-revocation-status", () -> "true");
         r.add("trust.clients[2].id", () -> "admin");
         r.add("trust.clients[2].api-key", () -> "key-admin");
         r.add("trust.clients[2].admin", () -> "true");
         r.add("trust.anonymous.enabled", () -> "false");
+        r.add("trust.service.snapshot-ttl", () -> "PT4S");
     }
 
     @Autowired
     Environment env;
     @Autowired
     SourceBootstrap bootstrap;
+    @Autowired
+    CrlService crls;
 
     final HttpClient http = HttpClient.newHttpClient();
 
@@ -158,6 +183,17 @@ class TrustServerIntegrationTest {
             Thread.sleep(50);
         }
         assertThat(bootstrap.isReady()).isTrue();
+        // Anchor CRLs load in the background after the registry; wait so snapshots are stable during tests.
+        for (int i = 0; i < 100 && crls.heldFor(IACA.certificate()).isEmpty(); i++) {
+            Thread.sleep(50);
+        }
+        assertThat(crls.heldFor(IACA.certificate())).isNotEmpty();
+    }
+
+    HttpResponse<byte[]> getBytes(String path, String key, String... headers) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base() + path)).GET().header("Authorization", "Bearer " + key);
+        for (int i = 0; i < headers.length; i += 2) b.header(headers[i], headers[i + 1]);
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofByteArray());
     }
 
     String base() {
@@ -300,6 +336,7 @@ class TrustServerIntegrationTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void snapshotIsSignedScopedAndConditional() throws Exception {
         var r = get("/api/v1/snapshot", "key-a");
         SignedJWT jwt = SignedJWT.parse(r.body());
@@ -310,7 +347,140 @@ class TrustServerIntegrationTest {
         List<?> anchors = (List<?>) jwt.getJWTClaimsSet().getClaim("anchors");
         assertThat(entities).hasSize(2);
         assertThat(anchors).hasSize(1);
-        assertThat(get("/api/v1/snapshot", "key-a", "If-None-Match", r.headers().firstValue("ETag").orElseThrow()).statusCode()).isEqualTo(304);
+        String etag = r.headers().firstValue("ETag").orElseThrow();
+        assertThat(get("/api/v1/snapshot", "key-a", "If-None-Match", etag).statusCode()).isEqualTo(304);
+
+        // Everything a client needs to evaluate locally: its policy, anchor provenance, metadata policy.
+        var claims = jwt.getJWTClaimsSet();
+        assertThat(claims.getIntegerClaim("format")).isEqualTo(3);
+        Map<String, Object> policy = claims.getJSONObjectClaim("policy");
+        assertThat(policy).containsEntry("strictAuthorization", false);
+        assertThat((List<Object>) policy.get("frameworks")).containsExactlyInAnyOrder("fw-a", "local");
+        assertThat(((Map<String, Object>) anchors.getFirst()).get("provenance")).isInstanceOf(Map.class);
+        Map<String, Object> issuer = entities.stream().map(e -> (Map<String, Object>) e)
+                .filter(e -> "test-issuer".equals(e.get("id"))).findFirst().orElseThrow();
+        assertThat(issuer.get("metadataPolicy")).isInstanceOf(Map.class);
+
+        // DID documents of registered DID identifiers are embedded (admin sees every framework, incl. b-issuer).
+        Map<String, Object> docs = SignedJWT.parse(get("/api/v1/snapshot", "key-admin").body()).getJWTClaimsSet().getJSONObjectClaim("didDocuments");
+        assertThat(docs).containsKey("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK");
+
+        // Re-signed after half its lifetime: a polling client gets a fresh snapshot, never keeps an expired one.
+        Thread.sleep(2_100);
+        var renewed = get("/api/v1/snapshot", "key-a", "If-None-Match", etag);
+        assertThat(renewed.statusCode()).isEqualTo(200);
+        assertThat(renewed.headers().firstValue("ETag").orElseThrow()).isNotEqualTo(etag);
+        assertThat(SignedJWT.parse(renewed.body()).getJWTClaimsSet().getExpirationTime()).isAfter(claims.getExpirationTime());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void certificateRevocationFromAnchorCrls() throws Exception {
+        String crlUrl = UPSTREAM_BASE + "/crl/iaca.crl";
+        // The anchor's CRL ships in the snapshot, with the client's revocation policy.
+        var claims = SignedJWT.parse(get("/api/v1/snapshot", "key-a").body()).getJWTClaimsSet();
+        List<Map<String, Object>> crlClaims = (List<Map<String, Object>>) claims.getClaim("crls");
+        assertThat(crlClaims).singleElement().satisfies(c -> {
+            assertThat(c.get("issuer")).isEqualTo(Certificates.sha256Thumbprint(IACA.certificate()));
+            assertThat(c.get("url")).isEqualTo(crlUrl);
+            assertThat(c).containsKeys("thisUpdate", "nextUpdate", "crlNumber");
+            var crl = RevocationChecker.Crl.parse(Base64.getDecoder().decode((String) c.get("crl")), crlUrl, Instant.now());
+            assertThat(crl.issuedBy(IACA.certificate())).isTrue();
+        });
+        assertThat(claims.getJSONObjectClaim("policy")).containsEntry("requireRevocationStatus", false);
+        assertThat(SignedJWT.parse(get("/api/v1/snapshot", "key-strict").body()).getJWTClaimsSet().getJSONObjectClaim("policy"))
+                .containsEntry("requireRevocationStatus", true);
+
+        // Server-side decisions apply the same CRL.
+        var mdl = Map.of("credentialFormat", "mso_mdoc", "credentialType", "org.iso.18013.5.1.mDL");
+        var revoked = json(post("/api/v1/evaluate", "key-a", Map.of("role", "issuer",
+                "subject", Map.of("x5c", List.of(Certificates.toBase64(REVOKED_DS.certificate()))), "context", mdl)));
+        assertThat(revoked.get("decision")).isEqualTo("NOT_TRUSTED");
+        assertThat((List<Map<String, Object>>) revoked.get("reasons")).extracting(m -> m.get("code")).contains("x509.revoked");
+        var x509 = (Map<String, Object>) ((Map<String, Object>) revoked.get("evidence")).get("x509");
+        assertThat((List<Map<String, Object>>) x509.get("revocation")).singleElement().satisfies(r -> {
+            assertThat(r.get("status")).isEqualTo("REVOKED");
+            assertThat(r.get("reason")).isEqualTo("keyCompromise");
+            assertThat(r.get("method")).isEqualTo("crl");
+            assertThat(r.get("source")).isEqualTo("trust-service");
+        });
+        var good = json(post("/api/v1/evaluate", "key-a", Map.of("role", "issuer",
+                "subject", Map.of("x5c", List.of(Certificates.toBase64(DS.certificate()))), "context", mdl)));
+        assertThat(good.get("decision")).isEqualTo("TRUSTED");
+        var goodX509 = (Map<String, Object>) ((Map<String, Object>) good.get("evidence")).get("x509");
+        assertThat((List<Map<String, Object>>) goodX509.get("revocation")).extracting(m -> m.get("status")).containsExactly("GOOD");
+
+        // Operator listing.
+        List<Map<String, Object>> listing = Json.MAPPER.readValue(get("/api/v1/revocation/crls", "key-a").body(), List.class);
+        assertThat(listing).singleElement().satisfies(m -> {
+            assertThat(m.get("url")).isEqualTo(crlUrl);
+            assertThat(m.get("revoked")).isEqualTo(1);
+        });
+
+        // A CRL pushed with a managed anchor: verified, held, and never echoed in anchor views.
+        String pem = "-----BEGIN X509 CRL-----\n" + Base64.getMimeEncoder().encodeToString(TestPki.crl(PUSHED_IACA).getEncoded())
+                + "\n-----END X509 CRL-----\n";
+        assertThat(put("/admin/v1/managed/anchors/pushed-iaca", "key-admin", Map.of("domain", "mdoc-iaca",
+                "certificate", Certificates.toPem(PUSHED_IACA.certificate()), "constraints", Map.of("crl", pem))).statusCode()).isEqualTo(200);
+        for (int i = 0; i < 100 && crls.heldFor(PUSHED_IACA.certificate()).isEmpty(); i++) {
+            Thread.sleep(50);
+        }
+        assertThat(crls.heldFor(PUSHED_IACA.certificate())).singleElement().satisfies(c -> assertThat(c.url()).isNull());
+        assertThat(get("/api/v1/x509/anchors?domain=mdoc-iaca", "key-a").body()).contains("Pushed IACA").doesNotContain("X509 CRL");
+        var snapAnchors = (List<Map<String, Object>>) SignedJWT.parse(get("/api/v1/snapshot", "key-a").body()).getJWTClaimsSet().getClaim("anchors");
+        assertThat(snapAnchors).allSatisfy(a -> assertThat((Map<String, Object>) a.get("constraints")).doesNotContainKey("crl"));
+        http.send(HttpRequest.newBuilder(URI.create(base() + "/admin/v1/managed/anchors/pushed-iaca")).DELETE()
+                .header("Authorization", "Bearer key-admin").build(), HttpResponse.BodyHandlers.discarding());
+        for (int i = 0; i < 100 && !crls.heldFor(PUSHED_IACA.certificate()).isEmpty(); i++) {
+            Thread.sleep(50);
+        }
+        assertThat(crls.heldFor(PUSHED_IACA.certificate())).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void crlAndStatusListRelays() throws Exception {
+        var crl = getBytes("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/crl/iaca.crl", "key-a", "Accept", "application/pkix-crl");
+        assertThat(crl.statusCode()).isEqualTo(200);
+        assertThat(crl.headers().firstValue("Content-Type")).contains("application/pkix-crl");
+        assertThat(crl.headers().firstValue("Cache-Control").orElse("")).contains("max-age=");
+        assertThat(RevocationChecker.Crl.parse(crl.body(), null, Instant.now()).issuedBy(IACA.certificate())).isTrue();
+        assertThat(getBytes("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/status/page", "key-a").statusCode()).isEqualTo(502);
+        var ftp = get("/api/v1/revocation/crl?url=ftp://crl.example/x.crl", "key-a");
+        assertThat(ftp.statusCode()).isEqualTo(400);
+        assertThat(json(ftp).get("code")).isEqualTo("invalid_request");
+        var plainHttp = get("/api/v1/revocation/crl?url=http://crl.example/x.crl", "key-a");
+        assertThat(plainHttp.statusCode()).isEqualTo(400);
+        assertThat(json(plainHttp).get("code")).isEqualTo("invalid_request");
+        assertThat(get("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/crl/iaca.crl", null).statusCode()).isEqualTo(401);
+
+        var token = getBytes("/api/v1/revocation/status-list?uri=" + UPSTREAM_BASE + "/status/token", "key-a",
+                "Accept", "application/statuslist+jwt");
+        assertThat(token.statusCode()).isEqualTo(200);
+        assertThat(token.headers().firstValue("Content-Type")).contains("application/statuslist+jwt");
+        assertThat(new String(token.body(), StandardCharsets.UTF_8)).isEqualTo("eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6e319.c2ln");
+        assertThat(token.headers().firstValue("Cache-Control").orElse("")).contains("private").contains("max-age=");
+        var page = get("/api/v1/revocation/status-list?uri=" + UPSTREAM_BASE + "/status/page", "key-a");
+        assertThat(page.statusCode()).isEqualTo(502);
+        assertThat(json(page).get("code")).isEqualTo("invalid_status_list");
+
+        var d = json(get("/.well-known/trust-service", null));
+        assertThat(((Map<?, ?>) d.get("endpoints")).get("status_list_relay")).isEqualTo("https://trust.test/api/v1/revocation/status-list");
+        assertThat((Map<String, Object>) d.get("revocation")).containsEntry("crl", true).containsEntry("ocsp", false)
+                .containsEntry("crl_relay", true).containsEntry("status_list_relay", true);
+        assertThat(d.get("snapshot_format")).isEqualTo(3);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void onDemandLookupIsOptInAndSigned() throws Exception {
+        var plain = get("/api/v1/entities/lookup?identifier=https://revoked.example", "key-a");
+        assertThat(plain.statusCode()).isEqualTo(200);
+        var signed = get("/api/v1/entities/lookup?identifier=https://unknown.example&onDemand=true", "key-a", "Accept", "application/jwt");
+        assertThat(signed.statusCode()).isEqualTo(200);
+        SignedJWT jwt = SignedJWT.parse(signed.body());
+        assertThat(jwt.getHeader().getType().toString()).isEqualTo("trust-registry+jwt");
+        assertThat((List<?>) jwt.getJWTClaimsSet().getClaim("data")).isEmpty();
     }
 
     @Test

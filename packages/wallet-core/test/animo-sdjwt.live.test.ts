@@ -1,13 +1,13 @@
 /** SD-JWT VC (HAIP format) issuance + presentation with the Animo playground. */
 import { expect, it } from 'vitest';
-import { createTrustClient } from '@vctrust/trust-client';
+import { liveTrust } from './live-trust.js';
 import { MemoryCredentialStore, SoftwareKeyStore, Wallet } from '../src/index.js';
 
 const PLAYGROUND = 'https://playground.animo.id';
 const log = (s: string) => process.stderr.write(`${s}\n`);
 
 it('issues an EUDI PID SD-JWT VC and presents selected claims', async () => {
-  const trust = createTrustClient({ baseUrl: process.env.TRUST_URL ?? 'http://localhost:8090', apiKey: 'demo-wallet-key', clientId: 'demo-wallet' });
+  const trust = await liveTrust();
   const wallet = new Wallet({ trust, keyStore: new SoftwareKeyStore(), credentials: new MemoryCredentialStore(), redirectUri: 'https://wallet.vctrust.dev/cb' });
   const offer = (await (await fetch(`${PLAYGROUND}/api/offers/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ credentialSupportedIds: ['eudi-pid-sd-jwt-utopia'], authorization: 'none', deferBy: 'none', requireDpop: true,

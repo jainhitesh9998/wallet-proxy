@@ -10,13 +10,11 @@ import java.security.cert.CertPathValidatorException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.PKIXParameters;
-import java.security.cert.PKIXRevocationChecker;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
-import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -30,12 +28,19 @@ import java.util.stream.Collectors;
  *
  * <p>Accepted chain shapes (all leaf first): a full chain ending in the anchor itself, a chain ending just
  * below the anchor (the HAIP / x5c convention), or a single certificate that is itself pinned as an anchor.
+ *
+ * <p>With a {@link Revocation} context, every certificate below the anchor is checked for revocation once the
+ * path validates (a directly pinned certificate is an anchor itself; its status comes from the trust list).
  */
 public final class X509PathValidator {
 
-    /** Options for one validation. */
+    /** Revocation checking for one validation; {@code required}: an undeterminable status is an error. */
+    public record Revocation(RevocationChecker checker, boolean required) {
+    }
+
+    /** Options for one validation; {@code revocation} null skips revocation checking. */
     public record Options(Instant time, CertificateProfile profile, CertificateProfile.ProfileContext profileContext,
-                          boolean checkRevocation) {
+                          Revocation revocation) {
         public Options {
             time = time == null ? Instant.now() : time;
             profile = profile == null ? CertificateProfiles.NONE : profile;
@@ -43,7 +48,11 @@ public final class X509PathValidator {
         }
 
         public static Options at(Instant time, CertificateProfile profile) {
-            return new Options(time, profile, null, false);
+            return new Options(time, profile, null, null);
+        }
+
+        public Options withRevocation(RevocationChecker checker, boolean required) {
+            return new Options(time, profile, profileContext, checker == null ? null : new Revocation(checker, required));
         }
     }
 
@@ -132,9 +141,17 @@ public final class X509PathValidator {
             issues.add(ValidationIssue.error("x509.anchor_doctype",
                     "Trust anchor is not authorized for doctype " + options.profileContext().docType()));
         }
+        List<CertificateRevocation> revocation = List.of();
+        boolean pinnedItself = path.size() == 1 && Certificates.sha256Thumbprint(path.getFirst()).equals(anchor.thumbprint());
+        if (options.revocation() != null && !pinnedItself) {
+            RevocationChecker.Result r = options.revocation().checker().check(path, anchor.certificate(), options.time(),
+                    options.revocation().required());
+            issues.addAll(r.issues());
+            revocation = r.statuses();
+        }
         boolean valid = issues.stream().noneMatch(ValidationIssue::isError);
         return new PathValidationResult(valid, true, anchor, path.stream().map(CertificateSummary::of).toList(),
-                issues, options.profile().name(), options.time());
+                issues, options.profile().name(), options.time(), revocation);
     }
 
     private static List<ValidationIssue> pkix(List<X509Certificate> path, X509Certificate anchorCert, Options options) {
@@ -144,14 +161,8 @@ public final class X509PathValidator {
             PKIXParameters params = new PKIXParameters(Set.of(new java.security.cert.TrustAnchor(anchorCert, null)));
             params.setDate(Date.from(options.time()));
             CertPathValidator validator = CertPathValidator.getInstance("PKIX");
-            if (options.checkRevocation()) {
-                PKIXRevocationChecker rc = (PKIXRevocationChecker) validator.getRevocationChecker();
-                rc.setOptions(EnumSet.of(PKIXRevocationChecker.Option.PREFER_CRLS,
-                        PKIXRevocationChecker.Option.SOFT_FAIL, PKIXRevocationChecker.Option.NO_FALLBACK));
-                params.addCertPathChecker(rc);
-            } else {
-                params.setRevocationEnabled(false);
-            }
+            // Revocation is checked by RevocationChecker afterwards (CRLs from the trust list / distribution points).
+            params.setRevocationEnabled(false);
             validator.validate(certPath, params);
             return List.of();
         } catch (CertPathValidatorException e) {

@@ -27,7 +27,9 @@ export class HttpTransport {
     return this.opts.breaker;
   }
 
-  async request<T>(method: 'GET' | 'POST', path: string, init: { body?: unknown; accept?: string; headers?: Record<string, string>; idempotent?: boolean } = {}): Promise<TransportResponse<T>> {
+  /** {@code binary}: a successful body is returned as bytes (e.g. a relayed CRL or status list). */
+  async request<T>(method: 'GET' | 'POST', path: string, init: { body?: unknown; accept?: string; headers?: Record<string, string>; idempotent?: boolean;
+    binary?: boolean } = {}): Promise<TransportResponse<T>> {
     const { breaker } = this.opts;
     if (!breaker.canRequest()) throw new TrustServiceUnavailableError('Trust service circuit is open');
     const headers: Record<string, string> = { Accept: init.accept ?? 'application/json', ...(init.headers ?? {}) };
@@ -54,6 +56,7 @@ export class HttpTransport {
       this.opts.onAvailability?.(true);
       if (res.status === 304) return { status: 304, body: undefined as T, headers: res.headers };
       const ct = res.headers.get('Content-Type') ?? '';
+      if (init.binary && res.status < 400) return { status: res.status, body: new Uint8Array(await res.arrayBuffer()) as T, headers: res.headers };
       const body = ct.includes('json') && !ct.includes('application/jwt') ? await res.json() : await res.text();
       if (res.status >= 400) {
         const p = (typeof body === 'object' && body) ? body as Record<string, unknown> : {};

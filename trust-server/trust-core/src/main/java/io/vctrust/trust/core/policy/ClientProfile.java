@@ -11,12 +11,19 @@ import java.util.Set;
  *                                   for any credential type
  * @param allowUnregisteredMetadata  whether the metadata proxy serves issuers absent from the registry
  *                                   (their decision is then UNKNOWN)
+ * @param requireRevocationStatus    when true a certificate whose revocation status cannot be determined fails
+ *                                   validation; otherwise it is a warning
  */
 public record ClientProfile(String clientId, String name, Set<String> frameworks, boolean strictAuthorization,
-                            boolean allowUnregisteredMetadata, boolean admin) {
+                            boolean allowUnregisteredMetadata, boolean admin, boolean requireRevocationStatus) {
 
     public ClientProfile {
         frameworks = frameworks == null ? Set.of() : Set.copyOf(frameworks);
+    }
+
+    public ClientProfile(String clientId, String name, Set<String> frameworks, boolean strictAuthorization,
+                         boolean allowUnregisteredMetadata, boolean admin) {
+        this(clientId, name, frameworks, strictAuthorization, allowUnregisteredMetadata, admin, false);
     }
 
     public static ClientProfile anonymous(Set<String> frameworks) {

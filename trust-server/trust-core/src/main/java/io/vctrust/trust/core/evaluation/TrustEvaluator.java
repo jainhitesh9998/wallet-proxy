@@ -24,6 +24,8 @@ import io.vctrust.trust.core.x509.CertificateProfile;
 import io.vctrust.trust.core.x509.CertificateProfiles;
 import io.vctrust.trust.core.x509.Certificates;
 import io.vctrust.trust.core.x509.PathValidationResult;
+import io.vctrust.trust.core.x509.RevocationChecker;
+import io.vctrust.trust.core.x509.ValidationIssue;
 import io.vctrust.trust.core.x509.X509PathValidator;
 
 import java.net.URI;
@@ -60,15 +62,23 @@ public class TrustEvaluator {
     private final X509PathValidator pathValidator;
     private final Clock clock;
     private final Duration decisionTtl;
+    private final RevocationChecker revocation;
 
     public TrustEvaluator(TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
                           X509PathValidator pathValidator, Clock clock, Duration decisionTtl) {
+        this(registry, sources, didResolver, pathValidator, clock, decisionTtl, null);
+    }
+
+    /** @param revocation certificate revocation checking for chains (null: not checked) */
+    public TrustEvaluator(TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
+                          X509PathValidator pathValidator, Clock clock, Duration decisionTtl, RevocationChecker revocation) {
         this.registry = registry;
         this.sources = sources;
         this.didResolver = didResolver;
         this.pathValidator = pathValidator;
         this.clock = clock;
         this.decisionTtl = decisionTtl;
+        this.revocation = revocation;
     }
 
     /** Parsed OpenID4VP client identifier (OID4VP 1.0 §5.9.3). */
@@ -188,7 +198,8 @@ public class TrustEvaluator {
             CertificateProfile certProfile = CertificateProfiles.forDomain(domain);
             String docType = CredentialFormats.MSO_MDOC.equals(format) ? type : null;
             x509 = pathValidator.validate(chain, anchors, new X509PathValidator.Options(now, certProfile,
-                    new CertificateProfile.ProfileContext(expectedDns, docType), false));
+                    new CertificateProfile.ProfileContext(expectedDns, docType), null)
+                    .withRevocation(revocation, profile.requireRevocationStatus()));
             if (x509.valid()) {
                 validatedAnchor = x509.anchor();
                 // SAN names are authenticated once the chain validates; use them to find the registered entity.
@@ -196,6 +207,8 @@ public class TrustEvaluator {
                 Certificates.uriNames(leaf).forEach(u -> ids.add(Identifier.url(u)));
                 reasons.add(Reason.info("x509.valid", "Certificate chain validates to trust anchor "
                         + validatedAnchor.certificate().getSubjectX500Principal().getName() + " in domain " + domain));
+                x509.issues().stream().filter(i -> i.code().startsWith("x509.revocation")
+                        && i.severity() == ValidationIssue.Severity.WARNING).map(Reason::of).forEach(reasons::add);
             } else if (!x509.anchorFound()) {
                 reasons.add(Reason.warning("x509.no_anchor", anchors.isEmpty()
                         ? "No trust anchors configured for domain '" + domain + "' in accepted frameworks"

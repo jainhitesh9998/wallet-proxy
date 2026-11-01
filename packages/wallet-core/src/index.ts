@@ -17,6 +17,7 @@ export { createDocumentLoader, canonize } from './verify/jsonld.js';
 export { parseSdJwt, decodeDisclosure, reconstruct, disclosureDigest } from './verify/sdjwt.js';
 export { issuerSignedItems, coseKeyToJwk, jwkToCoseKey, sigStructure, displayValue } from './verify/mdoc.js';
 export { checkBitstringStatus, checkTokenStatus } from './verify/status.js';
+export type { StatusContext, StatusListReference, StatusResult, ListCredentialVerifier } from './verify/status.js';
 export { Wallet, PresentationSession } from './wallet.js';
 export type { WalletOptions } from './wallet.js';
 export { MemoryCredentialStore, KeyValueCredentialStore } from './store/credentials.js';

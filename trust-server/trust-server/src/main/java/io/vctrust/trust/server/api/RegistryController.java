@@ -9,6 +9,7 @@ import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.policy.ClientProfile;
 import io.vctrust.trust.core.registry.RegistrySnapshot;
 import io.vctrust.trust.core.registry.TrustRegistry;
+import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.core.evaluation.TrustEvaluator;
 import io.vctrust.trust.server.config.TrustJacksonModule;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,10 +38,12 @@ import java.util.function.Predicate;
 public class RegistryController {
 
     private final TrustRegistry registry;
+    private final TrustSourceManager sources;
     private final ResponseSigner signer;
 
-    public RegistryController(TrustRegistry registry, ResponseSigner signer) {
+    public RegistryController(TrustRegistry registry, TrustSourceManager sources, ResponseSigner signer) {
         this.registry = registry;
+        this.sources = sources;
         this.signer = signer;
     }
 
@@ -95,13 +98,25 @@ public class RegistryController {
 
     @GetMapping("/entities/lookup")
     public ResponseEntity<Object> lookup(ClientProfile client, HttpServletRequest req, @RequestParam String identifier,
-                                         @RequestParam(required = false) String type) {
+                                         @RequestParam(required = false) String type,
+                                         @RequestParam(defaultValue = "false") boolean onDemand) {
         RegistrySnapshot snap = registry.snapshot();
         List<Identifier> ids = type != null
                 ? List.of(Identifier.of(IdentifierType.valueOf(type.toUpperCase(Locale.ROOT)), identifier))
                 : TrustEvaluator.identifiersFor(identifier);
         Set<TrustedEntity> found = new LinkedHashSet<>();
         ids.forEach(id -> snap.byIdentifier(id).stream().filter(e -> client.accepts(e.frameworkId())).forEach(found::add));
+        if (found.isEmpty() && onDemand) {
+            // Registries too large for the snapshot (OpenID Federation, EBSI) are asked about this one identifier.
+            for (Identifier id : ids) {
+                sources.resolveOnDemand(id, client.frameworks()).filter(e -> client.accepts(e.frameworkId())).ifPresent(found::add);
+                if (!found.isEmpty()) {
+                    break;
+                }
+            }
+            return signer.respond(req, client, "trust-registry+jwt", found.stream().map(EntityView::of).toList(),
+                    ResponseEntity.ok().cacheControl(CacheControl.noStore()));
+        }
         return cached(req, client, snap, found.stream().map(EntityView::of).toList());
     }
 

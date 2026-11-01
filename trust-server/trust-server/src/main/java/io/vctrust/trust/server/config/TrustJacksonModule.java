@@ -44,7 +44,7 @@ public class TrustJacksonModule extends SimpleModule {
         m.put("frameworkId", a.frameworkId());
         m.put("entityId", a.entityId());
         m.put("status", a.status());
-        m.put("constraints", a.constraints());
+        m.put("constraints", io.vctrust.trust.server.service.SnapshotService.publicConstraints(a));
         m.put("certificate", CertificateSummary.of(a.certificate()));
         if (a.provenance() != null) {
             m.put("source", a.provenance().sourceId());

@@ -27,6 +27,10 @@ export interface Certificate {
   authorityKeyIdentifier?: string;
   dnsNames: string[];
   uriNames: string[];
+  /** URIs of the CRL distribution points (fullName) */
+  crlDistributionPoints: string[];
+  /** OCSP responder URLs from Authority Information Access */
+  ocspUrls: string[];
   /** base64url SHA-256 of the DER encoding (OpenID4VP x509_hash) */
   sha256: string;
   criticalExtensions: string[];
@@ -57,6 +61,9 @@ export const OID = {
   authorityKeyIdentifier: '2.5.29.35',
   subjectAltName: '2.5.29.17',
   issuerAltName: '2.5.29.18',
+  crlDistributionPoints: '2.5.29.31',
+  authorityInfoAccess: '1.3.6.1.5.5.7.1.1',
+  ocsp: '1.3.6.1.5.5.7.48.1',
   mdlDocumentSigner: '1.0.18013.5.1.2',
 } as const;
 
@@ -96,7 +103,7 @@ function decodeString(data: Uint8Array, t: Tlv): string {
   return utf8Decode(v);
 }
 
-function parseName(data: Uint8Array, t: Tlv): string {
+export function parseName(data: Uint8Array, t: Tlv): string {
   const rdns: string[] = [];
   for (const set of children(data, t)) {
     const attrs: string[] = [];
@@ -111,7 +118,7 @@ function parseName(data: Uint8Array, t: Tlv): string {
   return rdns.reverse().join(',');
 }
 
-function parseTime(data: Uint8Array, t: Tlv): Date {
+export function parseTime(data: Uint8Array, t: Tlv): Date {
   const s = utf8Decode(value(data, t));
   if (t.tag === 0x17) {
     const yy = parseInt(s.slice(0, 2), 10);
@@ -181,6 +188,8 @@ export function parseCertificate(input: Uint8Array | string): Certificate {
     extendedKeyUsage: [],
     dnsNames: [],
     uriNames: [],
+    crlDistributionPoints: [],
+    ocspUrls: [],
     sha256: base64UrlEncode(sha256(der)),
     criticalExtensions: [],
   };
@@ -241,8 +250,27 @@ function parseExtension(cert: Certificate, oid: string, d: Uint8Array): void {
         if (gn.tag === 0x86) cert.uriNames.push(utf8Decode(value(d, gn)));
       }
       break;
+    case OID.crlDistributionPoints:
+      for (const dp of children(d, t)) cert.crlDistributionPoints.push(...distributionPointUris(d, dp));
+      break;
+    case OID.authorityInfoAccess:
+      for (const ad of children(d, t)) {
+        const [method, location] = children(d, ad) as [Tlv, Tlv];
+        if (decodeOid(value(d, method)) === OID.ocsp && location.tag === 0x86) cert.ocspUrls.push(utf8Decode(value(d, location)));
+      }
+      break;
     default:
   }
+}
+
+/**
+ * URIs of a DistributionPoint (RFC 5280 §4.2.1.13) or IssuingDistributionPoint: the [0] distributionPoint's
+ * fullName [0] GeneralNames, uniformResourceIdentifier entries only.
+ */
+export function distributionPointUris(d: Uint8Array, dp: Tlv): string[] {
+  const name = children(d, dp).find((p) => p.tag === 0xa0);
+  const fullName = name ? children(d, name).find((p) => p.tag === 0xa0) : undefined;
+  return fullName ? children(d, fullName).filter((g) => g.tag === 0x86).map((g) => utf8Decode(value(d, g))) : [];
 }
 
 /** Accepts PEM, base64 or base64url DER. */

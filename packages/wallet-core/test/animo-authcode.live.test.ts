@@ -1,6 +1,6 @@
 /** HAIP-mandatory authorization code flow: PAR + PKCE + DPoP + wallet attestation + RFC 9207 iss, against Animo (Credo). */
 import { expect, it } from 'vitest';
-import { createTrustClient } from '@vctrust/trust-client';
+import { liveTrust } from './live-trust.js';
 import { Oid4vciClient, SoftwareKeyStore } from '../src/index.js';
 import { demoAttester } from './wallet-provider.js';
 // @ts-expect-error untyped
@@ -40,7 +40,7 @@ it('PAR + PKCE + DPoP + wallet attestation authorization code flow', async () =>
   const o = await (await fetch('https://playground.animo.id/api/offers/create', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ credentialSupportedIds: ['mdl-mdoc-utopia'], authorization: 'browser', deferBy: 'none', requireDpop: true,
       requireWalletAttestation: true, requireKeyAttestation: false }) })).json() as { credentialOffer: string };
-  const trust = createTrustClient({ baseUrl: process.env.TRUST_URL ?? 'http://localhost:8090', apiKey: 'demo-wallet-key', clientId: 'demo-wallet' });
+  const trust = await liveTrust();
   const session = await new Oid4vciClient({ trust, keyStore: new SoftwareKeyStore(), redirectUri: REDIRECT, attester: demoAttester() }).startFromOffer(o.credentialOffer);
   expect(session.grant).toBe('authorization_code');
   const { authorizationUrl } = await session.beginAuthorization();

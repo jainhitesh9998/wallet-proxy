@@ -4,8 +4,15 @@ import io.vctrust.trust.core.util.Base64Url;
 import io.vctrust.trust.core.util.Hashes;
 import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.x509.AccessDescription;
+import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
 import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
+import org.bouncycastle.asn1.x509.CRLDistPoint;
+import org.bouncycastle.asn1.x509.DistributionPoint;
+import org.bouncycastle.asn1.x509.DistributionPointName;
 import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
 
 import java.io.ByteArrayInputStream;
@@ -162,6 +169,65 @@ public final class Certificates {
         } catch (CertificateParsingException e) {
             return List.of();
         }
+    }
+
+    /** URIs of the CRL Distribution Points extension (full names only). */
+    public static List<String> crlDistributionPoints(X509Certificate cert) {
+        byte[] ext = cert.getExtensionValue(Extension.cRLDistributionPoints.getId());
+        if (ext == null) {
+            return List.of();
+        }
+        try {
+            CRLDistPoint dp = CRLDistPoint.getInstance(ASN1Primitive.fromByteArray(ASN1OctetString.getInstance(ext).getOctets()));
+            List<String> out = new ArrayList<>();
+            for (DistributionPoint p : dp.getDistributionPoints()) {
+                out.addAll(fullNameUris(p.getDistributionPoint()));
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /** uniformResourceIdentifier entries of a distribution point's full name. */
+    public static List<String> fullNameUris(DistributionPointName name) {
+        if (name == null || name.getType() != DistributionPointName.FULL_NAME) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (GeneralName g : GeneralNames.getInstance(name.getName()).getNames()) {
+            if (g.getTagNo() == GeneralName.uniformResourceIdentifier) {
+                out.add(g.getName().toString());
+            }
+        }
+        return out;
+    }
+
+    /** OCSP responder URLs from the Authority Information Access extension. */
+    public static List<String> ocspUrls(X509Certificate cert) {
+        byte[] ext = cert.getExtensionValue(Extension.authorityInfoAccess.getId());
+        if (ext == null) {
+            return List.of();
+        }
+        try {
+            AuthorityInformationAccess aia = AuthorityInformationAccess.getInstance(
+                    ASN1Primitive.fromByteArray(ASN1OctetString.getInstance(ext).getOctets()));
+            List<String> out = new ArrayList<>();
+            for (AccessDescription d : aia.getAccessDescriptions()) {
+                if (AccessDescription.id_ad_ocsp.equals(d.getAccessMethod())
+                        && d.getAccessLocation().getTagNo() == GeneralName.uniformResourceIdentifier) {
+                    out.add(d.getAccessLocation().getName().toString());
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /** True when subject and issuer names are equal (a root, or a self-issued key-rollover certificate). */
+    public static boolean isSelfIssued(X509Certificate cert) {
+        return cert.getSubjectX500Principal().equals(cert.getIssuerX500Principal());
     }
 
     public static boolean isSelfSigned(X509Certificate cert) {

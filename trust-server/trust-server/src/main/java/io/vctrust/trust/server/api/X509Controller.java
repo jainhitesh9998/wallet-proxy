@@ -10,8 +10,10 @@ import io.vctrust.trust.core.x509.CertificateProfile;
 import io.vctrust.trust.core.x509.CertificateProfiles;
 import io.vctrust.trust.core.x509.Certificates;
 import io.vctrust.trust.core.x509.PathValidationResult;
+import io.vctrust.trust.core.x509.RevocationChecker;
 import io.vctrust.trust.core.x509.X509PathValidator;
 import io.vctrust.trust.server.config.TrustJacksonModule;
+import io.vctrust.trust.server.config.TrustProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
@@ -37,11 +39,14 @@ public class X509Controller {
     private final TrustRegistry registry;
     private final X509PathValidator validator;
     private final ResponseSigner signer;
+    private final RevocationChecker revocation;
 
-    public X509Controller(TrustRegistry registry, X509PathValidator validator, ResponseSigner signer) {
+    public X509Controller(TrustRegistry registry, X509PathValidator validator, ResponseSigner signer,
+                          RevocationChecker revocation, TrustProperties props) {
         this.registry = registry;
         this.validator = validator;
         this.signer = signer;
+        this.revocation = props.getRevocation().isEnabled() ? revocation : null;
     }
 
     @PostMapping("/validate")
@@ -57,7 +62,8 @@ public class X509Controller {
                 .toList();
         PathValidationResult r = validator.validate(Certificates.fromBase64List(body.chain()), anchors,
                 new X509PathValidator.Options(body.time(), CertificateProfiles.forDomain(domain),
-                        new CertificateProfile.ProfileContext(body.expectedDnsName(), body.docType()), false));
+                        new CertificateProfile.ProfileContext(body.expectedDnsName(), body.docType()), null)
+                        .withRevocation(revocation, client.requireRevocationStatus()));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("domain", domain.name());
         out.put("result", r);

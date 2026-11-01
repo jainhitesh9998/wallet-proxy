@@ -46,6 +46,15 @@ trust:
     connect-timeout: PT5S
     read-timeout: PT15S
     allow-private-networks: false
+  revocation:
+    # Trust anchor CRLs ship in snapshots; devices check them (and CRLs of intermediates) themselves.
+    refresh: PT1H
+    snapshot-max-crl-bytes: 262144
+    fetch-on-demand: true
+    # OCSP names the exact certificate being checked: server-side decisions only, off by default.
+    ocsp: false
+    relay-crls: true
+    relay-status-lists: true
   cache:
     metadata-max-ttl: PT1H
     did-ttl: PT15M
@@ -70,6 +79,7 @@ trust:
       frameworks: [animo-playground, mosip-collab, local]
       strict-authorization: true
       allow-unregistered-metadata: false
+      require-revocation-status: true
     - id: admin
       name: Operator
       api-key: admin-key

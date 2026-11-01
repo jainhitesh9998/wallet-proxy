@@ -9,6 +9,17 @@ export interface Settings {
   clientId: string;
   /** web only: dev CORS relay for MOSIP hosts */
   corsRelayUrl: string;
+  /** Where trust decisions are made: on this device from the signed trust list ('local'), or by the trust service. */
+  decisions: 'local' | 'service';
+  /** Issuer metadata and DIDs: fetched from the party itself ('direct') or through the trust service ('service'). */
+  lookups: 'direct' | 'service';
+  /** Ask the trust service about parties missing from the trust list (tells it which party). */
+  unknownParties: boolean;
+  /** CRLs the trust list does not carry: from the CA ('direct'), through the trust service relay, or not at all. */
+  crls: 'direct' | 'service' | 'none';
+  /** Credential status lists: from the issuer ('direct') or through the trust service relay (hides this device from the issuer). */
+  statusLists: 'direct' | 'service';
+  /** 'service' decisions: standards-based fallback when the trust service is unreachable. */
   fallbackEnabled: boolean;
   simulateOutage: boolean;
   dpop: 'auto' | 'never';
@@ -23,6 +34,11 @@ export const DEFAULT_SETTINGS: Settings = {
   apiKey: DEFAULT_API_KEY,
   clientId: DEFAULT_CLIENT_ID,
   corsRelayUrl: DEFAULT_CORS_RELAY,
+  decisions: 'local',
+  lookups: 'direct',
+  unknownParties: false,
+  crls: 'direct',
+  statusLists: 'direct',
   fallbackEnabled: true,
   simulateOutage: false,
   dpop: 'auto',

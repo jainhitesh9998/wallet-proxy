@@ -120,7 +120,7 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
     }
   } else if (prefix === 'decentralized_identifier') {
     if (!jws || typeof header?.kid !== 'string' || !header.kid.startsWith(value)) throw new PresentationRequestError('decentralized_identifier requires a request signed with a DID key', 'invalid_client');
-    const resolved = await trust.resolveDid(value);
+    const resolved = await trust.resolveDid(header.kid);
     const vm = resolved.didDocument ? findVerificationMethod(resolved.didDocument, header.kid) : undefined;
     if (!vm || !verifyJws(jws, verificationMethodPublicKey(vm))) throw new PresentationRequestError('Request object signature is invalid', 'invalid_client');
     checks.push({ label: 'Request signature', ok: true, detail: `signed by ${header.kid}` });

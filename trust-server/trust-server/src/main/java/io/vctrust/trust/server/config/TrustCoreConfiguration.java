@@ -18,14 +18,18 @@ import io.vctrust.trust.core.spi.SourceContext;
 import io.vctrust.trust.core.spi.SourceDefinition;
 import io.vctrust.trust.core.spi.TrustSource;
 import io.vctrust.trust.core.spi.TrustSourceFactory;
+import io.vctrust.trust.core.x509.RevocationChecker;
 import io.vctrust.trust.core.x509.X509PathValidator;
 import io.vctrust.trust.server.http.SafeHttpFetcher;
 import io.vctrust.trust.server.http.TrustResourceLoader;
 import io.vctrust.trust.server.managed.ManagedEntityStore;
 import io.vctrust.trust.server.managed.ManagedSourceFactory;
 import io.vctrust.trust.server.security.ClientRegistry;
+import io.vctrust.trust.server.service.CrlService;
 import io.vctrust.trust.server.service.DidService;
 import io.vctrust.trust.server.service.MetadataService;
+import io.vctrust.trust.server.service.OcspClient;
+import io.vctrust.trust.server.service.StatusListRelay;
 import io.vctrust.trust.server.service.SnapshotService;
 import io.vctrust.trust.server.service.TrqpService;
 import io.vctrust.trust.server.signing.ServiceKeyManager;
@@ -154,9 +158,30 @@ public class TrustCoreConfiguration {
         return new X509PathValidator();
     }
 
+    @Bean(destroyMethod = "close")
+    CrlService crlService(TrustRegistry registry, HttpFetcher http, TrustProperties props, Clock clock) {
+        return new CrlService(registry, http, props.getRevocation(), clock);
+    }
+
+    @Bean
+    OcspClient ocspClient(HttpFetcher http, Clock clock) {
+        return new OcspClient(http, clock);
+    }
+
+    /** CRLs from the trust list and distribution points; OCSP only when enabled (server-side decisions). */
+    @Bean
+    RevocationChecker revocationChecker(CrlService crls, OcspClient ocsp, TrustProperties props) {
+        return new RevocationChecker(crls, props.getRevocation().isOcsp() ? ocsp : null, "trust-service");
+    }
+
+    @Bean
+    StatusListRelay statusListRelay(HttpFetcher http, TrustProperties props, Clock clock) {
+        return new StatusListRelay(http, props.getRevocation(), clock);
+    }
+
     @Bean
     TrustEvaluator trustEvaluator(TrustRegistry registry, TrustSourceManager manager, DidService didService,
-                                  X509PathValidator validator, Clock clock, TrustProperties props) {
+                                  X509PathValidator validator, Clock clock, TrustProperties props, RevocationChecker revocation) {
         // The evaluator resolves DIDs through the cached service.
         DidResolver cached = new DidResolver(List.of()) {
             @Override
@@ -164,7 +189,8 @@ public class TrustCoreConfiguration {
                 return didService.resolve(did);
             }
         };
-        return new TrustEvaluator(registry, manager, cached, validator, clock, props.getService().getDecisionTtl());
+        return new TrustEvaluator(registry, manager, cached, validator, clock, props.getService().getDecisionTtl(),
+                props.getRevocation().isEnabled() ? revocation : null);
     }
 
     @Bean
@@ -185,8 +211,12 @@ public class TrustCoreConfiguration {
     }
 
     @Bean
-    SnapshotService snapshotService(TrustRegistry registry, ServiceKeyManager keys, JsonMapper mapper, TrustProperties props) {
-        return new SnapshotService(registry, keys, mapper, props.getService().getSnapshotTtl());
+    SnapshotService snapshotService(TrustRegistry registry, ServiceKeyManager keys, JsonMapper mapper, DidService dids,
+                                    CrlService crls, TrustProperties props, Clock clock) {
+        TrustProperties.Service s = props.getService();
+        return new SnapshotService(registry, keys, mapper, dids, props.getRevocation().isEnabled() ? crls : null,
+                new SnapshotService.Options(s.getSnapshotTtl(), s.isSnapshotDidDocuments(), s.getSnapshotMaxDidDocuments(),
+                        s.getSnapshotDidDeadline(), props.getRevocation().getSnapshotMaxCrlBytes()), clock);
     }
 
     @Bean

@@ -3,7 +3,7 @@
  * with MOSIP's registered client and Mimoto token proxy expressed as an issuer client registration.
  */
 import { describe, expect, it } from 'vitest';
-import { createTrustClient } from '@vctrust/trust-client';
+import { liveTrust } from './live-trust.js';
 import { Oid4vciClient, SoftwareKeyStore, type IssuerClientRegistration } from '../src/index.js';
 // Headless eSignet OTP login (Playwright) from tools/mosip-issuance
 // @ts-expect-error untyped helper script
@@ -19,8 +19,9 @@ const registrations = {
 };
 const log = (s: string) => process.stderr.write(`${s}\n`);
 
+const trust = await liveTrust();
+
 describe('MOSIP collab (W3C VCDM 2.0 JSON-LD, mDL)', () => {
-  const trust = createTrustClient({ baseUrl: process.env.TRUST_URL ?? 'http://localhost:8090', apiKey: 'demo-wallet-key', clientId: 'demo-wallet' });
   const client = new Oid4vciClient({ trust, keyStore: new SoftwareKeyStore(), redirectUri: REDIRECT, registrations });
 
   for (const [issuer, config, expectValid] of [

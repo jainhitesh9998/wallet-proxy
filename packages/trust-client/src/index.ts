@@ -1,10 +1,13 @@
 export { TrustClient, createTrustClient } from './client.js';
-export type { TrustClientConfig, LocalAnchorConfig, Logger, CredentialTrustResult } from './client.js';
+export type { TrustClientConfig, LocalAnchorConfig, Logger, CredentialTrustResult, DecisionMode, LookupPolicy, SnapshotInfo, FetchedStatusList } from './client.js';
 export * from './types.js';
 export { TrustServiceError, TrustServiceUnavailableError, TrustIntegrityError } from './errors.js';
 export { MemoryCacheStore, KeyValueCacheStore, ExpiringCache } from './cache/store.js';
 export type { CacheStore, KeyValueStorage } from './cache/store.js';
-export type { ServiceKeyPolicy, SnapshotData } from './snapshot/snapshot.js';
+export type { ServiceKeyPolicy, SnapshotData, SnapshotPolicy } from './snapshot/snapshot.js';
+export { snapshotRef } from './snapshot/snapshot.js';
+export { LocalEvaluator, validateChainOnDevice } from './evaluation/local.js';
+export type { LocalTrustData, CrlFetchResult, CrlFetcher } from './evaluation/local.js';
 export { CircuitBreaker } from './transport/circuit.js';
 
 // Building blocks reused by wallets and verifiers.
@@ -13,7 +16,12 @@ export type { IssuerInfo, CoseSign1 } from './credential/extract.js';
 export { parseCertificate } from './x509/certificate.js';
 export type { Certificate } from './x509/certificate.js';
 export { validateCertificateChain } from './x509/validate.js';
-export type { LocalAnchor } from './x509/validate.js';
+export type { LocalAnchor, ValidateOptions } from './x509/validate.js';
+export { parseCrl, normalizeSerial, CRL_REASONS } from './x509/crl.js';
+export type { Crl, CrlEntry } from './x509/crl.js';
+export { checkRevocation, crlUrlsToFetch } from './x509/revocation.js';
+export type { HeldCrl, RevocationOptions } from './x509/revocation.js';
+export { verifyX509Signature } from './x509/signature.js';
 export { decodeJws, verifyJws, x5cFromHeader, toPublicKey } from './jose/jws.js';
 export type { DecodedJws } from './jose/jws.js';
 export { verifySignature, coseAlgToJose } from './crypto/verify.js';
@@ -26,5 +34,7 @@ export { verificationMethodPublicKey, verificationMethodJwk, samePublicKey, publ
 export { base58Encode, base58Decode, writeVarint, MULTICODEC } from './did/multibase.js';
 export { resolveDidLocally } from './did/resolver.js';
 export { fetchIssuerMetadata, fetchAuthorizationServerMetadata, wellKnownInserted } from './metadata/issuer.js';
+export type { RegistryMetadataPolicy } from './metadata/issuer.js';
+export { applyMetadataPolicy, MetadataPolicyError } from './metadata/policy.js';
 export * as cbor from './encoding/cbor.js';
 export * as bytes from './util/bytes.js';

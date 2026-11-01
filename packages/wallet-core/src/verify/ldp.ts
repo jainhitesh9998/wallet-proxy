@@ -51,7 +51,8 @@ export async function verifyLdpVc(vcIn: Record<string, unknown> | string, opts: 
     try {
       // 1. Resolve the verification method
       const vmDid = vmId.split('#')[0]!;
-      const resolved = opts.trust ? await opts.trust.resolveDid(vmDid) : null;
+      // The full DID URL lets the trust client skip a cached/snapshot document that lacks this (rotated) key.
+      const resolved = opts.trust ? await opts.trust.resolveDid(vmId) : null;
       if (!resolved?.didDocument) throw new Error(`Cannot resolve ${vmDid}: ${resolved ? didError(resolved) : 'no resolver'}`);
       const vm = findVerificationMethod(resolved.didDocument, vmId);
       if (!vm) throw new Error(`Verification method ${vmId} not found in ${vmDid}`);
@@ -125,16 +126,21 @@ export async function verifyLdpVc(vcIn: Record<string, unknown> | string, opts: 
     else checks.fail('ldp.holder', 'Holder binding', `credentialSubject.id ${subjectId} is not this wallet`);
   } else checks.pass('ldp.holder', 'Holder binding', subjectId);
 
-  // Status
+  const trust = opts.trust ? await opts.trust.evaluate(issuerTrustQuery(issuerInfo, opts.credentialIssuer)) : null;
+
+  // Status: the status list credential is itself verified (proof, issuer, purpose) — it may come through a relay.
   const status = vc.credentialStatus as Record<string, unknown> | undefined;
   if (status && opts.checkStatus !== false && (status.type === 'BitstringStatusListEntry' || status.type === 'StatusList2021Entry')) {
-    const s = await checkBitstringStatus(status, f);
+    const s = await checkBitstringStatus(status, { trust: opts.trust, fetch: f, issuer: issuerId, decision: trust, now,
+      verifyListCredential: async (list) => {
+        const r = await verifyLdpVc(list, { trust: opts.trust, fetch: f, documentLoader: loader, now, checkStatus: false });
+        return { ok: r.valid, detail: r.checks.filter((c) => c.status === 'fail' && c.id !== 'issuer.trust').map((c) => c.detail).join('; ') };
+      } });
     if (s.status === 'valid') checks.pass('ldp.status', 'Status', s.detail);
     else if (s.status === 'unknown') checks.warn('ldp.status', 'Status', s.detail);
     else checks.fail('ldp.status', 'Status', `${s.status}: ${s.detail}`);
   }
 
-  const trust = opts.trust ? await opts.trust.evaluate(issuerTrustQuery(issuerInfo, opts.credentialIssuer)) : null;
   const claims = { ...(subject ?? {}) };
   return finish('ldp_vc', checks, issuerInfo, trust, claims, { credentialType: issuerInfo.credentialType,
     validFrom: from || undefined, validUntil: until ? String(until) : undefined });

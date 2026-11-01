@@ -1,11 +1,10 @@
 /** Live OpenID4VCI 1.0 / HAIP issuance against the Animo playground, verified end to end through the trust service. */
 import { describe, expect, it } from 'vitest';
-import { createTrustClient } from '@vctrust/trust-client';
+import { liveTrust } from './live-trust.js';
 import { Oid4vciClient, SoftwareKeyStore } from '../src/index.js';
 import { demoAttester } from './wallet-provider.js';
 
 const PLAYGROUND = 'https://playground.animo.id';
-const TRUST = process.env.TRUST_URL ?? 'http://localhost:8090';
 
 async function offer(id: string, opts: { authorization?: string; dpop?: boolean; walletAttestation?: boolean; keyAttestation?: boolean } = {}) {
   const r = await fetch(`${PLAYGROUND}/api/offers/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
@@ -17,8 +16,9 @@ async function offer(id: string, opts: { authorization?: string; dpop?: boolean;
 
 const log = (s: string) => process.stderr.write(`${s}\n`);
 
+const trust = await liveTrust();
+
 describe('Animo playground (mDL mdoc)', () => {
-  const trust = createTrustClient({ baseUrl: TRUST, apiKey: 'demo-wallet-key', clientId: 'demo-wallet' });
   const wallet = (extra = {}) => new Oid4vciClient({ trust, keyStore: new SoftwareKeyStore(), redirectUri: 'https://wallet.vctrust.dev/cb', ...extra });
 
   for (const [name, flags] of [
@@ -36,6 +36,8 @@ describe('Animo playground (mDL mdoc)', () => {
       for (const c of cred!.report!.checks) log(`  [${c.status}] ${c.label}: ${c.detail ?? ''}`.slice(0, 200));
       expect(cred!.report!.valid).toBe(true);
       expect(cred!.report!.trusted).toBe(true);
+      // Revocation: the Document Signer against the IACA's CRL (https://playground.animo.id/crl).
+      expect(cred!.report!.trust?.evidence?.x509?.revocation?.[0]).toMatchObject({ status: 'GOOD', method: 'crl' });
     }, 60_000);
   }
 

@@ -50,24 +50,51 @@ export default function SettingsScreen({ navigation }: NativeStackScreenProps<Ro
         <ErrorBox message={err} testID="settings-error" />
       </Section>
 
-      <Section title="Fallback and offline snapshot">
-        <Toggle testID="settings-fallback" label="Standards-based fallback" hint="When the trust service is unreachable, use the signed snapshot, cached answers and direct discovery / DID / X.509 validation."
-          value={settings.fallbackEnabled} onChange={(v) => updateSettings({ fallbackEnabled: v })} />
-        <Toggle testID="settings-outage" label="Simulate trust-service outage" hint="Rebuilds the trust client against an unreachable URL. The snapshot store is kept."
+      <Section title="Trust decisions" testID="settings-decisions">
+        <Segmented testID="settings-decision-mode" label="Decide trust" options={['local', 'service'] as const} value={settings.decisions}
+          onChange={(v) => updateSettings({ decisions: v })} />
+        <Text style={[s.hint, { marginBottom: 6 }]}>
+          {settings.decisions === 'local'
+            ? 'On this device, from the signed trust list. The trust service never learns which issuers or verifiers you use.'
+            : 'By the trust service (each issuer and verifier is sent to it). On this device only while it is unreachable.'}
+        </Text>
+        <Segmented testID="settings-lookups" label="Issuer metadata & DIDs" options={['direct', 'service'] as const} value={settings.lookups}
+          onChange={(v) => updateSettings({ lookups: v })} />
+        <Toggle testID="settings-unknown-parties" label="Ask the service about unlisted parties" value={settings.unknownParties}
+          onChange={(v) => updateSettings({ unknownParties: v })}
+          hint="For issuers in registries too large for the trust list (OpenID Federation, EBSI). Sends that party's identifier to the service." />
+        <Segmented testID="settings-crls" label="Other CRLs" options={['direct', 'service', 'none'] as const} value={settings.crls}
+          onChange={(v) => updateSettings({ crls: v })} />
+        <Segmented testID="settings-status-lists" label="Status lists" options={['direct', 'service'] as const} value={settings.statusLists}
+          onChange={(v) => updateSettings({ statusLists: v })} />
+        <Text style={[s.hint, { marginBottom: 6 }]}>
+          Certificates are checked against the CRLs in the trust list. Other CRLs (CAs below a trust anchor) and credential status lists are
+          fetched directly, or through the trust service relay, which hides this device from the issuer but shows the service which list you check.
+          OCSP is never used: it would reveal the exact certificate.
+        </Text>
+        {settings.decisions === 'service' ? (
+          <Toggle testID="settings-fallback" label="Standards-based fallback" hint="When the trust service is unreachable, decide on this device from the trust list, with direct discovery / DID / X.509 validation."
+            value={settings.fallbackEnabled} onChange={(v) => updateSettings({ fallbackEnabled: v })} />
+        ) : null}
+        <Toggle testID="settings-outage" label="Simulate trust-service outage" hint="Rebuilds the trust client against an unreachable URL. The stored trust list is kept."
           value={settings.simulateOutage} onChange={(v) => updateSettings({ simulateOutage: v })} />
-        <View style={{ marginTop: 8 }} testID="snapshot-info">
+      </Section>
+
+      <Section title="Trust list (signed snapshot)">
+        <View testID="snapshot-info">
           {snapshot ? (
             <>
-              <KV k="Snapshot" v={`version ${snapshot.version}${snapshot.stale ? ' (STALE, in grace period)' : ''}`} testID="snapshot-version" />
+              <KV k="Snapshot" v={`version ${snapshot.version}${snapshot.stale ? ' (EXPIRED, in grace period)' : ''}`} testID="snapshot-version" />
               <KV k="Issued" v={shortDate(snapshot.issuedAt)} />
               <KV k="Expires" v={shortDate(snapshot.expiresAt)} testID="snapshot-expiry" />
-              <KV k="Contents" v={`${snapshot.entities} entities, ${snapshot.anchors} trust anchors`} />
+              <KV k="Contents" v={`${snapshot.entities} entities, ${snapshot.anchors} trust anchors, ${snapshot.didDocuments} DID documents, ${snapshot.crls} CRLs`} testID="snapshot-contents" />
+              <KV k="Policy" v={`${snapshot.strictAuthorization ? 'strict' : 'lenient'} authorization, revocation status ${snapshot.requireRevocationStatus ? 'required' : 'checked when available'}`} />
             </>
-          ) : <Text testID="snapshot-none" style={s.hint}>No offline snapshot stored yet.</Text>}
+          ) : <Text testID="snapshot-none" style={s.hint}>No trust list stored yet.</Text>}
         </View>
-        <Button testID="settings-sync-snapshot" title="Sync offline snapshot" kind="secondary" busy={busy === 'sync'} style={{ marginTop: 8 }}
-          onPress={() => run('sync', async () => { const i = await syncSnapshot(); return i ? `Snapshot version ${i.version} verified and stored.` : 'No snapshot.'; })} />
-        {status === 'offline' ? <Info message="The trust service is offline, so syncing will fail; decisions use the stored snapshot." /> : null}
+        <Button testID="settings-sync-snapshot" title="Sync trust list" kind="secondary" busy={busy === 'sync'} style={{ marginTop: 8 }}
+          onPress={() => run('sync', async () => { const i = await syncSnapshot(); return i ? `Trust list version ${i.version} verified and stored.` : 'No trust list.'; })} />
+        {status === 'offline' ? <Info message="The trust service is offline, so syncing will fail; decisions use the stored trust list." /> : null}
       </Section>
 
       <Section title="HAIP">

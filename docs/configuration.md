@@ -9,7 +9,9 @@ mechanism can override them: environment variables, `--trust.service.issuer=...`
 | --- | --- | --- |
 | `trust.service.issuer` | `http://localhost:8090` | Service identifier; `iss` of signed responses and snapshots |
 | `trust.service.signing-key-file` | `./data/signing-key.jwk` | ES256 key; generated on first start. Clients pin its thumbprint (`/.well-known/trust-service`) |
-| `trust.service.decision-ttl` / `snapshot-ttl` / `signed-response-ttl` | 1h / 24h / 10m | Validity of decisions, snapshots and signed responses |
+| `trust.service.decision-ttl` / `snapshot-ttl` / `signed-response-ttl` | 1h / 24h / 10m | Validity of decisions, snapshots and signed responses. Snapshots are re-signed after half their TTL |
+| `trust.service.snapshot-did-documents` | `true` | Embed the DID documents of registered DID identifiers in snapshots, so clients verify without resolving |
+| `trust.service.snapshot-max-did-documents` / `snapshot-did-deadline` | 200 / 5s | Bounds on that resolution; documents not ready in time are left out (clients resolve them) |
 | `trust.http.connect-timeout` / `read-timeout` | 5s / 15s | Outbound HTTP timeouts |
 | `trust.http.max-response-bytes` | 8 MiB | Cap on fetched documents |
 | `trust.http.allow-private-networks` | `false` | Allow fetching private / loopback addresses (development only) |
@@ -22,7 +24,24 @@ mechanism can override them: environment variables, `--trust.service.issuer=...`
 | `trust.did.universal-resolver-url` / `universal-resolver-methods` | `https://dev.uniresolver.io` / `["*"]` | Fallback resolver for other methods (the public instance is rate-limited) |
 | `trust.cors-origins` | `["*"]` | CORS origins for `/api/**`, `/.well-known/**`, `/1.0/**`, `/trqp/**` |
 
+## Revocation and relays
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `trust.revocation.enabled` | `true` | Fetch the trust anchors' CRLs, check revocation in `/evaluate` and `/x509/validate`, ship current anchor CRLs in snapshots |
+| `trust.revocation.refresh` | 1h | Anchor CRLs are re-fetched at the earlier of this and their `nextUpdate` |
+| `trust.revocation.max-crl-bytes` / `snapshot-max-crl-bytes` | 1 MiB / 256 KiB | Cap on a fetched CRL / on a CRL embedded in a snapshot (larger ones are fetched by clients per `lookups.crl`) |
+| `trust.revocation.fetch-on-demand` | `true` | Server-side checks fetch the CRL distribution points of CAs below an anchor |
+| `trust.revocation.ocsp` | `false` | OCSP for certificates without CRL coverage, in the service's own decisions only (verifier backends). Devices never use OCSP |
+| `trust.revocation.relay-crls` | `true` | `GET /api/v1/revocation/crl?url=`: CRL relay (CA-signed, verified by the client) |
+| `trust.revocation.relay-status-lists` | `true` | `GET /api/v1/revocation/status-list?uri=`: status list relay (issuer-signed, verified by the client) |
+| `trust.revocation.status-list-default-ttl` / `status-list-max-ttl` | 5m / 1h | Relay caching: upstream `max-age` clamped to the max, `no-store` honoured, the default without a header |
+| `trust.revocation.max-status-list-bytes` | 2 MiB | Cap on a relayed status list |
+
 ## Clients (who may ask, and what they see)
+
+A client profile scopes both the service's own decisions and the snapshot the client decides from. The snapshot
+carries `policy: {frameworks, strictAuthorization, requireRevocationStatus}`, so the client applies the same profile on its device.
 
 ```yaml
 trust:
@@ -32,6 +51,7 @@ trust:
       api-key: demo-wallet-key                         # Authorization: Bearer <key> or X-API-Key
       frameworks: [animo-playground, mosip-collab]      # only these frameworks are visible / trusted
       strict-authorization: false                       # true: entities without authorizations are not authorized
+      require-revocation-status: false                  # true: a certificate whose revocation status is unknown is not trusted
       allow-unregistered-metadata: true                 # false: the metadata proxy serves only registered issuers
       admin: false                                      # true: may use /admin/v1/**
 ```
@@ -92,6 +112,8 @@ anchors:
     constraints:
       docTypes: [org.iso.18013.5.1.mDL]  # restricts the doctypes this IACA may sign
       relaxProfile: true                 # turn certificate-profile errors into warnings (sandbox issuers only)
+      crlUrls: ["https://pki.example/iaca.crl"]   # where this CA publishes its CRL (default for a self-issued anchor: its own CRL DP)
+      crl: "<PEM or base64 DER>"         # or a CRL pushed by the operator (e.g. through the admin API); verified against the anchor
 ```
 
 ## Adding a new trust-list format
@@ -102,3 +124,15 @@ anchors:
 2. Implement `OnDemandResolver` too if the registry is too large to enumerate.
 3. Register the factory in `META-INF/services/io.vctrust.trust.core.spi.TrustSourceFactory`, or expose it as a Spring bean.
 4. Reference it from `trust.sources[].type`.
+
+## Client library modes
+
+Wallets use the TypeScript client in its default `decisions: 'local'` mode. It downloads the signed snapshot for its API key and evaluates trust on the device. It never calls `/evaluate`.
+- Set `serviceKeys.thumbprints` to the `signing_key_thumbprint` from `/.well-known/trust-service`.
+- `lookups` controls the calls that would tell the service which party a user deals with:
+  - `metadata` and `did`: `'direct'` (default) or `'service'`;
+  - `unknownParties`: on-demand registry lookups, off by default;
+  - `crl`: CRLs the snapshot does not carry, `'direct'` (default), `'service'` (relay) or `'none'`;
+  - `statusLists`: `'direct'` (default) or `'service'` (relay).
+
+Verifier backends and thin clients can use `decisions: 'service'`. See `packages/trust-client/README.md`.

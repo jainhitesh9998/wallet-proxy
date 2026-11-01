@@ -1,13 +1,14 @@
 /**
- * Local RFC 5280-style path validation used when the trust service is unreachable. Mirrors the server's
+ * Local RFC 5280-style path validation for device-side trust decisions. Mirrors the server's
  * semantics: chains may include or omit the anchor, a pinned end-entity certificate is accepted directly,
- * profile checks per trust domain, {@code relaxProfile} and {@code docTypes} anchor constraints.
+ * profile checks per trust domain, {@code relaxProfile} and {@code docTypes} anchor constraints, and — when CRLs are
+ * supplied — revocation of every certificate below the anchor.
  */
-import { decodeOid, OID, parseCertificate, subjectCountry, type Certificate } from './certificate.js';
-import { readTlv } from '../encoding/der.js';
-import { verifySignature, type JoseAlg } from '../crypto/verify.js';
+import { OID, parseCertificate, subjectCountry, type Certificate } from './certificate.js';
+import { verifyX509Signature } from './signature.js';
+import { checkRevocation, type RevocationOptions } from './revocation.js';
 import { base64Encode, bytesEqual } from '../util/bytes.js';
-import type { CertificateSummary, PathValidationResult, ValidationIssue } from '../types.js';
+import type { CertificateRevocation, CertificateSummary, PathValidationResult, ValidationIssue } from '../types.js';
 
 export interface LocalAnchor {
   certificate: Certificate;
@@ -17,6 +18,8 @@ export interface LocalAnchor {
   entityId?: string;
   status?: string;
   constraints?: Record<string, unknown>;
+  /** where the anchor was published (matched by DCQL trusted_authorities of type etsi_tl / openid_federation) */
+  provenance?: { sourceId?: string; sourceUri?: string };
 }
 
 export interface ValidateOptions {
@@ -25,6 +28,8 @@ export interface ValidateOptions {
   domain?: string;
   expectedDnsName?: string;
   docType?: string;
+  /** check revocation against these CRLs (a directly pinned certificate is not checked: it is an anchor) */
+  revocation?: RevocationOptions;
 }
 
 const KNOWN_CRITICAL = new Set([OID.basicConstraints, OID.keyUsage, OID.extKeyUsage, OID.subjectAltName, '2.5.29.32', OID.issuerAltName]);
@@ -38,48 +43,8 @@ export function summarize(c: Certificate): CertificateSummary {
   };
 }
 
-function sigAlg(c: Certificate): { alg: JoseAlg; format: 'raw' | 'der' } | null {
-  switch (c.signatureAlgorithm) {
-    case '1.2.840.10045.4.3.2': return { alg: 'ES256', format: 'der' };
-    case '1.2.840.10045.4.3.3': return { alg: 'ES384', format: 'der' };
-    case '1.2.840.10045.4.3.4': return { alg: 'ES512', format: 'der' };
-    case '1.3.101.112': return { alg: 'EdDSA', format: 'raw' };
-    case '1.2.840.113549.1.1.11': return { alg: 'RS256', format: 'raw' };
-    case '1.2.840.113549.1.1.12': return { alg: 'RS384', format: 'raw' };
-    case '1.2.840.113549.1.1.13': return { alg: 'RS512', format: 'raw' };
-    case '1.2.840.113549.1.1.10': {
-      const p = c.signatureParams;
-      let hash: JoseAlg = 'PS256';
-      if (p) {
-        const oids = findOids(p);
-        if (oids.includes('2.16.840.1.101.3.4.2.2')) hash = 'PS384';
-        else if (oids.includes('2.16.840.1.101.3.4.2.3')) hash = 'PS512';
-      }
-      return { alg: hash, format: 'raw' };
-    }
-    default: return null;
-  }
-}
-
-function findOids(der: Uint8Array): string[] {
-  const out: string[] = [];
-  const walk = (start: number, end: number) => {
-    let p = start;
-    while (p < end) {
-      const t = readTlv(der, p);
-      if (t.tag === 0x06) out.push(decodeOid(der.subarray(t.valueStart, t.end)));
-      else if (t.tag & 0x20) walk(t.valueStart, t.end);
-      p = t.end;
-    }
-  };
-  try { walk(0, der.length); } catch { /* ignore */ }
-  return out;
-}
-
 export function isSignedBy(cert: Certificate, issuer: Certificate): boolean {
-  const a = sigAlg(cert);
-  if (!a || !issuer.publicKey) return false;
-  return verifySignature(a.alg, issuer.publicKey, cert.tbs, cert.signature, a.format);
+  return verifyX509Signature(cert, issuer.publicKey);
 }
 
 function issuedBy(cert: Certificate, issuer: Certificate): boolean {
@@ -134,7 +99,7 @@ export function validateCertificateChain(chainIn: (Certificate | Uint8Array | st
 
   const pinned = byHash.get(path[0]!.sha256);
   if (pinned && path.length === 1) {
-    return finish([{ code: 'x509.pinned', message: 'Certificate is directly pinned as a trust anchor', severity: 'INFO' }], pinned, path, opts, time, base);
+    return finish([{ code: 'x509.pinned', message: 'Certificate is directly pinned as a trust anchor', severity: 'INFO' }], pinned, path, opts, time, base, false);
   }
   const top = path[path.length - 1]!;
   const candidates = [...(included ? [included] : []), ...anchors.filter((a) => a !== included && issuedBy(top, a.certificate) && isSignedBy(top, a.certificate))];
@@ -145,7 +110,7 @@ export function validateCertificateChain(chainIn: (Certificate | Uint8Array | st
   let last: { issues: ValidationIssue[]; anchor: LocalAnchor } | undefined;
   for (const anchor of candidates) {
     const issues = checkPath(path, anchor, time);
-    if (!issues.some((i) => i.severity === 'ERROR')) return finish(issues, anchor, path, opts, time, base);
+    if (!issues.some((i) => i.severity === 'ERROR')) return finish(issues, anchor, path, opts, time, base, true);
     last = { issues, anchor };
   }
   return { ...base, valid: false, anchorFound: true, anchor: anchorSummary(last!.anchor), anchorRef: last!.anchor, path: summaries, issues: last!.issues };
@@ -176,7 +141,7 @@ function checkPath(path: Certificate[], anchor: LocalAnchor, time: Date): Valida
 }
 
 function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certificate[], opts: ValidateOptions, time: Date,
-                base: { profile: string; validationTime: string }): PathValidationResult & { anchorRef?: LocalAnchor } {
+                base: { profile: string; validationTime: string }, revocable: boolean): PathValidationResult & { anchorRef?: LocalAnchor } {
   const issues = [...pathIssues];
   let prof = profileIssues(opts.domain, path, anchor.certificate, opts);
   if (anchor.constraints?.relaxProfile === true && prof.length > 0) {
@@ -191,8 +156,14 @@ function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certif
   if (time < anchor.certificate.notBefore || time > anchor.certificate.notAfter) {
     if (!issues.some((i) => i.code.startsWith('x509.anchor'))) issues.push({ code: 'x509.anchor_unusable', message: 'Trust anchor is not usable now', severity: 'ERROR' });
   }
+  let revocation: CertificateRevocation[] | undefined;
+  if (opts.revocation && revocable) {
+    const r = checkRevocation(path, anchor.certificate, time, opts.revocation);
+    issues.push(...r.issues);
+    revocation = r.statuses;
+  }
   return { ...base, valid: !issues.some((i) => i.severity === 'ERROR'), anchorFound: true, anchor: anchorSummary(anchor), anchorRef: anchor,
-    path: path.map(summarize), issues };
+    path: path.map(summarize), issues, ...(revocation ? { revocation } : {}) };
 }
 
 function anchorSummary(a: LocalAnchor): Record<string, unknown> {

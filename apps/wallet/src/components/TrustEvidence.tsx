@@ -1,9 +1,9 @@
 /** Full trust evidence of a TrustDecision: decision, summary, source, framework, entity, reasons, X.509 path or DID. */
 import React from 'react';
 import { Text, View } from 'react-native';
-import type { TrustDecision } from '@vctrust/trust-client';
+import type { CertificateRevocation, TrustDecision } from '@vctrust/trust-client';
 import { pickLocale, shortDate } from '../wallet/display';
-import { colors, KV, s, Section, TrustLine } from './ui';
+import { colors, decisionSourceLabel, KV, s, Section, TrustLine } from './ui';
 
 export function TrustEvidence({ trust, title = 'Trust evidence', testIDPrefix = 'evidence' }: { trust?: TrustDecision | null; title?: string; testIDPrefix?: string }) {
   if (!trust) return <Section title={title}><Text style={s.hint}>Issuer trust was not evaluated.</Text></Section>;
@@ -13,7 +13,7 @@ export function TrustEvidence({ trust, title = 'Trust evidence', testIDPrefix = 
     <Section title={title} testID={testIDPrefix}>
       <TrustLine trust={trust} testIDPrefix={testIDPrefix} />
       <View style={{ marginTop: 8 }}>
-        <KV k="Source" v={trust.source} testID={`${testIDPrefix}-source-text`} />
+        <KV k="Decided by" v={`${decisionSourceLabel(trust)}${trust.snapshot ? ` (issued ${shortDate(trust.snapshot.issuedAt)})` : ''}`} testID={`${testIDPrefix}-source-text`} />
         <KV k="Framework" v={trust.framework ? `${trust.framework.name} (${trust.framework.id})` : '—'} />
         <KV k="Entity" v={entity ? `${pickLocale(entity.display)?.name ?? entity.id} [${entity.id}, ${entity.status}]` : '—'} />
         {entity?.provenance?.sourceId ? <KV k="Registry source" v={`${entity.provenance.sourceId}${entity.provenance.sourceType ? ` (${entity.provenance.sourceType})` : ''}`} /> : null}
@@ -40,7 +40,12 @@ export function TrustEvidence({ trust, title = 'Trust evidence', testIDPrefix = 
               <Text selectable style={s.hint}>   issuer {c.issuer} · until {shortDate(c.notAfter)} · sha256 {c.sha256.slice(0, 16)}…</Text>
             </View>
           ))}
-          {ev.x509.issues.map((x, i) => <Text key={i} style={[s.hint, { color: x.severity === 'ERROR' ? colors.red : colors.amber }]}>[{x.severity}] {x.code}: {x.message}</Text>)}
+          {ev.x509.revocation?.length ? (
+            <View testID={`${testIDPrefix}-revocation`}>
+              {ev.x509.revocation.map((r, i) => <KV key={i} k={`Certificate ${r.index} status`} v={revocationText(r)} testID={`${testIDPrefix}-revocation-${r.index}`} />)}
+            </View>
+          ) : null}
+          {ev.x509.issues.filter((x) => x.severity !== 'INFO').map((x, i) => <Text key={i} style={[s.hint, { color: x.severity === 'ERROR' ? colors.red : colors.amber }]}>[{x.severity}] {x.code}: {x.message}</Text>)}
         </View>
       ) : null}
       {ev.did ? (
@@ -60,4 +65,16 @@ export function TrustEvidence({ trust, title = 'Trust evidence', testIDPrefix = 
       ) : null}
     </Section>
   );
+}
+
+/** e.g. "not revoked · CRL from the trust list, next update 26 Oct 2027" */
+function revocationText(r: CertificateRevocation): string {
+  const where = r.method === 'ocsp' ? 'OCSP' : r.crlUrl ? `CRL ${r.crlUrl}` : 'CRL from the trust list';
+  const via = r.source && r.source !== 'snapshot' ? ` (${r.source})` : '';
+  switch (r.status) {
+    case 'GOOD': return `not revoked · ${where}${via}${r.nextUpdate ? `, next update ${shortDate(r.nextUpdate)}` : ''}`;
+    case 'REVOKED': return `REVOKED ${r.revokedAt ? shortDate(r.revokedAt) : ''} (${r.reason ?? 'unspecified'}) · ${where}${via}`;
+    case 'ON_HOLD': return `ON HOLD since ${r.revokedAt ? shortDate(r.revokedAt) : '?'} · ${where}${via}`;
+    default: return `unknown: ${r.reason ?? 'no revocation information'}`;
+  }
 }

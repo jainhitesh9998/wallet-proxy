@@ -112,17 +112,31 @@ export function DecisionBadge({ decision, testID }: { decision?: Decision | null
 
 export function SourcePill({ source, testID }: { source?: string; testID?: string }) {
   if (!source) return null;
-  const live = source === 'trust-service';
-  return <Pill testID={testID} text={`source: ${source}`} color={live ? colors.primary : colors.amber} bg={live ? '#e8edff' : colors.amberBg} />;
+  // trust-service, the signed trust list and the party itself are normal paths; cache / fallback are degraded ones.
+  const normal = source === 'trust-service' || source === 'snapshot' || source === 'direct';
+  return <Pill testID={testID} text={`source: ${source}`} color={normal ? colors.primary : colors.amber} bg={normal ? '#e8edff' : colors.amberBg} />;
 }
 
-/** Decision + source + summary (and optionally a "valid signature" indicator). */
+/** Who made a trust decision: this device (from which trust list) or the trust service. */
+export function decisionSourceLabel(trust: TrustDecision): string {
+  if (trust.source === 'trust-service') return 'trust service';
+  if (trust.source === 'snapshot') return `device · list v${trust.snapshot?.version ?? '?'}${trust.snapshot?.stale ? ' (expired)' : ''}`;
+  return 'device · no trust list';
+}
+
+export function DecisionSourcePill({ trust, testID }: { trust?: TrustDecision | null; testID?: string }) {
+  if (!trust) return null;
+  const normal = trust.source === 'trust-service' || (trust.source === 'snapshot' && !trust.snapshot?.stale);
+  return <Pill testID={testID} text={`decided by: ${decisionSourceLabel(trust)}`} color={normal ? colors.primary : colors.amber} bg={normal ? '#e8edff' : colors.amberBg} />;
+}
+
+/** Decision + who decided + summary (and optionally a "valid signature" indicator). */
 export function TrustLine({ trust, valid, testIDPrefix }: { trust?: TrustDecision | null; valid?: boolean; testIDPrefix: string }) {
   return (
     <View>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         <DecisionBadge decision={trust?.decision} testID={`${testIDPrefix}-decision`} />
-        <SourcePill source={trust?.source} testID={`${testIDPrefix}-source`} />
+        <DecisionSourcePill trust={trust} testID={`${testIDPrefix}-source`} />
         {valid !== undefined ? (
           <Pill testID={`${testIDPrefix}-valid`} text={valid ? '✓ valid signature' : '✗ invalid'} color={valid ? colors.green : colors.red} bg={valid ? colors.greenBg : colors.redBg} />
         ) : null}

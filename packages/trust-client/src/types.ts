@@ -3,10 +3,17 @@ import type { Jwk } from './crypto/keys.js';
 
 export type Decision = 'TRUSTED' | 'NOT_TRUSTED' | 'UNKNOWN';
 export type Severity = 'ERROR' | 'WARNING' | 'INFO';
-/** Where a result came from: the service, the verified offline snapshot, or standard local mechanisms. */
+/**
+ * Who made a trust decision: the trust service ('service' mode), or this device from the verified trust snapshot
+ * ('snapshot'), or this device with only app-bundled anchors because no usable snapshot exists ('fallback').
+ */
 export type DecisionSource = 'trust-service' | 'snapshot' | 'fallback';
-export type DataSource = 'trust-service' | 'cache' | 'fallback';
-export type Role = 'issuer' | 'verifier' | 'wallet_provider' | 'authorization_server';
+/**
+ * Where data (metadata, DID documents) came from: the service, the local cache, the trust snapshot, the party
+ * itself by standard means as the normal path ('direct'), or by standard means because the service was down ('fallback').
+ */
+export type DataSource = 'trust-service' | 'cache' | 'snapshot' | 'direct' | 'fallback';
+export type Role = 'issuer' | 'verifier' | 'wallet_provider' | 'authorization_server' | 'status_list_provider';
 
 export interface ValidationIssue {
   code: string;
@@ -37,6 +44,28 @@ export interface PathValidationResult {
   issues: ValidationIssue[];
   profile: string;
   validationTime: string;
+  /** revocation status of each certificate below the anchor (absent or empty when not checked) */
+  revocation?: CertificateRevocation[];
+}
+
+/** Revocation status of one certificate of a validated path (issue codes x509.not_revoked / revoked / on_hold / revocation_unknown). */
+export interface CertificateRevocation {
+  /** position in the validated path, leaf = 0 */
+  index: number;
+  /** lowercase hex, no leading zeros */
+  serialNumber: string;
+  subject: string;
+  status: 'GOOD' | 'REVOKED' | 'ON_HOLD' | 'UNKNOWN';
+  /** CRL reason name when revoked; why, when unknown */
+  reason?: string | null;
+  revokedAt?: string | null;
+  /** 'crl' (device and service) or 'ocsp' (service only, when enabled there) */
+  method?: 'crl' | 'ocsp' | null;
+  crlUrl?: string | null;
+  /** where the CRL came from: 'snapshot', 'cache', 'direct', 'trust-service' */
+  source?: string | null;
+  thisUpdate?: string | null;
+  nextUpdate?: string | null;
 }
 
 export interface Identifier {
@@ -71,6 +100,8 @@ export interface EntityView {
   attributes?: Record<string, unknown>;
   provenance?: { sourceId?: string; sourceType?: string; frameworkId?: string; sourceUri?: string; retrievedAt?: string };
   metadataTypes?: string[];
+  /** Registry metadata policy (snapshot only), applied to directly fetched metadata. */
+  metadataPolicy?: Record<string, Record<string, unknown>>;
 }
 
 export interface TrustFramework {
@@ -117,6 +148,16 @@ export interface TrustDecision {
   evaluatedAt: string;
   validUntil: string;
   source: DecisionSource;
+  /** The trust snapshot a device-side decision was made from. */
+  snapshot?: SnapshotRef | null;
+}
+
+export interface SnapshotRef {
+  version: number;
+  issuedAt: string;
+  expiresAt: string;
+  /** past its expiry, within the allowed grace period */
+  stale: boolean;
 }
 
 export interface TrustedAuthorityQuery {

@@ -66,7 +66,7 @@ public class TrqpService {
         }
         Instant time = context.get("time") instanceof String t ? Instant.parse(t) : null;
         ClientProfile scoped = new ClientProfile(client.clientId(), client.name(), Set.of(fw.id()),
-                client.strictAuthorization(), client.allowUnregisteredMetadata(), client.admin());
+                client.strictAuthorization(), client.allowUnregisteredMetadata(), client.admin(), client.requireRevocationStatus());
         TrustDecision d = evaluator.evaluate(new TrustQuery(role, new TrustQuery.Subject(entityId, null, null, null),
                 new TrustQuery.Context("trqp", format, type, time, null, null)), scoped);
         Map<String, Object> out = response(entityId, authorityId, action, resource, context, time);

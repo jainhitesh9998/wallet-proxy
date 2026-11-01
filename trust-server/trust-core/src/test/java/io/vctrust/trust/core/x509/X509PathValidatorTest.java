@@ -92,10 +92,10 @@ class X509PathValidatorTest {
         var leaf = TestPki.leaf("CN=Verifier,C=UT", ca, List.of("verifier.example"), null);
         var ok = validator.validate(List.of(leaf.certificate()), List.of(anchor(ca, TrustDomain.VERIFIER_ACCESS)),
                 new X509PathValidator.Options(Instant.now(), CertificateProfiles.VERIFIER_ACCESS,
-                        new CertificateProfile.ProfileContext("verifier.example", null), false));
+                        new CertificateProfile.ProfileContext("verifier.example", null), null));
         var bad = validator.validate(List.of(leaf.certificate()), List.of(anchor(ca, TrustDomain.VERIFIER_ACCESS)),
                 new X509PathValidator.Options(Instant.now(), CertificateProfiles.VERIFIER_ACCESS,
-                        new CertificateProfile.ProfileContext("evil.example", null), false));
+                        new CertificateProfile.ProfileContext("evil.example", null), null));
         assertThat(ok.valid()).isTrue();
         assertThat(bad.valid()).isFalse();
         assertThat(bad.issues()).extracting(ValidationIssue::code).contains("verifier.san_dns");
@@ -117,9 +117,9 @@ class X509PathValidatorTest {
         var constrained = new TrustAnchor(null, TrustDomain.MDOC_IACA, iaca.certificate(), "fw", null, null,
                 java.util.Map.of("docTypes", List.of("org.iso.18013.5.1.mDL")), null);
         var ok = validator.validate(List.of(ds.certificate()), List.of(constrained), new X509PathValidator.Options(
-                Instant.now(), CertificateProfiles.MDOC_DOCUMENT_SIGNER, new CertificateProfile.ProfileContext(null, "org.iso.18013.5.1.mDL"), false));
+                Instant.now(), CertificateProfiles.MDOC_DOCUMENT_SIGNER, new CertificateProfile.ProfileContext(null, "org.iso.18013.5.1.mDL"), null));
         var bad = validator.validate(List.of(ds.certificate()), List.of(constrained), new X509PathValidator.Options(
-                Instant.now(), CertificateProfiles.MDOC_DOCUMENT_SIGNER, new CertificateProfile.ProfileContext(null, "eu.europa.ec.eudi.pid.1"), false));
+                Instant.now(), CertificateProfiles.MDOC_DOCUMENT_SIGNER, new CertificateProfile.ProfileContext(null, "eu.europa.ec.eudi.pid.1"), null));
         assertThat(ok.valid()).isTrue();
         assertThat(bad.valid()).isFalse();
     }

@@ -8,7 +8,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { createTrustClient, KeyValueCacheStore, type ServiceStatus, type TrustClient } from '@vctrust/trust-client';
+import { createTrustClient, KeyValueCacheStore, type ServiceStatus, type SnapshotInfo, type TrustClient } from '@vctrust/trust-client';
 import { KeyValueCredentialStore, SoftwareKey, SoftwareKeyStore, Wallet, WalletAttester, type StoredCredential, type SigningKey } from '@vctrust/wallet-core';
 import { Platform } from 'react-native';
 import * as Linking from 'expo-linking';
@@ -17,14 +17,7 @@ import { WALLET_PROVIDER_SIGNER_JWK, WALLET_PROVIDER_X5C } from '../config/walle
 import { createAppFetch } from './net';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, SETTINGS_KEY, type Settings } from './settings';
 
-export interface SnapshotInfo {
-  version: number;
-  issuedAt: string;
-  expiresAt: string;
-  stale: boolean;
-  entities: number;
-  anchors: number;
-}
+export type { SnapshotInfo };
 
 interface WalletState {
   ready: boolean;
@@ -81,6 +74,9 @@ function build(s: Settings, wiKey: SigningKey | undefined, keyStore: SoftwareKey
     cache: trustCache,
     fetch: appFetch,
     timeoutMs: s.simulateOutage ? 1500 : 6000,
+    // Decisions on this device by default: the service only distributes the signed trust list.
+    decisions: s.decisions,
+    lookups: { metadata: s.lookups, did: s.lookups, unknownParties: s.unknownParties, crl: s.crls, statusLists: s.statusLists },
     // Demo: pin the trust service's snapshot signing key on first use (production: ship its JWK thumbprint).
     serviceKeys: { trustOnFirstUse: true },
     fallback: { enabled: s.fallbackEnabled, useSnapshot: true },
@@ -98,11 +94,6 @@ function build(s: Settings, wiKey: SigningKey | undefined, keyStore: SoftwareKey
     dpop: s.dpop, walletAttestation: s.walletAttestation, keyAttestation: s.keyAttestation,
   });
   return { trust, wallet };
-}
-
-function snapshotInfo(d: Awaited<ReturnType<TrustClient['snapshots']['current']>>): SnapshotInfo | null {
-  return d ? { version: d.version, issuedAt: d.issuedAt.toISOString(), expiresAt: d.expiresAt.toISOString(), stale: d.stale,
-    entities: d.entities.length, anchors: d.anchors.length } : null;
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
@@ -123,7 +114,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setCredentials(await walletRef.current.list());
   }, []);
   const refreshSnapshotInfo = useCallback(async () => {
-    const info = snapshotInfo(await trust.snapshots.current().catch(() => null));
+    const info = await trust.snapshotInfo();
     setSnapshot(info);
     return info;
   }, [trust]);
