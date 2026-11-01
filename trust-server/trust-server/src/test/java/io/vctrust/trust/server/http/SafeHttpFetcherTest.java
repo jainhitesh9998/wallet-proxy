@@ -1,0 +1,163 @@
+package io.vctrust.trust.server.http;
+
+import com.sun.net.httpserver.HttpServer;
+import io.vctrust.trust.core.spi.HttpFetcher;
+import io.vctrust.trust.server.config.TrustProperties;
+import org.apache.hc.client5.http.DnsResolver;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class SafeHttpFetcherTest {
+
+    static HttpServer server;
+    static int port;
+    static final AtomicInteger hits = new AtomicInteger();
+
+    /** Every test host answers with the loopback address of the local server, like a rebinding DNS would. */
+    static final DnsResolver LOOPBACK_DNS = new DnsResolver() {
+        @Override
+        public InetAddress[] resolve(String host) throws UnknownHostException {
+            if (Character.isDigit(host.charAt(0))) {
+                return new InetAddress[] {InetAddress.getByName(host)}; // IP literals reach the resolver too
+            }
+            if (!host.endsWith(".test")) {
+                throw new UnknownHostException(host);
+            }
+            return new InetAddress[] {InetAddress.getLoopbackAddress()};
+        }
+
+        @Override
+        public String resolveCanonicalHostname(String host) {
+            return host;
+        }
+    };
+
+    @BeforeAll
+    static void start() throws IOException {
+        server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        port = server.getAddress().getPort();
+        server.createContext("/ok", ex -> {
+            hits.incrementAndGet();
+            byte[] b = "hello".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "text/plain");
+            ex.sendResponseHeaders(200, b.length);
+            ex.getResponseBody().write(b);
+            ex.close();
+        });
+        server.createContext("/to-internal", ex -> {
+            hits.incrementAndGet();
+            ex.getResponseHeaders().add("Location", "http://internal.test:" + port + "/ok");
+            ex.sendResponseHeaders(302, -1);
+            ex.close();
+        });
+        server.createContext("/big", ex -> {
+            hits.incrementAndGet();
+            ex.sendResponseHeaders(200, 0);
+            ex.getResponseBody().write(new byte[4096]);
+            ex.close();
+        });
+        server.start();
+    }
+
+    @AfterAll
+    static void stop() {
+        server.stop(0);
+    }
+
+    @BeforeEach
+    void reset() {
+        hits.set(0);
+    }
+
+    static TrustProperties.Http config(List<String> privateHosts) {
+        TrustProperties.Http http = new TrustProperties.Http();
+        http.setHttpAllowedHosts(List.of("rebind.test", "public.test", "internal.test", "127.0.0.1"));
+        http.setAllowedPrivateHosts(privateHosts);
+        http.setMaxResponseBytes(1024);
+        return http;
+    }
+
+    static URI url(String host, String path) {
+        return URI.create("http://" + host + ":" + port + path);
+    }
+
+    @Test
+    void hostResolvingToAnInternalAddressIsRefusedBeforeConnecting() throws IOException {
+        try (SafeHttpFetcher fetcher = new SafeHttpFetcher(config(List.of()), LOOPBACK_DNS)) {
+            assertThatThrownBy(() -> fetcher.get(url("rebind.test", "/ok"), null))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
+                    .hasMessageContaining("non-public address 127.0.0.1");
+            assertThatThrownBy(() -> fetcher.get(url("127.0.0.1", "/ok"), null))
+                    .isInstanceOf(HttpFetcher.BlockedException.class);
+        }
+        assertThat(hits).hasValue(0);
+    }
+
+    @Test
+    void allowedPrivateHostsMayResolveInternally() throws IOException {
+        try (SafeHttpFetcher fetcher = new SafeHttpFetcher(config(List.of("rebind.test")), LOOPBACK_DNS)) {
+            HttpFetcher.Response r = fetcher.get(url("rebind.test", "/ok"), "text/plain");
+            assertThat(r.status()).isEqualTo(200);
+            assertThat(r.bodyAsString()).isEqualTo("hello");
+            assertThat(r.contentType()).isEqualTo("text/plain");
+        }
+        assertThat(hits).hasValue(1);
+    }
+
+    @Test
+    void redirectToAnInternalAddressIsRefused() throws IOException {
+        try (SafeHttpFetcher fetcher = new SafeHttpFetcher(config(List.of("public.test")), LOOPBACK_DNS)) {
+            assertThatThrownBy(() -> fetcher.get(url("public.test", "/to-internal"), null))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
+                    .hasMessageContaining("internal.test");
+        }
+        assertThat(hits).hasValue(1); // the redirect only; /ok was never reached
+    }
+
+    @Test
+    void oversizeBodyIsRefused() throws IOException {
+        try (SafeHttpFetcher fetcher = new SafeHttpFetcher(config(List.of("public.test")), LOOPBACK_DNS)) {
+            assertThatThrownBy(() -> fetcher.get(url("public.test", "/big"), null))
+                    .isInstanceOf(IOException.class)
+                    .hasMessageContaining("exceeds 1024 bytes");
+        }
+    }
+
+    @Test
+    void onlyHttpsUnlessTheHostIsAllowedPlainHttp() throws IOException {
+        try (SafeHttpFetcher fetcher = new SafeHttpFetcher(config(List.of("other.test")), LOOPBACK_DNS)) {
+            assertThatThrownBy(() -> fetcher.execute(new HttpFetcher.Request("GET", url("other.test", "/ok"), Map.of(), null, null)))
+                    .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
+                    .hasMessageContaining("Only https");
+        }
+        assertThat(hits).hasValue(0);
+    }
+
+    @Test
+    void embeddedAndSpecialAddressesAreInternal() throws UnknownHostException {
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("10.1.2.3"))).isTrue();
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("100.64.0.1"))).isTrue();
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("169.254.169.254"))).isTrue();
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("fd00::1"))).isTrue();
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("64:ff9b::7f00:1"))).isTrue();
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("2002:a00:1::1"))).isTrue();
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("::ffff:192.168.1.1"))).isTrue();
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("93.184.215.14"))).isFalse();
+        assertThat(SafeHttpFetcher.isInternal(InetAddress.getByName("2606:4700::6810:84e5"))).isFalse();
+    }
+}

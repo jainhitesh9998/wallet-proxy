@@ -5,7 +5,7 @@ import type { WalletAttester } from './oauth/attestation.js';
 import { Oid4vciClient, type IssuanceSession, type IssuedCredential, type IssuerClientRegistration } from './oid4vci/client.js';
 import type { CredentialStore, StoredCredential } from './store/credentials.js';
 import { verifyCredential, type VerificationReport } from './verify/index.js';
-import { resolveAuthorizationRequest, type AuthorizationRequest, type VerifierView } from './oid4vp/request.js';
+import { PresentationRequestError, resolveAuthorizationRequest, type AuthorizationRequest, type VerifierView } from './oid4vp/request.js';
 import { evaluateDcql, type DcqlResult } from './oid4vp/dcql.js';
 import { buildVpToken, submitResponse, type PresentationSelection, type SubmitResult } from './oid4vp/present.js';
 
@@ -40,9 +40,18 @@ export class Wallet {
     return this.oid4vci.startFromOffer(offer);
   }
 
+  /** Stores issued credentials, then tells their issuers (credential_accepted, OID4VCI §11). */
   async store(issued: IssuedCredential[]): Promise<StoredCredential[]> {
-    for (const c of issued) await this.opts.credentials.save(c);
+    for (const c of issued) {
+      await this.opts.credentials.save(c);
+      await c.notify?.('credential_accepted');
+    }
     return issued;
+  }
+
+  /** The user declined freshly issued credentials: nothing is stored and the issuers hear credential_deleted. */
+  async discard(issued: IssuedCredential[]): Promise<void> {
+    for (const c of issued) await c.notify?.('credential_deleted', 'Declined by the user');
   }
 
   list(): Promise<StoredCredential[]> {
@@ -79,12 +88,13 @@ export class PresentationSession {
 
   /** Presents the chosen credentials (default: first candidate for every selected query). */
   async respond(choice: Record<string, string> = {}): Promise<SubmitResult> {
+    if (this.verifier.refusal) throw new PresentationRequestError(this.verifier.refusal, 'access_denied');
     if (!this.dcql.satisfied) throw new Error(this.dcql.reason ?? 'Request cannot be satisfied');
     const selection: PresentationSelection = {};
     for (const id of this.dcql.selected) {
       const m = this.dcql.matches.find((x) => x.query.id === id)!;
       const credential = m.candidates.find((c) => c.id === choice[id]) ?? m.candidates[0]!;
-      selection[id] = { credential, claims: m.claims };
+      selection[id] = { credential, claims: m.claimsFor[credential.id] ?? m.claims };
     }
     const vpToken = await buildVpToken(this.request, selection, this.wallet.opts.keyStore, this.wallet.fetchFn);
     return submitResponse(this.request, { vp_token: vpToken }, this.wallet.fetchFn);

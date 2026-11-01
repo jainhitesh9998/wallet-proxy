@@ -6,11 +6,11 @@
  *  - direct_post / direct_post.jwt (ECDH-ES + A128GCM/A256GCM JWE to the verifier's ephemeral key)
  */
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytes, cbor, decodeIssuerSigned, jwkThumbprintBytes, base58Encode, type Jwk } from '@vctrust/trust-client';
+import { bytes, cbor, decodeIssuerSigned, decodeJws, jwkThumbprintBytes, base58Encode, type Jwk } from '@vctrust/trust-client';
 import { nowSeconds, signJwt } from '../crypto/jwt.js';
 import { encryptJwe, type JweEnc } from '../crypto/jwe.js';
 import type { KeyStore, SigningKey } from '../crypto/keys.js';
-import { parseSdJwt, decodeDisclosure } from '../verify/sdjwt.js';
+import { parseSdJwt, decodeDisclosure, type Disclosure } from '../verify/sdjwt.js';
 import { issuerSignedItems } from '../verify/mdoc.js';
 import { canonize, createDocumentLoader } from '../verify/jsonld.js';
 import type { StoredCredential } from '../store/credentials.js';
@@ -22,18 +22,70 @@ function pathsOf(claims: DcqlClaim[]): string[][] {
   return claims.map((c) => c.path.map((p) => String(p)));
 }
 
-/** SD-JWT VC presentation: discloses only what the claims select (all disclosures when no claims requested). */
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const arrayRef = (e: unknown): string | undefined => (isPlainObject(e) && Object.keys(e).length === 1 && typeof e['...'] === 'string' ? e['...'] : undefined);
+
+/**
+ * The disclosures that reveal exactly the claims at the requested DCQL paths (OpenID4VP §6.4, §7): the disclosures
+ * on each path and every disclosure below its leaf. A {@code null} segment selects array elements; with
+ * {@code values}, only the branches whose leaf matches. No claims requested → no disclosures (§6.4.1).
+ */
+export function selectDisclosures(payload: Record<string, unknown>, decoded: Disclosure[], claims: DcqlClaim[]): Disclosure[] {
+  const byDigest = new Map(decoded.map((d) => [d.digest, d]));
+  const subtree = (v: unknown, out: Disclosure[]): Disclosure[] => {
+    if (Array.isArray(v)) {
+      for (const e of v) {
+        const d = byDigest.get(arrayRef(e) ?? '');
+        if (d) { out.push(d); subtree(d.value, out); } else subtree(e, out);
+      }
+    } else if (isPlainObject(v)) {
+      for (const digest of Array.isArray(v._sd) ? v._sd : []) {
+        const d = byDigest.get(String(digest));
+        if (d) { out.push(d); subtree(d.value, out); }
+      }
+      for (const [k, child] of Object.entries(v)) if (k !== '_sd' && k !== '_sd_alg') subtree(child, out);
+    }
+    return out;
+  };
+  /** disclosures needed to reach the matching leaves below {@code v}, or null when nothing matches */
+  const follow = (v: unknown, claim: DcqlClaim, i: number): Disclosure[] | null => {
+    if (i === claim.path.length) return claim.values && !claim.values.some((w) => w === v) ? null : subtree(v, []);
+    const seg = claim.path[i] as string | number | null;
+    if (typeof seg === 'string') {
+      if (!isPlainObject(v)) return null;
+      if (seg in v && seg !== '_sd') return follow(v[seg], claim, i + 1);
+      for (const digest of Array.isArray(v._sd) ? v._sd : []) {
+        const d = byDigest.get(String(digest));
+        if (d?.name === seg) { const below = follow(d.value, claim, i + 1); return below ? [d, ...below] : null; }
+      }
+      return null;
+    }
+    if (!Array.isArray(v)) return null;
+    const found: Disclosure[] = [];
+    let matched = false;
+    for (const idx of seg === null ? v.keys() : [seg]) {
+      const e = v[idx];
+      const d = byDigest.get(arrayRef(e) ?? '');
+      const below = follow(d ? d.value : e, claim, i + 1);
+      if (below) { matched = true; if (d) found.push(d); found.push(...below); }
+    }
+    return matched ? found : null;
+  };
+  const selected = new Set<Disclosure>();
+  for (const c of claims) for (const d of follow(payload, c, 0) ?? []) selected.add(d);
+  return decoded.filter((d) => selected.has(d));
+}
+
+/**
+ * SD-JWT VC presentation: the issuer JWT, the disclosures {@link selectDisclosures} picks, and a KB-JWT
+ * (aud = client_id, nonce, sd_hash) when the credential is holder-bound.
+ */
 export async function presentSdJwt(c: StoredCredential, claims: DcqlClaim[], req: AuthorizationRequest, key: SigningKey, audience = req.clientId): Promise<string> {
   const { issuerJwt, disclosures } = parseSdJwt(String(c.credential));
-  const decoded = disclosures.map(decodeDisclosure);
-  let selected = decoded;
-  if (claims.length) {
-    const wanted = new Set(pathsOf(claims).map((p) => p[0]));
-    const nested = pathsOf(claims).filter((p) => p.length > 1).map((p) => p.slice(1)).flat();
-    // Disclose named members on the requested paths, and every array element / nested member below them.
-    selected = decoded.filter((d) => d.name === undefined || wanted.has(d.name) || nested.includes(d.name));
-  }
-  const sdJwt = `${issuerJwt}~${selected.map((d) => d.raw).join('~')}${selected.length ? '~' : ''}`;
+  const payload = decodeJws<Record<string, unknown>>(issuerJwt).payload;
+  const selected = selectDisclosures(payload, disclosures.map(decodeDisclosure), claims);
+  const sdJwt = `${issuerJwt}~${selected.map((d) => `${d.raw}~`).join('')}`;
+  if (!(payload.cnf as { jwk?: unknown } | undefined)?.jwk) return sdJwt;
   const sdHash = bytes.base64UrlEncode(sha256(bytes.utf8Encode(sdJwt)));
   const kb = await signJwt({ typ: 'kb+jwt' }, { iat: nowSeconds(), aud: audience, nonce: req.nonce, sd_hash: sdHash }, key);
   return sdJwt + kb;
@@ -45,14 +97,14 @@ export function openId4VpHandover(req: AuthorizationRequest, encryptionJwk?: Jwk
   return ['OpenID4VPHandover', sha256(cbor.encode(info))];
 }
 
-/** mdoc DeviceResponse for one document, disclosing the requested data elements. */
+/** mdoc DeviceResponse for one document, disclosing only the requested data elements. */
 export async function presentMdoc(c: StoredCredential, claims: DcqlClaim[], req: AuthorizationRequest, key: SigningKey, encryptionJwk?: Jwk): Promise<string> {
   const { issuerSigned, docType: wrapped } = decodeIssuerSigned(String(c.credential));
   const docType = c.report?.credentialType ?? wrapped ?? '';
   const wanted = new Set(pathsOf(claims).map((p) => `${p[0]}|${p[1]}`));
   const nameSpaces = new Map<string, unknown[]>();
   for (const [ns, items] of issuerSignedItems(issuerSigned)) {
-    const keep = items.filter((i) => !claims.length || wanted.has(`${ns}|${i.elementIdentifier}`)).map((i) => i.tagged);
+    const keep = items.filter((i) => wanted.has(`${ns}|${i.elementIdentifier}`)).map((i) => i.tagged);
     if (keep.length) nameSpaces.set(ns, keep);
   }
   const sessionTranscript = [null, null, openId4VpHandover(req, encryptionJwk)];
@@ -66,7 +118,8 @@ export async function presentMdoc(c: StoredCredential, claims: DcqlClaim[], req:
   const deviceSignature = [protectedBytes, new Map(), null, signature];
   const document = new Map<string, unknown>([
     ['docType', docType],
-    ['issuerSigned', new Map<string, unknown>([['nameSpaces', nameSpaces], ['issuerAuth', cbor.mapGet(issuerSigned, 'issuerAuth')]])],
+    // No requested elements: IssuerSigned without its optional nameSpaces (OpenID4VP §6.4.1).
+    ['issuerSigned', new Map<string, unknown>([...(nameSpaces.size ? [['nameSpaces', nameSpaces] as const] : []), ['issuerAuth', cbor.mapGet(issuerSigned, 'issuerAuth')]])],
     ['deviceSigned', new Map<string, unknown>([['nameSpaces', deviceNameSpacesBytes], ['deviceAuth', new Map([['deviceSignature', deviceSignature]])]])],
   ]);
   const response = new Map<string, unknown>([['version', '1.0'], ['documents', [document]], ['status', 0]]);

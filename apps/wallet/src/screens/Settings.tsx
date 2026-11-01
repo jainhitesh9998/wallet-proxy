@@ -88,7 +88,8 @@ export default function SettingsScreen({ navigation }: NativeStackScreenProps<Ro
               <KV k="Issued" v={shortDate(snapshot.issuedAt)} />
               <KV k="Expires" v={shortDate(snapshot.expiresAt)} testID="snapshot-expiry" />
               <KV k="Contents" v={`${snapshot.entities} entities, ${snapshot.anchors} trust anchors, ${snapshot.didDocuments} DID documents, ${snapshot.crls} CRLs`} testID="snapshot-contents" />
-              <KV k="Policy" v={`${snapshot.strictAuthorization ? 'strict' : 'lenient'} authorization, revocation status ${snapshot.requireRevocationStatus ? 'required' : 'checked when available'}`} />
+              <KV testID="snapshot-policy" k="Policy" v={`${snapshot.strictAuthorization ? 'strict' : 'lenient'} authorization, revocation status ${snapshot.requireRevocationStatus ? 'required' : 'checked when available'}, `
+                + `${snapshot.allowRelaxedProfiles ? 'relaxed anchors honoured' : 'certificate profiles enforced'}${snapshot.requireSignedIssuerMetadata ? ', signed issuer metadata required' : ''}`} />
             </>
           ) : <Text testID="snapshot-none" style={s.hint}>No trust list stored yet.</Text>}
         </View>

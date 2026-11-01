@@ -40,6 +40,13 @@ trust:
   service:
     issuer: http://localhost:8090
     signing-key-file: ./data/signing-key.jwk
+    # Production: a keystore or an HSM, and the retired key's public JWK while clients rotate.
+    # signing-key:
+    #   type: pkcs11                            # or keystore (keystore, keystore-type, password, alias)
+    #   pkcs11-config: /etc/trust/pkcs11.cfg
+    #   pin: ${TRUST_HSM_PIN}
+    #   alias: trust-service-2026
+    #   previous-keys: [/etc/trust/trust-service-2025.pub.jwk]
     decision-ttl: PT1H
     snapshot-ttl: PT24H
   http:
@@ -68,6 +75,19 @@ trust:
   anonymous:
     enabled: true
     frameworks: []
+  auth:
+    api-keys: true                              # the demo clients below use API keys
+    # Production: OAuth 2.0 JWT access tokens and/or TLS client certificates, and a rate limit.
+    # oauth:
+    #   enabled: true
+    #   issuer: https://login.example.com/realms/trust
+    #   jwks-uri: https://login.example.com/realms/trust/protocol/openid-connect/certs
+    #   required-scope: trust.read
+    # mtls:
+    #   enabled: true
+    #   certificate-header: X-SSL-Client-Cert    # set by the TLS-terminating proxy
+    #   trusted-proxies: [10.0.0.0/8]
+    # rate-limit: { enabled: true, requests-per-minute: 600, burst: 100 }
   clients:
     - id: demo-wallet
       name: Demo wallet
@@ -80,6 +100,9 @@ trust:
       strict-authorization: true
       allow-unregistered-metadata: false
       require-revocation-status: true
+      # Certificate profiles are enforced even where an operator relaxed an anchor (e.g. MOSIP's non-ISO mock mDL):
+      # the wallet profile shows such credentials as TRUSTED with warnings, this verifier refuses them.
+      allow-relaxed-profiles: false
     - id: admin
       name: Operator
       api-key: admin-key

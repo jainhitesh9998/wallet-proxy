@@ -19,13 +19,16 @@ import { SnapshotManager, snapshotRef, type ServiceKeyPolicy, type SnapshotData 
 import { LocalEvaluator, type LocalTrustData, normalizeIdentifier, validateChainOnDevice, type CrlFetchResult } from './evaluation/local.js';
 import { fetchWithTimeout, resolveDidLocally } from './did/resolver.js';
 import { didError, findVerificationMethod } from './did/did.js';
-import { fetchIssuerMetadata } from './metadata/issuer.js';
+import { fetchIssuerMetadata, verifySignedMetadata, type SignedMetadataCheck } from './metadata/issuer.js';
+import { applyMetadataPolicy } from './metadata/policy.js';
 import { parseCertificate } from './x509/certificate.js';
 import { type LocalAnchor } from './x509/validate.js';
 import { parseCrl } from './x509/crl.js';
 import type { HeldCrl } from './x509/revocation.js';
 import { base64Decode, base64Encode } from './util/bytes.js';
 import { extractIssuerInfo, issuerTrustQuery, type IssuerInfo } from './credential/extract.js';
+import { checkBitstringStatus, checkTokenStatus, type ListCredentialVerifier, type StatusContext, type StatusResult,
+  type TokenStatusReference } from './status/status.js';
 import { TrustServiceError, TrustServiceUnavailableError } from './errors.js';
 import type { DataSource, DidResolutionResult, EntityFilter, EntityView, IssuerMetadataResult, Page, PathValidationResult,
   ServiceDiscovery, ServiceStatus, ServiceStatusEvent, SnapshotRef, TrustDecision, TrustFramework, TrustQuery, TrustedAuthorityQuery } from './types.js';
@@ -81,6 +84,13 @@ export interface TrustClientConfig {
    * did / crl 'service'. Status lists default to 'direct' in both modes.
    */
   lookups?: LookupPolicy;
+  /**
+   * Signed issuer metadata (OID4VCI §12.2.3): 'off' (default) asks for JSON; 'verify' asks for signed metadata and
+   * uses it when the issuer has it; 'require' refuses issuers without it. A client profile with
+   * requireSignedIssuerMetadata (from the snapshot policy) forces 'require'. Signers must chain to a
+   * 'credential-issuer' anchor and must not be self-signed.
+   */
+  issuerMetadata?: { signed?: 'off' | 'verify' | 'require' };
   fetch?: typeof fetch;
   timeoutMs?: number;
   retries?: number;
@@ -122,6 +132,8 @@ export interface SnapshotInfo extends SnapshotRef {
   crls: number;
   strictAuthorization: boolean;
   requireRevocationStatus: boolean;
+  requireSignedIssuerMetadata: boolean;
+  allowRelaxedProfiles: boolean;
 }
 
 /** A status list as fetched, before verification (it is signed by its issuer and verified by the caller). */
@@ -131,7 +143,13 @@ export interface FetchedStatusList {
   source: DataSource;
 }
 
+/** What a status check needs to know about the credential; the trust client supplies fetching and chain validation. */
+export type StatusCheckOptions = Omit<StatusContext, 'fetchList' | 'validateChain'>;
+
 const ON_DEMAND_TTL_MS = 10 * 60_000;
+
+/** Metadata is cached per signed-metadata rule, so an unsigned copy never satisfies a stricter rule. */
+const metadataKey = (credentialIssuer: string, check?: SignedMetadataCheck) => `md:${check?.mode ?? 'json'}:${credentialIssuer}`;
 
 export class TrustClient {
   readonly decisions: DecisionMode;
@@ -254,7 +272,8 @@ export class TrustClient {
     const s = await this.snapshots.current().catch(() => null);
     return s ? { ...snapshotRef(s), entities: s.entities.length, anchors: s.anchors.length,
       didDocuments: Object.keys(s.didDocuments).length, crls: s.crls.length, strictAuthorization: s.policy.strictAuthorization,
-      requireRevocationStatus: s.policy.requireRevocationStatus } : null;
+      requireRevocationStatus: s.policy.requireRevocationStatus,
+      requireSignedIssuerMetadata: s.policy.requireSignedIssuerMetadata, allowRelaxedProfiles: s.policy.allowRelaxedProfiles } : null;
   }
 
   private async localData(mode: LocalTrustData['mode']): Promise<LocalTrustData> {
@@ -391,13 +410,37 @@ export class TrustClient {
 
   async getIssuerMetadata(credentialIssuer: string): Promise<IssuerMetadataResult> {
     if (this.lookups.metadata === 'direct') return this.metadataDirect(credentialIssuer, 'direct');
+    const check = await this.signedMetadataCheck();
     return this.withFallback<IssuerMetadataResult>(async (t) => {
       const r = await t.request<IssuerMetadataResult>('GET', `/api/v1/issuers/metadata?credential_issuer=${encodeURIComponent(credentialIssuer)}`);
       const result = { ...r.body, source: (r.body.stale ? 'cache' : 'trust-service') as IssuerMetadataResult['source'] };
       if (this.decisions === 'local') result.trust = await this.evaluateIssuerUrl(credentialIssuer);
-      await this.cache.set(`md:${credentialIssuer}`, result, Math.max(60_000, new Date(result.expiresAt).getTime() - Date.now()));
+      if (check && (result.signedMetadata || check.mode === 'require')) {
+        // The proxy is not trusted with signed metadata: verify the issuer's JWT here and use its claims.
+        if (!result.signedMetadata) throw new TrustServiceError(`${credentialIssuer} serves no signed metadata, which this ecosystem requires`, 422, 'signed_metadata_required');
+        const v = await verifySignedMetadata(result.signedMetadata, credentialIssuer, check);
+        const policy = result.trust.entity?.metadataPolicy?.openid_credential_issuer;
+        result.credentialIssuerMetadata = policy ? applyMetadataPolicy(v.metadata, policy) : v.metadata;
+        result.signedMetadataVerified = true;
+      }
+      await this.cache.set(metadataKey(credentialIssuer, check), result, Math.max(60_000, new Date(result.expiresAt).getTime() - Date.now()));
       return result;
     }, () => this.metadataDirect(credentialIssuer, 'fallback'));
+  }
+
+  /** The signed-metadata rule in force: the client profile's (snapshot policy) or this client's configuration. */
+  private async signedMetadataCheck(): Promise<SignedMetadataCheck | undefined> {
+    let mode = this.config.issuerMetadata?.signed ?? 'off';
+    if (this.decisions === 'local' && this.snapshots) {
+      const d = await this.snapshots.current().catch(() => null);
+      if (d?.policy.requireSignedIssuerMetadata) mode = 'require';
+    }
+    if (mode === 'off') return undefined;
+    return { mode, trustSigner: async (x5c) => {
+      const r = await this.validateChain(x5c, 'credential-issuer');
+      return r.valid ? { ok: true, detail: 'credential-issuer anchor' }
+        : { ok: false, detail: r.issues.filter((i) => i.severity === 'ERROR').map((i) => i.message).join('; ') || 'no trusted anchor' };
+    } };
   }
 
   private evaluateIssuerUrl(credentialIssuer: string, mode?: LocalTrustData['mode']): Promise<TrustDecision> {
@@ -410,14 +453,17 @@ export class TrustClient {
    * applied. {@code how}: 'direct' as the configured path, 'fallback' because the service proxy is unreachable.
    */
   private async metadataDirect(credentialIssuer: string, how: 'direct' | 'fallback'): Promise<IssuerMetadataResult> {
-    const key = `md:${credentialIssuer}`;
+    const check = await this.signedMetadataCheck();
+    const key = metadataKey(credentialIssuer, check);
     const cached = await this.cache.get<IssuerMetadataResult>(key);
     const trust = await this.evaluateIssuerUrl(credentialIssuer, how === 'fallback' ? 'outage' : undefined);
     if (cached?.fresh) return { ...cached.value, trust, source: 'cache' };
     try {
-      const md = await fetchIssuerMetadata(credentialIssuer, this.fetchFn, this.config.timeoutMs ?? 8000, trust.entity?.metadataPolicy);
+      const { signedMetadata, signedBy, ...md } = await fetchIssuerMetadata(credentialIssuer, this.fetchFn, this.config.timeoutMs ?? 8000,
+        trust.entity?.metadataPolicy, check);
+      if (signedBy) md.warnings.push(`Signed metadata verified (signer ${signedBy})`);
       const now = new Date();
-      const result: IssuerMetadataResult = { ...md, signedMetadata: null, signedMetadataVerified: null, fetchedAt: now.toISOString(),
+      const result: IssuerMetadataResult = { ...md, signedMetadata: signedMetadata ?? null, signedMetadataVerified: signedMetadata ? true : null, fetchedAt: now.toISOString(),
         expiresAt: new Date(now.getTime() + 300_000).toISOString(), stale: false, entityId: trust.entity?.id ?? null, trust, source: how };
       await this.cache.set(key, result, 300_000);
       return result;
@@ -510,6 +556,44 @@ export class TrustClient {
       const r = await t.request<Uint8Array>('GET', `/api/v1/revocation/status-list?uri=${encodeURIComponent(uri)}`, { accept, binary: true });
       return { body: r.body, contentType: contentType(r.headers), source: 'trust-service' as const };
     }, () => direct('fallback'));
+  }
+
+  /**
+   * Checks a Token Status List reference: {@code status.status_list} of an SD-JWT VC ({@code form: 'jwt'}) or of an
+   * ISO mdoc MSO ({@code form: 'cwt'}). The list is fetched per {@code lookups.statusLists}, verified on this device
+   * (signature, signer, subject, expiry) and reused for its {@code ttl} (5 min without one; at most 1 h, never past
+   * its expiry). Only the list URI leaves the device, never the index.
+   */
+  async checkTokenStatus(ref: TokenStatusReference, opts: StatusCheckOptions & { form?: 'jwt' | 'cwt' } = {}): Promise<StatusResult> {
+    const { form, ...ctx } = opts;
+    return this.statusCheck(ref?.uri, ctx, (c) => checkTokenStatus(ref, c, form));
+  }
+
+  /**
+   * Checks a W3C {@code BitstringStatusListEntry}. The list credential must verify ({@code verifyListCredential},
+   * supplied by the JSON-LD verifier), come from {@code issuer} and carry the entry's purpose; cached like
+   * {@link checkTokenStatus}, with the list's own {@code ttl}.
+   */
+  async checkBitstringStatus(entry: Record<string, unknown>, opts: StatusCheckOptions & { verifyListCredential?: ListCredentialVerifier } = {}): Promise<StatusResult> {
+    const { verifyListCredential, ...ctx } = opts;
+    return this.statusCheck(String(entry?.statusListCredential ?? ''), ctx, (c) => checkBitstringStatus(entry, { ...c, verifyListCredential }));
+  }
+
+  /** Runs a check over the cached list when fresh, else over a fetched one; a list that verified is kept for its ttl. */
+  private async statusCheck(uri: string, opts: StatusCheckOptions, check: (ctx: StatusContext) => Promise<StatusResult>): Promise<StatusResult> {
+    const base = { ...opts, validateChain: (chain: string[], domain: string) => this.validateChain(chain, domain) };
+    const key = `status:${uri}`;
+    const cached = uri ? await this.cache.get<{ body: string; contentType: string }>(key) : null;
+    if (cached?.fresh) {
+      const r = await check({ ...base, fetchList: async () => ({ body: base64Decode(cached.value.body), contentType: cached.value.contentType, source: 'cache' }) });
+      if (r.value !== undefined) return r;
+    }
+    let fetched: FetchedStatusList | undefined;
+    const r = await check({ ...base, fetchList: async (u, accept) => (fetched = await this.fetchStatusList(u, accept)) });
+    if (fetched && r.value !== undefined && (r.ttlMs ?? 0) > 0) {
+      await this.cache.set(key, { body: base64Encode(fetched.body), contentType: fetched.contentType }, r.ttlMs!);
+    }
+    return r;
   }
 
   // ---- DID resolution ----------------------------------------------------------------------------

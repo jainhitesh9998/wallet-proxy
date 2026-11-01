@@ -37,14 +37,36 @@ export interface VerifierView {
   trust: TrustDecision;
   /** Checks done locally on the request object */
   checks: { label: string; ok: boolean; detail?: string }[];
+  /** Why the wallet will not present to this verifier (shown to the user; only a decline can be sent) */
+  refusal?: string;
+}
+
+/** Where an error response may go: the response_uri of an authenticated request (OpenID4VP §8.5). */
+export interface ErrorResponseTarget {
+  responseUri: string;
+  state?: string;
 }
 
 export class PresentationRequestError extends Error {
-  constructor(message: string, readonly code = 'invalid_request') {
+  /**
+   * @param reportTo set when the request was authenticated, so the error may be returned to the verifier — after the
+   *   user has seen it (OpenID4VP §15.9.2): {@link reportPresentationError}
+   */
+  constructor(message: string, readonly code = 'invalid_request', readonly reportTo?: ErrorResponseTarget) {
     super(message);
     this.name = 'PresentationRequestError';
   }
 }
+
+/** Sends an error Authorization Response for a request that failed after it was authenticated (unencrypted, §8.3.1). */
+export async function reportPresentationError(err: PresentationRequestError, f: typeof fetch = fetch): Promise<number> {
+  if (!err.reportTo) throw new Error('This request cannot be answered with an error');
+  const form = new URLSearchParams({ error: err.code, error_description: err.message, ...(err.reportTo.state ? { state: err.reportTo.state } : {}) });
+  const r = await f(err.reportTo.responseUri, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: form.toString() });
+  return r.status;
+}
+
+const SKEW_S = 300;
 
 const PREFIXES = new Set(['redirect_uri', 'x509_san_dns', 'x509_hash', 'decentralized_identifier', 'verifier_attestation', 'openid_federation', 'origin']);
 
@@ -77,6 +99,8 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
   const requestUri = q.get('request_uri');
   let walletNonce: string | undefined;
   if (requestUri || q.get('request')) {
+    // JAR (RFC 9101 §5): client_id accompanies request / request_uri; it must equal the request object's (§5.10.1).
+    if (!queryClientId) throw new PresentationRequestError('client_id is required alongside request_uri / request', 'invalid_request');
     let jwt = q.get('request') ?? '';
     if (requestUri) {
       const method = (q.get('request_uri_method') ?? 'get').toLowerCase();
@@ -94,6 +118,9 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
     if (header.typ !== 'oauth-authz-req+jwt') throw new PresentationRequestError(`Request object typ must be oauth-authz-req+jwt (got ${String(header.typ)})`);
     checks.push({ label: 'Request object type', ok: true, detail: 'oauth-authz-req+jwt' });
     if (walletNonce && raw.wallet_nonce !== walletNonce) throw new PresentationRequestError('wallet_nonce mismatch');
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof raw.exp === 'number' && raw.exp < now - SKEW_S) throw new PresentationRequestError(`Request object expired at ${new Date(raw.exp * 1000).toISOString()}`);
+    if (typeof raw.nbf === 'number' && raw.nbf > now + SKEW_S) throw new PresentationRequestError('Request object is not yet valid');
   } else {
     raw = Object.fromEntries(q.entries());
     for (const k of ['dcql_query', 'client_metadata']) if (typeof raw[k] === 'string') raw[k] = JSON.parse(raw[k] as string);
@@ -131,15 +158,23 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
   } else {
     throw new PresentationRequestError(`Unsupported client identifier prefix ${prefix}`, 'invalid_client');
   }
-  // Request well-formedness
-  if (raw.response_type !== 'vp_token') throw new PresentationRequestError(`Unsupported response_type ${String(raw.response_type)}`, 'unsupported_response_type');
-  if (typeof raw.nonce !== 'string' || !raw.nonce) throw new PresentationRequestError('nonce is required');
-  if (raw.presentation_definition) throw new PresentationRequestError('presentation_definition is not part of OpenID4VP 1.0; use dcql_query');
-  if (!raw.dcql_query) throw new PresentationRequestError('dcql_query is required');
+  // Request well-formedness. The request is authenticated from here on, so errors may be returned to the verifier.
+  const reportTo = responseUri && responseMode.startsWith('direct_post') ? { responseUri, state: raw.state as string | undefined } : undefined;
+  const fail = (message: string, code = 'invalid_request') => new PresentationRequestError(message, code, reportTo);
+  if (raw.response_type !== 'vp_token') throw fail(`Unsupported response_type ${String(raw.response_type)}`, 'unsupported_response_type');
+  if (typeof raw.nonce !== 'string' || !raw.nonce) throw fail('nonce is required');
+  if (raw.presentation_definition) throw fail('presentation_definition is not part of OpenID4VP 1.0; use dcql_query');
+  if (!raw.dcql_query) throw fail('dcql_query is required');
+  if (raw.dcql_query && raw.scope) throw fail('dcql_query and scope must not both be present');
   if (responseMode.startsWith('direct_post') && !responseUri) throw new PresentationRequestError('response_uri is required for direct_post');
-  if (responseUri && raw.redirect_uri) throw new PresentationRequestError('redirect_uri must not be present with response_uri');
-  if (raw.transaction_data) throw new PresentationRequestError('transaction_data is not supported by this wallet', 'invalid_transaction_data');
+  // §8.2: redirect_uri with direct_post MUST be answered with invalid_request.
+  if (responseUri && raw.redirect_uri) throw fail('redirect_uri must not be present with response_uri');
+  // §8.4: a wallet that does not support transaction_data MUST return an error.
+  if (raw.transaction_data) throw fail('transaction_data is not supported by this wallet', 'invalid_transaction_data');
   if (!['direct_post', 'direct_post.jwt'].includes(responseMode)) throw new PresentationRequestError(`Unsupported response_mode ${responseMode}`);
+  if (responseMode === 'direct_post.jwt' && !encryptionKey((raw.client_metadata ?? {}) as Record<string, unknown>)) {
+    throw fail('client_metadata.jwks has no P-256 key with alg ECDH-ES for direct_post.jwt');
+  }
 
   const trustDecision = await trust.evaluateVerifier({ clientId, x5c, kid: header?.kid as string | undefined, responseUri });
   const md = (raw.client_metadata ?? {}) as Record<string, unknown>;
@@ -148,11 +183,24 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
     nonce: String(raw.nonce), state: raw.state as string | undefined, dcqlQuery: raw.dcql_query as DcqlQuery, clientMetadata: md,
     signed: !!jws, x5c, raw,
   };
-  return { request, verifier: { clientId, prefix, trust: trustDecision, checks,
+  return { request, verifier: { clientId, prefix, trust: trustDecision, checks, refusal: verifierRefusal(prefix, trustDecision),
     name: (md.client_name as string | undefined) ?? trustDecision.entity?.display?.[0]?.name, logoUri: md.logo_uri as string | undefined } };
 }
 
+/**
+ * x509_hash / x509_san_dns: the wallet MUST validate the certificate's trust chain (OpenID4VP §5.9.3), so anything but
+ * TRUSTED is refused. Other prefixes: a verifier the trust service says NOT_TRUSTED is refused; UNKNOWN is left to the user.
+ */
+export function verifierRefusal(prefix: string, d: TrustDecision): string | undefined {
+  if (d.decision === 'NOT_TRUSTED') return `The verifier is not trusted: ${d.summary}`;
+  if ((prefix === 'x509_hash' || prefix === 'x509_san_dns') && d.decision !== 'TRUSTED') {
+    return `The verifier's certificate does not chain to a trusted verifier CA: ${d.summary}`;
+  }
+  return undefined;
+}
+
+/** The verifier's response encryption key: every JWK carries alg (§8.3); this wallet does ECDH-ES on P-256. */
 export function encryptionKey(md: Record<string, unknown>): Jwk | undefined {
   const keys = ((md.jwks as { keys?: Jwk[] } | undefined)?.keys ?? []) as Jwk[];
-  return keys.find((k) => k.kty === 'EC' && k.crv === 'P-256' && (!k.use || k.use === 'enc') && (!k.alg || k.alg === 'ECDH-ES'));
+  return keys.find((k) => k.kty === 'EC' && k.crv === 'P-256' && (!k.use || k.use === 'enc') && k.alg === 'ECDH-ES');
 }

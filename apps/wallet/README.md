@@ -14,6 +14,18 @@ npm run cors-proxy                      # only for MOSIP issuers on web: dev-onl
 npm start                               # Expo Go: scan the QR. In Settings, set the trust URL to http://<LAN-IP>:8090
 ```
 
+**Android emulator** (no phone needed; tested on Apple Silicon):
+
+```sh
+../../scripts/android.sh setup          # once: Android SDK, emulator, API 35 image and Expo Go (about 2 GB)
+npm start                               # Metro on :8081 (or keep `npm run web` running: it serves Android too)
+../../scripts/android.sh start          # boots a headless emulator (WINDOW=1 for a window) and opens the wallet
+../../scripts/android.sh open "openid-credential-offer://?credential_offer_uri=…"   # or an openid4vp:// request
+```
+
+The emulator reaches Metro, the trust service and the CORS relay on `localhost` through `adb reverse`, so the default
+trust URL works. Offers and requests arrive as Expo Go deep links (`exp://127.0.0.1:8081/--/receive?offer=…`).
+
 Defaults (Settings):
 - trust service `http://localhost:8090`, API key `demo-wallet-key`, client id `demo-wallet`;
 - **Decide trust: `local`**. Decisions are made on this device from the signed trust list; the service never learns which issuers or verifiers you use.
@@ -21,7 +33,10 @@ Defaults (Settings):
 - HAIP options on `auto`.
 
 The demo wallet-provider key that signs wallet and key attestations is generated into `src/config` by `npm run gen:config`.
-It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, not hardware.
+It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, not hardware. Attestations bind a separate
+instance key per authorization server, so issuers cannot link the user through the attestation. *Simulated
+high-assurance key storage* (off by default) attests `iso_18045_high` for software keys; it exists only to try issuers
+that demand it.
 
 ## Demo script (about 5 minutes)
 
@@ -39,9 +54,10 @@ It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, n
    - On the playground, choose *Verify*, *Driving Licence* (mdoc), response mode `direct_post.jwt`. Copy the `openid4vp://` link.
    - In the wallet, choose *Present* and paste the link. The view shows:
      - the verifier **TRUSTED** (`x509_hash` request checks, verifier-access CA, registry entry);
-     - the requested claims;
+     - the requested claims (only these are disclosed);
      - the matching credential.
    - *Share*. The playground shows the verified presentation.
+   - A verifier whose certificate does not chain to a trusted verifier CA is shown with *Sharing is blocked*; only *Decline* is possible. A request the wallet rejects after authenticating it (for example one with `transaction_data`) offers *Tell the verifier*.
 4. **JSON-LD (VCDM 2.0) from MOSIP**
    - *Receive*, then *From trusted issuers*, then *MOSIP Farmer Registry*, then `FarmerCredential_VCDM2.0`.
    - Sign in with eSignet in the new tab: UIN `2154189532`, OTP `111111`.
@@ -59,12 +75,13 @@ It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, n
 
 ## Limitations
 
-- Device builds were checked by bundling only (`npm run export:android`); no device or simulator was used.
+- Tested on the web (Playwright) and in Expo Go on an Android emulator (API 35, Hermes). iOS was not tested.
+- No Digital Credentials API: presentations use the OpenID4VP redirect flow (`openid4vp://`).
 - MOSIP's registered redirect is Inji's custom scheme:
   - On the web you paste the redirect URL into the wallet.
   - On iOS, Expo Go's auth session catches it.
   - Android needs a development build with the scheme in `app.json`.
-- Incoming `openid-credential-offer://` and `openid4vp://` deep links reach the app only in a development build. The in-app QR scanner works everywhere.
+- Incoming `openid-credential-offer://` and `openid4vp://` deep links reach the app only in a development build. In Expo Go, wrap them as `exp://<host>/--/receive?offer=…` or `…/--/present?request=…` (what `scripts/android.sh open` does). The in-app QR scanner works everywhere.
 - The snapshot signing key is trusted on first use. Production clients should pin the thumbprint published at `/.well-known/trust-service` (`serviceKeys.thumbprints`).
 - The simulated outage points the client at `127.0.0.1:9`, so the browser console shows `ERR_UNSAFE_PORT`. This is expected.
 

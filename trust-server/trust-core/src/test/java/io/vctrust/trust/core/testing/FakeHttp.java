@@ -14,7 +14,14 @@ import java.util.Map;
 public final class FakeHttp implements HttpFetcher {
 
     private final Map<String, Response> routes = new LinkedHashMap<>();
+    private final Map<String, Response> jsonOnly = new LinkedHashMap<>();
     public final List<Request> requests = new ArrayList<>();
+
+    /** A response served only to requests that accept nothing but application/json (content negotiation). */
+    public FakeHttp jsonForPlainAccept(String url, String body) {
+        jsonOnly.put(url, new Response(200, Map.of("Content-Type", List.of("application/json")), body.getBytes(StandardCharsets.UTF_8), URI.create(url)));
+        return this;
+    }
 
     public FakeHttp json(String url, String body) {
         return respond(url, 200, "application/json", body.getBytes(StandardCharsets.UTF_8));
@@ -28,7 +35,8 @@ public final class FakeHttp implements HttpFetcher {
     @Override
     public Response execute(Request request) throws IOException {
         requests.add(request);
-        Response r = routes.get(request.uri().toString());
+        Response r = "application/json".equals(request.headers().get("Accept")) && jsonOnly.containsKey(request.uri().toString())
+                ? jsonOnly.get(request.uri().toString()) : routes.get(request.uri().toString());
         if (r == null) {
             return new Response(404, Map.of("Content-Type", List.of("text/plain")), "not found".getBytes(), request.uri());
         }

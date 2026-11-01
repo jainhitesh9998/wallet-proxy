@@ -199,7 +199,7 @@ public class TrustEvaluator {
             String docType = CredentialFormats.MSO_MDOC.equals(format) ? type : null;
             x509 = pathValidator.validate(chain, anchors, new X509PathValidator.Options(now, certProfile,
                     new CertificateProfile.ProfileContext(expectedDns, docType), null)
-                    .withRevocation(revocation, profile.requireRevocationStatus()));
+                    .withRevocation(revocation, profile.requireRevocationStatus()).withRelaxedProfiles(profile.allowRelaxedProfiles()));
             if (x509.valid()) {
                 validatedAnchor = x509.anchor();
                 // SAN names are authenticated once the chain validates; use them to find the registered entity.

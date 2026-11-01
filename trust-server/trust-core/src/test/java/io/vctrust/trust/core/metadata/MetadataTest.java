@@ -1,8 +1,18 @@
 package io.vctrust.trust.core.metadata;
 
+import com.nimbusds.jose.JOSEObjectType;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.JWSObject;
+import com.nimbusds.jose.Payload;
+import com.nimbusds.jose.crypto.ECDSASigner;
+import com.nimbusds.jose.util.Base64;
 import io.vctrust.trust.core.testing.FakeHttp;
+import io.vctrust.trust.core.testing.TestPki;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.security.interfaces.ECPrivateKey;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -87,5 +97,56 @@ class MetadataTest {
                 .resolve("https://issuer.example/tenant", policy);
         assertThat(r.policyApplied()).isTrue();
         assertThat(r.authorizationServers().get("https://as.example").get("token_endpoint")).isEqualTo("https://issuer.example/tenant/token");
+    }
+
+    private static final String SIGNED_ISSUER = "https://signed.example";
+
+    /** openidvci-issuer-metadata+jwt by {@code signer} (x5c: just the signer), and a JSON fallback at the same URL. */
+    private static FakeHttp signedIssuer(TestPki.Issued signer, String typ, String sub) throws Exception {
+        Map<String, Object> claims = new java.util.LinkedHashMap<>(Map.of("credential_issuer", SIGNED_ISSUER,
+                "credential_endpoint", SIGNED_ISSUER + "/credential", "credential_configurations_supported", Map.of("pid", Map.of("format", "dc+sd-jwt")),
+                "sub", sub, "iat", java.time.Instant.now().getEpochSecond()));
+        JWSObject jws = new JWSObject(new JWSHeader.Builder(JWSAlgorithm.ES256).type(new JOSEObjectType(typ))
+                .x509CertChain(List.of(Base64.encode(signer.certificate().getEncoded()))).build(), new Payload(claims));
+        jws.sign(new ECDSASigner((ECPrivateKey) signer.keys().getPrivate()));
+        return new FakeHttp()
+                .respond(SIGNED_ISSUER + "/.well-known/openid-credential-issuer", 200, "application/jwt", jws.serialize().getBytes(StandardCharsets.UTF_8))
+                .json(SIGNED_ISSUER + "/.well-known/oauth-authorization-server", "{\"issuer\":\"" + SIGNED_ISSUER + "\"}");
+    }
+
+    @Test
+    void verifiesSignedMetadataWithATrustedSigner() throws Exception {
+        var ca = TestPki.rootCa("CN=Metadata CA,C=NL");
+        var signer = TestPki.leaf("CN=Metadata signer,C=NL", ca, List.of("signed.example"), null);
+        IssuerMetadataResolver.SignerTrust trustCa = chain -> chain.getFirst().getIssuerX500Principal().equals(ca.certificate().getSubjectX500Principal()) ? null : "unknown CA";
+        var r = new IssuerMetadataResolver(signedIssuer(signer, "openidvci-issuer-metadata+jwt", SIGNED_ISSUER), Clock.systemUTC(),
+                Duration.ofMinutes(1), Duration.ofHours(1), true, trustCa).resolve(SIGNED_ISSUER, null);
+        assertThat(r.signedMetadataVerified()).isTrue();
+        assertThat(r.signedMetadata()).isNotNull();
+        assertThat(r.issuer()).containsKey("credential_endpoint").doesNotContainKeys("sub", "iat");
+        assertThat(r.warnings()).anyMatch(w -> w.startsWith("Signed metadata verified"));
+    }
+
+    @Test
+    void rejectsSignedMetadataFromUntrustedSelfSignedOrMismatchedSigners() throws Exception {
+        var ca = TestPki.rootCa("CN=Metadata CA,C=NL");
+        var signer = TestPki.leaf("CN=Metadata signer,C=NL", ca, List.of("signed.example"), null);
+        IssuerMetadataResolver.SignerTrust signerOnly = chain -> chain.getFirst().equals(signer.certificate()) ? null : "untrusted";
+        for (var http : List.of(signedIssuer(ca, "openidvci-issuer-metadata+jwt", SIGNED_ISSUER),
+                signedIssuer(signer, "JWT", SIGNED_ISSUER),
+                signedIssuer(signer, "openidvci-issuer-metadata+jwt", "https://other.example"))) {
+            // No JSON to fall back to at this fake URL, so resolution fails with the reason.
+            assertThatThrownBy(() -> new IssuerMetadataResolver(http, Clock.systemUTC(), Duration.ofMinutes(1), Duration.ofHours(1), true, signerOnly)
+                    .resolve(SIGNED_ISSUER, null))
+                    .isInstanceOf(MetadataException.class).hasMessageContaining("Signed metadata rejected");
+        }
+        // An untrusted signer: the signed answer is rejected and the plain JSON metadata is used, flagged as not verified.
+        var http = signedIssuer(signer, "openidvci-issuer-metadata+jwt", SIGNED_ISSUER).jsonForPlainAccept(SIGNED_ISSUER + "/.well-known/openid-credential-issuer",
+                "{\"credential_issuer\":\"" + SIGNED_ISSUER + "\",\"credential_endpoint\":\"" + SIGNED_ISSUER + "/credential\",\"credential_configurations_supported\":{}}");
+        var r = new IssuerMetadataResolver(http, Clock.systemUTC(), Duration.ofMinutes(1), Duration.ofHours(1), true, chain -> "no anchor")
+                .resolve(SIGNED_ISSUER, null);
+        assertThat(r.signedMetadataVerified()).isFalse();
+        assertThat(r.signedMetadata()).isNull();
+        assertThat(r.warnings()).anyMatch(w -> w.contains("signer is not trusted: no anchor"));
     }
 }

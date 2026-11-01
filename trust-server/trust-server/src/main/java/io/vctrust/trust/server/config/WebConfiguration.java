@@ -1,8 +1,11 @@
 package io.vctrust.trust.server.config;
 
+import io.vctrust.trust.server.security.AccessTokenVerifier;
 import io.vctrust.trust.server.security.ClientAuthenticationFilter;
+import io.vctrust.trust.server.security.ClientAuthenticator;
 import io.vctrust.trust.server.security.ClientProfileArgumentResolver;
 import io.vctrust.trust.server.security.ClientRegistry;
+import io.vctrust.trust.server.security.RateLimiter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,8 +26,19 @@ public class WebConfiguration implements WebMvcConfigurer {
     }
 
     @Bean
-    FilterRegistrationBean<ClientAuthenticationFilter> clientAuthenticationFilter(ClientRegistry clients) {
-        FilterRegistrationBean<ClientAuthenticationFilter> reg = new FilterRegistrationBean<>(new ClientAuthenticationFilter(clients));
+    ClientAuthenticator clientAuthenticator(ClientRegistry clients) {
+        TrustProperties.Auth auth = props.getAuth();
+        AccessTokenVerifier tokens = auth.getOauth().isEnabled()
+                ? new AccessTokenVerifier(auth.getOauth(), props.getService().getIssuer()) : null;
+        return new ClientAuthenticator(clients, auth, tokens);
+    }
+
+    @Bean
+    FilterRegistrationBean<ClientAuthenticationFilter> clientAuthenticationFilter(ClientAuthenticator authenticator, ClientRegistry clients) {
+        TrustProperties.RateLimit limit = props.getAuth().getRateLimit();
+        RateLimiter limiter = limit.isEnabled() ? new RateLimiter(limit.getRequestsPerMinute(), limit.getBurst()) : null;
+        FilterRegistrationBean<ClientAuthenticationFilter> reg = new FilterRegistrationBean<>(
+                new ClientAuthenticationFilter(authenticator, clients, limiter, limit.isExemptAdmin()));
         reg.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
         return reg;
     }
@@ -39,7 +53,7 @@ public class WebConfiguration implements WebMvcConfigurer {
         String[] origins = props.getCorsOrigins().toArray(String[]::new);
         for (String path : List.of("/api/**", "/.well-known/**", "/1.0/**", "/trqp/**")) {
             registry.addMapping(path).allowedOriginPatterns(origins).allowedMethods("GET", "POST", "OPTIONS")
-                    .allowedHeaders("*").exposedHeaders("ETag", "Cache-Control", "X-Trust-Decision", "X-Trust-Source").maxAge(3600);
+                    .allowedHeaders("*").exposedHeaders("ETag", "Cache-Control", "X-Trust-Decision", "X-Trust-Source", "Retry-After", "WWW-Authenticate").maxAge(3600);
         }
     }
 }

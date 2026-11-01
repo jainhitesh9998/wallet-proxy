@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { PresentationSession } from '@vctrust/wallet-core';
+import { PresentationRequestError, reportPresentationError, type PresentationSession } from '@vctrust/wallet-core';
 import type { RootStack } from '../navigation';
 import { useWallet } from '../wallet/WalletContext';
 import { claimNames, credentialView, humanize, nameFor, shortDate } from '../wallet/display';
@@ -20,10 +20,12 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
+  /** a failed request the verifier may be told about, once the user chooses to (OpenID4VP §15.9.2) */
+  const [reportable, setReportable] = useState<PresentationRequestError>();
   const [result, setResult] = useState<Result>();
 
   const load = useCallback(async (uri: string) => {
-    setSession(undefined); setResult(undefined); setError(undefined); setChoice({});
+    setSession(undefined); setResult(undefined); setError(undefined); setReportable(undefined); setChoice({});
     if (!uri.trim()) return;
     setBusy('load');
     try {
@@ -32,6 +34,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
       setChoice(Object.fromEntries(p.dcql.matches.filter((m) => m.candidates[0]).map((m) => [m.query.id, m.candidates[0]!.id])));
     } catch (e) {
       setError((e as Error).message);
+      if (e instanceof PresentationRequestError && e.reportTo) setReportable(e);
     } finally {
       setBusy(undefined);
     }
@@ -74,6 +77,16 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
             <Button testID="present-load" title="Load request" busy={busy === 'load'} disabled={!input.trim()} onPress={() => load(input)} style={{ flex: 1 }} />
           </View>
           <ErrorBox message={error} testID="present-error" />
+          {reportable ? (
+            <Button testID="present-report-error" title="Tell the verifier" kind="secondary" busy={busy === 'report'} onPress={async () => {
+              setBusy('report');
+              try {
+                const status = await reportPresentationError(reportable, wallet.fetchFn);
+                setReportable(undefined);
+                setError(`${reportable.message}. The verifier was told (${reportable.code}, HTTP ${status}).`);
+              } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); }
+            }} />
+          ) : null}
         </Section>
       ) : null}
 
@@ -88,6 +101,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
               </View>
             </View>
             <TrustLine trust={v.trust} testIDPrefix="verifier-trust" />
+            {v.refusal ? <ErrorBox testID="verifier-refusal" message={`Sharing is blocked: ${v.refusal}`} /> : null}
             <View style={{ marginTop: 8 }}>
               <KV k="Client id prefix" v={v.prefix} />
               <KV k="Response mode" v={session.request.responseMode} />
@@ -109,7 +123,9 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
                 <View key={m.query.id} testID={`dcql-query-${m.query.id}`} style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border, gap: 4, opacity: selected ? 1 : 0.6 }}>
                   <Text style={s.label}>{m.query.id} · {m.query.format}{type ? ` · ${type}` : ''}{selected ? '' : ' (not needed)'}</Text>
                   <Text style={s.hint}>Claims to share:</Text>
-                  {(m.claims.length ? m.claims : [{ path: ['(all claims)'] }]).map((cl, i) => {
+                  {!(m.claimsFor[choice[m.query.id] ?? ''] ?? m.claims).length
+                    ? <Text style={[s.hint, { color: colors.text }]}>• None: only that you hold this credential (no selectively disclosable claims)</Text> : null}
+                  {(m.claimsFor[choice[m.query.id] ?? ''] ?? m.claims).map((cl, i) => {
                     const cand = m.candidates.find((c) => c.id === choice[m.query.id]);
                     const names = claimNames(cand?.claimMetadata);
                     const path = cl.path.filter((p): p is string | number => p !== null);
@@ -140,7 +156,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
           {!result ? (
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <Button testID="present-decline" title="Decline" kind="secondary" busy={busy === 'decline'} disabled={!!busy} onPress={decline} style={{ flex: 1 }} />
-              <Button testID="present-share" title="Share" busy={busy === 'share'} disabled={!session.dcql.satisfied || !!busy} onPress={share} style={{ flex: 2 }} />
+              <Button testID="present-share" title="Share" busy={busy === 'share'} disabled={!session.dcql.satisfied || !!v.refusal || !!busy} onPress={share} style={{ flex: 2 }} />
             </View>
           ) : (
             <Section title={result.kind === 'shared' ? 'Shared' : 'Declined'} testID="present-result">

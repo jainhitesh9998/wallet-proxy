@@ -1212,6 +1212,12 @@
           },
           "requireRevocationStatus": {
             "type": "boolean"
+          },
+          "requireSignedIssuerMetadata": {
+            "type": "boolean"
+          },
+          "allowRelaxedProfiles": {
+            "type": "boolean"
           }
         }
       },

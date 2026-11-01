@@ -38,13 +38,20 @@ public final class X509PathValidator {
     public record Revocation(RevocationChecker checker, boolean required) {
     }
 
-    /** Options for one validation; {@code revocation} null skips revocation checking. */
+    /**
+     * Options for one validation; {@code revocation} null skips revocation checking. {@code allowRelaxedProfile}: honour
+     * an anchor's {@code relaxProfile} constraint (profile errors become warnings); a strict client turns it off.
+     */
     public record Options(Instant time, CertificateProfile profile, CertificateProfile.ProfileContext profileContext,
-                          Revocation revocation) {
+                          Revocation revocation, boolean allowRelaxedProfile) {
         public Options {
             time = time == null ? Instant.now() : time;
             profile = profile == null ? CertificateProfiles.NONE : profile;
             profileContext = profileContext == null ? CertificateProfile.ProfileContext.NONE : profileContext;
+        }
+
+        public Options(Instant time, CertificateProfile profile, CertificateProfile.ProfileContext profileContext, Revocation revocation) {
+            this(time, profile, profileContext, revocation, true);
         }
 
         public static Options at(Instant time, CertificateProfile profile) {
@@ -52,7 +59,11 @@ public final class X509PathValidator {
         }
 
         public Options withRevocation(RevocationChecker checker, boolean required) {
-            return new Options(time, profile, profileContext, checker == null ? null : new Revocation(checker, required));
+            return new Options(time, profile, profileContext, checker == null ? null : new Revocation(checker, required), allowRelaxedProfile);
+        }
+
+        public Options withRelaxedProfiles(boolean allow) {
+            return new Options(time, profile, profileContext, revocation, allow);
         }
     }
 
@@ -127,7 +138,7 @@ public final class X509PathValidator {
             issues.add(ValidationIssue.error("x509.anchor_unusable", "Trust anchor is not usable at " + options.time()));
         }
         List<ValidationIssue> profileIssues = options.profile().check(path, anchor.certificate(), options.profileContext());
-        if (Boolean.TRUE.equals(anchor.constraints().get("relaxProfile")) && !profileIssues.isEmpty()) {
+        if (options.allowRelaxedProfile() && Boolean.TRUE.equals(anchor.constraints().get("relaxProfile")) && !profileIssues.isEmpty()) {
             // Operator opted this anchor out of strict profile enforcement (e.g. a sandbox issuer): keep findings visible.
             profileIssues = profileIssues.stream()
                     .map(i -> i.isError() ? ValidationIssue.warning(i.code(), i.message() + " (profile relaxed for this anchor)") : i)

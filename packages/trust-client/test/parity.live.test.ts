@@ -4,7 +4,7 @@
  * same entity, and the same revocation status for every certificate. Runs against the local trust service
  * (scripts/start-trust-server.sh) with test PKI registered through the admin API in the 'local' framework — the test
  * IACA with its CRL pushed — under a lenient (demo-wallet) and a strict (demo-verifier: strict authorization, revocation
- * status required) client profile.
+ * status required, relaxed anchors not honoured) client profile.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTrustClient, parseCertificate, type TrustDecision, type TrustQuery } from '../src/index.js';
@@ -23,6 +23,8 @@ const managed = {
       constraints: { docTypes: [MDL], crl: fixture('pki/iaca.crl').toString('base64') } },
     'parity-rp-ca': { domain: 'verifier-access', certificate: pem('rp-ca') },
     'parity-rsa-root': { domain: 'credential-issuer', entity: 'parity-rsa', certificate: pem('rsa-root') },
+    // A sandbox IACA the operator relaxed (like MOSIP's mock mDL): its non-ISO Document Signers pass only where relaxations are honoured.
+    'parity-sandbox-iaca': { domain: 'mdoc-iaca', entity: 'parity-sandbox', certificate: pem('rsa-root'), constraints: { relaxProfile: true } },
   },
   entities: {
     'parity-dmv': { roles: ['CREDENTIAL_ISSUER'], name: 'Parity DMV', identifiers: [{ type: 'URL', value: 'https://dmv.parity.example' }],
@@ -32,6 +34,8 @@ const managed = {
     'parity-open': { roles: ['CREDENTIAL_ISSUER'], name: 'No authorizations', identifiers: [{ type: 'URL', value: 'https://open.parity.example' }] },
     'parity-did': { roles: ['CREDENTIAL_ISSUER'], name: 'DID issuer', identifiers: [DID] },
     'parity-rsa': { roles: ['CREDENTIAL_ISSUER'], name: 'RSA issuer', identifiers: [{ type: 'URL', value: 'https://rsa.parity.example' }] },
+    'parity-sandbox': { roles: ['CREDENTIAL_ISSUER'], name: 'Sandbox issuer', identifiers: [{ type: 'URL', value: 'https://sandbox.parity.example' }],
+      authorizations: [{ format: 'mso_mdoc', type: MDL }] },
   },
 };
 
@@ -59,6 +63,7 @@ const CASES: Array<[string, TrustQuery]> = [
   ['DID issuer with key reference', issuer({ identifier: DID, kid: `${DID}#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK` }, 'ldp_vc')],
   ['DID issuer, key not in document', issuer({ identifier: DID, kid: `${DID}#missing` }, 'ldp_vc')],
   ['RSA x5c issuer', issuer({ x5c: [b64(pem('rsa-leaf'))] }, 'dc+sd-jwt')],
+  ['non-ISO DS under a relaxProfile anchor (strict refuses)', issuer({ x5c: [b64(pem('rsa-leaf'))] }, 'mso_mdoc', MDL)],
   ['trusted_authorities aki', issuer({ x5c: [b64(pem('ds'))] }, 'mso_mdoc', MDL,
     { trustedAuthorities: [{ type: 'aki', values: [iaca.subjectKeyIdentifier!] }, { type: 'aki', values: ['bm9wZQ'] }] })],
   ['unknown issuer', issuer({ identifier: 'https://nobody.parity.example' })],
@@ -141,5 +146,11 @@ describe('evaluator parity: service vs device', () => {
     const strict = createTrustClient({ baseUrl: BASE, apiKey: 'demo-verifier-key', clientId: 'demo-verifier', serviceKeys: { thumbprints: [thumbprint] } });
     expect((await wallet.evaluate(q)).decision).toBe('TRUSTED');
     expect((await strict.evaluate(q)).decision).toBe('NOT_TRUSTED');
+    const relaxed = CASES.find(([n]) => n.startsWith('non-ISO DS under a relaxProfile anchor'))![1];
+    const lenient = await wallet.evaluate(relaxed);
+    expect(lenient.decision).toBe('TRUSTED');
+    expect(lenient.evidence?.x509?.issues.map((i) => i.code)).toContain('x509.profile_relaxed');
+    expect((await strict.evaluate(relaxed)).decision).not.toBe('TRUSTED');
+    expect((await strict.syncSnapshot()).policy.allowRelaxedProfiles).toBe(false);
   });
 });

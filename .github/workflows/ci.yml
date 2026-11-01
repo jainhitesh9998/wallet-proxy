@@ -1,0 +1,45 @@
+# Offline suites only. The live end-to-end tests need the Animo playground, MOSIP collab and a running trust
+# server; run them with scripts/test-all.sh.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  trust-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build and test (core, adapters, server)
+        working-directory: trust-server
+        run: mvn -B -ntp install
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build the libraries
+        run: npm run build -w @vctrust/trust-client -w @vctrust/wallet-core
+      - name: Typecheck (libraries and wallet app)
+        run: npm run typecheck -w @vctrust/trust-client -w @vctrust/wallet-core -w apps/wallet
+      - name: trust-client
+        run: npm test -w @vctrust/trust-client
+      - name: wallet-core (offline)
+        run: npm test -w @vctrust/wallet-core
+      - name: Wallet bundles (web, Android)
+        working-directory: apps/wallet
+        run: npm run export:web && npm run export:android

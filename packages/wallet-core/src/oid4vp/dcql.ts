@@ -9,8 +9,10 @@ import type { DcqlClaim, DcqlCredentialQuery, DcqlQuery } from './request.js';
 export interface CredentialMatch {
   query: DcqlCredentialQuery;
   candidates: StoredCredential[];
-  /** claims selected for disclosure (resolved claim set) */
+  /** claims selected for disclosure for the first candidate (resolved claim set) */
   claims: DcqlClaim[];
+  /** claims selected for disclosure per candidate credential id: each candidate may satisfy a different claim set */
+  claimsFor: Record<string, DcqlClaim[]>;
 }
 
 export interface DcqlResult {
@@ -68,8 +70,7 @@ function claimSatisfied(claims: Record<string, unknown>, c: DcqlClaim, format: s
 }
 
 function typeMatches(q: DcqlCredentialQuery, c: StoredCredential): boolean {
-  const fmt = c.format === 'vc+sd-jwt' ? 'dc+sd-jwt' : c.format;
-  if (q.format !== fmt) return false;
+  if (q.format !== c.format) return false;
   const t = credentialType(c);
   const meta = q.meta ?? {};
   if (q.format === 'mso_mdoc') return !meta.doctype_value || meta.doctype_value === t.doctype;
@@ -80,14 +81,24 @@ function typeMatches(q: DcqlCredentialQuery, c: StoredCredential): boolean {
   return alternatives.some((alt) => alt.every((iri) => t.types.some((ty) => ty === iri || iri.endsWith(`/${ty}`) || iri.endsWith(`#${ty}`))));
 }
 
+/** Can the holder prove possession? SD-JWT VCs need a cnf key; mdocs carry a device key, ldp VPs are signed by the holder. */
+function holderBound(c: StoredCredential): boolean {
+  if (c.format !== 'dc+sd-jwt' && c.format !== 'vc+sd-jwt') return true;
+  const payload = decodeJws<Record<string, unknown>>(parseSdJwt(String(c.credential)).issuerJwt).payload;
+  return !!(payload.cnf as { jwk?: unknown } | undefined)?.jwk;
+}
+
 export async function evaluateDcql(query: DcqlQuery, credentials: StoredCredential[], trust?: TrustClient): Promise<DcqlResult> {
   const matches: CredentialMatch[] = [];
   for (const q of query.credentials) {
     const candidates: StoredCredential[] = [];
-    let chosenClaims: DcqlClaim[] = q.claims ?? [];
+    const claimsFor: Record<string, DcqlClaim[]> = {};
     for (const c of credentials) {
       if (!typeMatches(q, c)) continue;
+      // require_cryptographic_holder_binding defaults to true (OpenID4VP §6.1).
+      if (q.require_cryptographic_holder_binding !== false && !holderBound(c)) continue;
       const claims = credentialClaims(c);
+      let chosenClaims: DcqlClaim[] = q.claims ?? [];
       let ok = true;
       if (q.claims && q.claims.length) {
         if (q.claim_sets?.length) {
@@ -101,9 +112,9 @@ export async function evaluateDcql(query: DcqlQuery, credentials: StoredCredenti
         const r = await trust.evaluateCredential(c.credential, c.format, { credentialIssuer: c.credentialIssuer, trustedAuthorities: q.trusted_authorities });
         ok = (r.decision.evidence?.trustedAuthorities ?? []).some((m) => m.matched);
       }
-      if (ok) candidates.push(c);
+      if (ok) { candidates.push(c); claimsFor[c.id] = chosenClaims; }
     }
-    matches.push({ query: q, candidates, claims: chosenClaims });
+    matches.push({ query: q, candidates, claims: candidates[0] ? claimsFor[candidates[0].id]! : q.claims ?? [], claimsFor });
   }
   const has = (id: string) => (matches.find((m) => m.query.id === id)?.candidates.length ?? 0) > 0;
   if (!query.credential_sets?.length) {

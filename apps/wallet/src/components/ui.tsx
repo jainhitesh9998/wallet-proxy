@@ -1,6 +1,7 @@
 /** Small shared UI kit: buttons, toggles, sections, trust badges and check rows. testIDs map to data-testid on web. */
 import React from 'react';
 import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
+import { SvgUri, SvgXml } from 'react-native-svg';
 import type { Decision, TrustDecision } from '@vctrust/trust-client';
 import type { Check } from '@vctrust/wallet-core';
 
@@ -161,9 +162,32 @@ export function CheckRow({ check }: { check: Check }) {
   );
 }
 
+const SVG_DATA = /^data:image\/svg\+xml(;base64)?,/i;
+
+function svgXml(uri: string): string | undefined {
+  const m = SVG_DATA.exec(uri);
+  if (!m) return undefined;
+  const data = uri.slice(m[0].length);
+  try {
+    return m[1] ? atob(data) : decodeURIComponent(data);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Issuer / verifier / credential logo. HAIP 1.0 §4.1: PNG and SVG, by https or data: URI. Native Image has no SVG
+ * support, so SVG goes through react-native-svg; browsers render both in an img.
+ */
 export function Logo({ uri, size = 40 }: { uri?: string; size?: number }) {
   if (!uri) return null;
-  return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: 6, backgroundColor: '#fff' }} resizeMode="contain" accessibilityIgnoresInvertColors />;
+  const style = { width: size, height: size, borderRadius: 6, backgroundColor: '#fff' };
+  if (Platform.OS !== 'web') {
+    const xml = svgXml(uri);
+    if (xml) return <View style={style}><SvgXml xml={xml} width={size} height={size} /></View>;
+    if (/^https:\/\/[^?#]+\.svg([?#].*)?$/i.test(uri)) return <View style={style}><SvgUri uri={uri} width={size} height={size} /></View>;
+  }
+  return <Image source={{ uri }} style={style} resizeMode="contain" accessibilityIgnoresInvertColors />;
 }
 
 export const s = StyleSheet.create({

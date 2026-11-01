@@ -18,6 +18,7 @@ public class TrustProperties {
     private Did did = new Did();
     private Revocation revocation = new Revocation();
     private Anonymous anonymous = new Anonymous();
+    private Auth auth = new Auth();
     private List<Framework> frameworks = new ArrayList<>();
     private List<Source> sources = new ArrayList<>();
     private List<Client> clients = new ArrayList<>();
@@ -26,8 +27,9 @@ public class TrustProperties {
     public static class Service {
         /** Identifier of this service; {@code iss} of signed responses and snapshots. */
         private String issuer = "http://localhost:8090";
-        /** JWK file holding the EC P-256 signing key; generated on first start if missing. */
+        /** JWK file holding the EC P-256 signing key; generated on first start if missing (shorthand for signing-key.file). */
         private String signingKeyFile = "./data/signing-key.jwk";
+        private SigningKey signingKey = new SigningKey();
         private Duration decisionTtl = Duration.ofHours(1);
         private Duration snapshotTtl = Duration.ofHours(24);
         private Duration signedResponseTtl = Duration.ofMinutes(10);
@@ -41,6 +43,8 @@ public class TrustProperties {
         public void setIssuer(String issuer) { this.issuer = issuer; }
         public String getSigningKeyFile() { return signingKeyFile; }
         public void setSigningKeyFile(String signingKeyFile) { this.signingKeyFile = signingKeyFile; }
+        public SigningKey getSigningKey() { return signingKey; }
+        public void setSigningKey(SigningKey v) { this.signingKey = v; }
         public Duration getDecisionTtl() { return decisionTtl; }
         public void setDecisionTtl(Duration decisionTtl) { this.decisionTtl = decisionTtl; }
         public Duration getSnapshotTtl() { return snapshotTtl; }
@@ -55,9 +59,63 @@ public class TrustProperties {
         public void setSnapshotDidDeadline(Duration v) { this.snapshotDidDeadline = v; }
     }
 
+    /**
+     * The service's ES256 (P-256) signing key for snapshots and signed responses. {@code jwk-file} suits development;
+     * {@code keystore} reads a PKCS#12 / JKS file; {@code pkcs11} uses a key that never leaves an HSM. Retired keys are
+     * listed in {@code previous-keys} so clients pinning several thumbprints can rotate without an outage.
+     */
+    public static class SigningKey {
+        /** {@code jwk-file}, {@code keystore} or {@code pkcs11}. */
+        private String type = "jwk-file";
+        /** jwk-file: the JWK file; defaults to {@code trust.service.signing-key-file}. */
+        private String file;
+        /** keystore: the PKCS#12 or JKS file. */
+        private String keystore;
+        private String keystoreType = "PKCS12";
+        /** keystore: the store password. */
+        private String password;
+        /** keystore: the key entry password; defaults to {@code password}. */
+        private String keyPassword;
+        /** keystore / pkcs11: the key entry alias (required when the store holds more than one key). */
+        private String alias;
+        /** pkcs11: SunPKCS11 provider configuration file (library, slot). */
+        private String pkcs11Config;
+        /** pkcs11: the token PIN. */
+        private String pin;
+        /** {@code kid} published for the key; defaults to its RFC 7638 thumbprint. */
+        private String keyId;
+        /** Public JWKs of retired keys, still published in the JWKS: inline JSON, a file path, {@code file:} or {@code classpath:}. */
+        private List<String> previousKeys = new ArrayList<>();
+
+        public String getType() { return type; }
+        public void setType(String v) { this.type = v; }
+        public String getFile() { return file; }
+        public void setFile(String v) { this.file = v; }
+        public String getKeystore() { return keystore; }
+        public void setKeystore(String v) { this.keystore = v; }
+        public String getKeystoreType() { return keystoreType; }
+        public void setKeystoreType(String v) { this.keystoreType = v; }
+        public String getPassword() { return password; }
+        public void setPassword(String v) { this.password = v; }
+        public String getKeyPassword() { return keyPassword; }
+        public void setKeyPassword(String v) { this.keyPassword = v; }
+        public String getAlias() { return alias; }
+        public void setAlias(String v) { this.alias = v; }
+        public String getPkcs11Config() { return pkcs11Config; }
+        public void setPkcs11Config(String v) { this.pkcs11Config = v; }
+        public String getPin() { return pin; }
+        public void setPin(String v) { this.pin = v; }
+        public String getKeyId() { return keyId; }
+        public void setKeyId(String v) { this.keyId = v; }
+        public List<String> getPreviousKeys() { return previousKeys; }
+        public void setPreviousKeys(List<String> v) { this.previousKeys = v; }
+    }
+
     public static class Http {
         private Duration connectTimeout = Duration.ofSeconds(3);
         private Duration readTimeout = Duration.ofSeconds(10);
+        /** Upper bound on one fetch including the body download (a slow, dripping response is cut off). */
+        private Duration totalTimeout = Duration.ofSeconds(60);
         private int maxResponseBytes = 8 * 1024 * 1024;
         private int maxRedirects = 3;
         /** Allow outbound requests to private, loopback and link-local addresses (development only). */
@@ -72,6 +130,8 @@ public class TrustProperties {
         public void setConnectTimeout(Duration v) { this.connectTimeout = v; }
         public Duration getReadTimeout() { return readTimeout; }
         public void setReadTimeout(Duration v) { this.readTimeout = v; }
+        public Duration getTotalTimeout() { return totalTimeout; }
+        public void setTotalTimeout(Duration v) { this.totalTimeout = v; }
         public int getMaxResponseBytes() { return maxResponseBytes; }
         public void setMaxResponseBytes(int v) { this.maxResponseBytes = v; }
         public int getMaxRedirects() { return maxRedirects; }
@@ -180,6 +240,104 @@ public class TrustProperties {
         public void setAllowUnregisteredMetadata(boolean v) { this.allowUnregisteredMetadata = v; }
     }
 
+    /**
+     * How clients authenticate. API keys suit development; production deployments use OAuth 2.0 access tokens
+     * (RFC 9068 JWTs from the operator's authorization server) and/or TLS client certificates.
+     */
+    public static class Auth {
+        /** Accept API keys ({@code Authorization: Bearer <key>} or {@code X-API-Key}). */
+        private boolean apiKeys = true;
+        private OAuth oauth = new OAuth();
+        private Mtls mtls = new Mtls();
+        private RateLimit rateLimit = new RateLimit();
+
+        public boolean isApiKeys() { return apiKeys; }
+        public void setApiKeys(boolean v) { this.apiKeys = v; }
+        public OAuth getOauth() { return oauth; }
+        public void setOauth(OAuth v) { this.oauth = v; }
+        public Mtls getMtls() { return mtls; }
+        public void setMtls(Mtls v) { this.mtls = v; }
+        public RateLimit getRateLimit() { return rateLimit; }
+        public void setRateLimit(RateLimit v) { this.rateLimit = v; }
+    }
+
+    /** JWT access tokens (RFC 9068) from an authorization server, e.g. obtained with the client credentials grant. */
+    public static class OAuth {
+        private boolean enabled = false;
+        /** Required {@code iss}. */
+        private String issuer;
+        /** Accepted {@code aud} values; empty means {@code trust.service.issuer}. */
+        private List<String> audiences = new ArrayList<>();
+        /** The authorization server's JWKS: https URL (cached, refreshed on unknown kid), {@code file:} or {@code classpath:}. */
+        private String jwksUri;
+        /** Accepted JWS algorithms (ES256/384/512, RS256/384/512, PS256/384/512, EdDSA). */
+        private List<String> algorithms = new ArrayList<>(List.of("ES256", "RS256"));
+        /** Accepted JOSE {@code typ} values; {@code jwt} also admits tokens without {@code typ}. */
+        private List<String> tokenTypes = new ArrayList<>(List.of("at+jwt", "jwt"));
+        /** Claims naming the client, tried in order; matched against a client's {@code oauth-client-id} (default its id). */
+        private List<String> clientIdClaims = new ArrayList<>(List.of("client_id", "azp"));
+        /** Scope every token must carry ({@code scope} string or {@code scp} array); empty for none. */
+        private String requiredScope;
+        private Duration clockSkew = Duration.ofSeconds(60);
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean v) { this.enabled = v; }
+        public String getIssuer() { return issuer; }
+        public void setIssuer(String v) { this.issuer = v; }
+        public List<String> getAudiences() { return audiences; }
+        public void setAudiences(List<String> v) { this.audiences = v; }
+        public String getJwksUri() { return jwksUri; }
+        public void setJwksUri(String v) { this.jwksUri = v; }
+        public List<String> getAlgorithms() { return algorithms; }
+        public void setAlgorithms(List<String> v) { this.algorithms = v; }
+        public List<String> getTokenTypes() { return tokenTypes; }
+        public void setTokenTypes(List<String> v) { this.tokenTypes = v; }
+        public List<String> getClientIdClaims() { return clientIdClaims; }
+        public void setClientIdClaims(List<String> v) { this.clientIdClaims = v; }
+        public String getRequiredScope() { return requiredScope; }
+        public void setRequiredScope(String v) { this.requiredScope = v; }
+        public Duration getClockSkew() { return clockSkew; }
+        public void setClockSkew(Duration v) { this.clockSkew = v; }
+    }
+
+    /**
+     * TLS client certificates: from this server's TLS connector, or from a header set by a TLS-terminating proxy.
+     * Certificate-bound access tokens (RFC 8705 {@code cnf.x5t#S256}) are always checked against the presented
+     * certificate; {@code enabled} additionally lets a certificate alone authenticate a client.
+     */
+    public static class Mtls {
+        private boolean enabled = false;
+        /** Header holding the URL-encoded PEM client certificate (nginx {@code $ssl_client_escaped_cert}); empty for none. */
+        private String certificateHeader;
+        /** Peer addresses or CIDRs of proxies whose certificate header is believed; a header from anyone else is ignored. */
+        private List<String> trustedProxies = new ArrayList<>();
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean v) { this.enabled = v; }
+        public String getCertificateHeader() { return certificateHeader; }
+        public void setCertificateHeader(String v) { this.certificateHeader = v; }
+        public List<String> getTrustedProxies() { return trustedProxies; }
+        public void setTrustedProxies(List<String> v) { this.trustedProxies = v; }
+    }
+
+    /** Per-client token bucket; anonymous callers are limited per address. */
+    public static class RateLimit {
+        private boolean enabled = false;
+        private int requestsPerMinute = 600;
+        /** Requests a client may make at once before the per-minute rate applies. */
+        private int burst = 100;
+        private boolean exemptAdmin = true;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean v) { this.enabled = v; }
+        public int getRequestsPerMinute() { return requestsPerMinute; }
+        public void setRequestsPerMinute(int v) { this.requestsPerMinute = v; }
+        public int getBurst() { return burst; }
+        public void setBurst(int v) { this.burst = v; }
+        public boolean isExemptAdmin() { return exemptAdmin; }
+        public void setExemptAdmin(boolean v) { this.exemptAdmin = v; }
+    }
+
     public static class Framework {
         private String id;
         private String name;
@@ -224,13 +382,26 @@ public class TrustProperties {
     public static class Client {
         private String id;
         private String name;
+        /** API key in clear (development). */
         private String apiKey;
+        /** SHA-256 of the API key, hex, so the configuration holds no secret. */
+        private String apiKeySha256;
+        /** The client's id at the authorization server, when it differs from {@code id}. */
+        private String oauthClientId;
+        /** SHA-256 thumbprints (hex or base64url) of the TLS client certificates that authenticate this client. */
+        private List<String> certificateSha256 = new ArrayList<>();
+        /** Overrides {@code trust.auth.rate-limit.requests-per-minute} for this client. */
+        private Integer requestsPerMinute;
         private List<String> frameworks = new ArrayList<>();
         private boolean strictAuthorization = false;
         private boolean allowUnregisteredMetadata = true;
         private boolean admin = false;
         /** An undeterminable certificate revocation status fails validation (otherwise a warning). */
         private boolean requireRevocationStatus = false;
+        /** Issuer metadata must be signed by a certificate under a credential-issuer anchor (HAIP 1.0 §4.1 ecosystems). */
+        private boolean requireSignedIssuerMetadata = false;
+        /** Honour anchors' relaxProfile (sandbox deviations become warnings); false enforces certificate profiles strictly. */
+        private boolean allowRelaxedProfiles = true;
 
         public String getId() { return id; }
         public void setId(String v) { this.id = v; }
@@ -238,6 +409,14 @@ public class TrustProperties {
         public void setName(String v) { this.name = v; }
         public String getApiKey() { return apiKey; }
         public void setApiKey(String v) { this.apiKey = v; }
+        public String getApiKeySha256() { return apiKeySha256; }
+        public void setApiKeySha256(String v) { this.apiKeySha256 = v; }
+        public String getOauthClientId() { return oauthClientId; }
+        public void setOauthClientId(String v) { this.oauthClientId = v; }
+        public List<String> getCertificateSha256() { return certificateSha256; }
+        public void setCertificateSha256(List<String> v) { this.certificateSha256 = v; }
+        public Integer getRequestsPerMinute() { return requestsPerMinute; }
+        public void setRequestsPerMinute(Integer v) { this.requestsPerMinute = v; }
         public List<String> getFrameworks() { return frameworks; }
         public void setFrameworks(List<String> v) { this.frameworks = v; }
         public boolean isStrictAuthorization() { return strictAuthorization; }
@@ -248,6 +427,10 @@ public class TrustProperties {
         public void setAdmin(boolean v) { this.admin = v; }
         public boolean isRequireRevocationStatus() { return requireRevocationStatus; }
         public void setRequireRevocationStatus(boolean v) { this.requireRevocationStatus = v; }
+        public boolean isRequireSignedIssuerMetadata() { return requireSignedIssuerMetadata; }
+        public void setRequireSignedIssuerMetadata(boolean v) { this.requireSignedIssuerMetadata = v; }
+        public boolean isAllowRelaxedProfiles() { return allowRelaxedProfiles; }
+        public void setAllowRelaxedProfiles(boolean v) { this.allowRelaxedProfiles = v; }
     }
 
     public Service getService() { return service; }
@@ -262,6 +445,8 @@ public class TrustProperties {
     public void setRevocation(Revocation v) { this.revocation = v; }
     public Anonymous getAnonymous() { return anonymous; }
     public void setAnonymous(Anonymous v) { this.anonymous = v; }
+    public Auth getAuth() { return auth; }
+    public void setAuth(Auth v) { this.auth = v; }
     public List<Framework> getFrameworks() { return frameworks; }
     public void setFrameworks(List<Framework> v) { this.frameworks = v; }
     public List<Source> getSources() { return sources; }

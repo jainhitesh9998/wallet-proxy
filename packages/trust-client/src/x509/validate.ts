@@ -30,6 +30,8 @@ export interface ValidateOptions {
   docType?: string;
   /** check revocation against these CRLs (a directly pinned certificate is not checked: it is an anchor) */
   revocation?: RevocationOptions;
+  /** honour an anchor's relaxProfile constraint (default true); a strict client profile turns it off */
+  allowRelaxedProfile?: boolean;
 }
 
 const KNOWN_CRITICAL = new Set([OID.basicConstraints, OID.keyUsage, OID.extKeyUsage, OID.subjectAltName, '2.5.29.32', OID.issuerAltName]);
@@ -144,7 +146,7 @@ function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certif
                 base: { profile: string; validationTime: string }, revocable: boolean): PathValidationResult & { anchorRef?: LocalAnchor } {
   const issues = [...pathIssues];
   let prof = profileIssues(opts.domain, path, anchor.certificate, opts);
-  if (anchor.constraints?.relaxProfile === true && prof.length > 0) {
+  if (anchor.constraints?.relaxProfile === true && opts.allowRelaxedProfile !== false && prof.length > 0) {
     prof = prof.map((i) => (i.severity === 'ERROR' ? { ...i, severity: 'WARNING' as const, message: `${i.message} (profile relaxed for this anchor)` } : i));
     issues.push({ code: 'x509.profile_relaxed', message: `Certificate profile '${base.profile}' is relaxed for this trust anchor`, severity: 'WARNING' });
   }

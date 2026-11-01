@@ -33,6 +33,10 @@ export interface SnapshotPolicy {
   strictAuthorization: boolean;
   /** a certificate whose revocation status cannot be determined is not trusted */
   requireRevocationStatus: boolean;
+  /** issuer metadata must be signed by a trusted signer (HAIP 1.0 §4.1 ecosystems) */
+  requireSignedIssuerMetadata: boolean;
+  /** anchors' relaxProfile is honoured (absent in older snapshots: true) */
+  allowRelaxedProfiles: boolean;
 }
 
 export interface SnapshotData {
@@ -178,7 +182,8 @@ export class SnapshotManager {
       format: Number(p.format ?? 1), version: Number(p.version),
       issuedAt: new Date(Number(p.iat) * 1000), expiresAt: new Date(Number(p.exp) * 1000),
       policy: { frameworks: policy.frameworks ?? [], strictAuthorization: policy.strictAuthorization === true,
-        requireRevocationStatus: policy.requireRevocationStatus === true },
+        requireRevocationStatus: policy.requireRevocationStatus === true, requireSignedIssuerMetadata: policy.requireSignedIssuerMetadata === true,
+        allowRelaxedProfiles: policy.allowRelaxedProfiles !== false },
       frameworks: (p.frameworks as TrustFramework[]) ?? [], entities: (p.entities as EntityView[]) ?? [], anchors,
       didDocuments: (p.didDocuments as Record<string, DidDocument>) ?? {}, crls, stale: false,
     };

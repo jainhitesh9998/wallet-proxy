@@ -41,7 +41,7 @@ Every trust-list format enters through an adapter, and every protocol touchpoint
 | --- | --- | --- | --- |
 | [OpenID4VCI](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) | 1.0 Final (Sep 2025) | Issuer metadata proxy: well-known insertion rule, `credential_issuer`/AS `issuer` checks, `oid4vci-discovery` source | Server, client, wallet |
 | [OpenID4VP](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html) | 1.0 Final (Jul 2025) | Verifier trust: all client\_id prefixes; DCQL `trusted_authorities` (`aki`, `etsi_tl`, `openid_federation`) | Server, client, wallet |
-| [HAIP](https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html) | 1.0 Final (Dec 2025) | Wallet profile: PAR, PKCE, DPoP nonces, wallet and key attestation, `x509_hash`, `direct_post.jwt` | Wallet |
+| [HAIP](https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html) | 1.0 Final (Dec 2025) | Wallet profile: PAR, PKCE, DPoP nonces, wallet and key attestation, credential encryption, signed issuer metadata (`x5c`), `x509_hash` with enforced verifier trust, `direct_post.jwt`, minimal disclosure. Signed metadata can be required per client profile | Wallet, client, server |
 | ISO/IEC 18013-5 | 1st ed. + VICAL | IACA trust domain, Document Signer profile (EKU 1.0.18013.5.1.2, country match), `vical` source | Server, client |
 | W3C VCDM 2.0 + Data Integrity | REC | JSON-LD credential verification; issuer DID trust | Wallet, client |
 | SD-JWT VC | draft-13 (HAIP pin) | `x5c` issuer chains (`credential-issuer` domain) | Server, client |
@@ -56,7 +56,10 @@ Two live ecosystems shape the defaults. **Animo's playground** (Credo) is fully 
 
 - the signing key's DID differs from the `issuer` DID;
 - `assertionMethod` lists the bare DID;
-- the mDL is non-ISO (non-standard wrapping, no DS EKU).
+- the mDL is non-ISO (non-standard wrapping, no DS EKU). It is trusted only through a `relaxProfile` anchor, and only by client profiles that allow relaxed anchors;
+- the Land credential's signature does not verify, so wallets refuse it.
+
+Draft defect reports for MOSIP are in `docs/upstream-reports.md` in the repository.
 
 ## System architecture
 
@@ -87,7 +90,7 @@ All sources reduce to two record types, **trusted entities** and **trust anchors
 | `CredentialAuthorization` | format + type (doctype, vct or VC type) | What an issuer may issue or a verifier may request |
 | `TrustAnchor` | X.509 certificate in a `TrustDomain`, optional entity link, constraints (`docTypes`, `serviceType`, `trustedListUri`) | Validating a chain to an anchor identifies the entity |
 | `TrustDomain` | `mdoc-iaca`, `credential-issuer`, `verifier-access`, `wallet-provider`, `status-list`, `list-signer`, ... | Purpose isolation, each with its own certificate profile |
-| `ClientProfile` | accepted frameworks, strict authorization flag, metadata-proxy openness | Each configured wallet or verifier sees only its frameworks |
+| `ClientProfile` | accepted frameworks, strict authorization, metadata-proxy openness, `requireRevocationStatus`, `requireSignedIssuerMetadata`, `allowRelaxedProfiles` | Each configured wallet or verifier sees only its frameworks; the policy travels in its snapshot so the device applies it too |
 | `Provenance` | source id and type, list URI, retrieval time | Carried into every decision |
 
 **Metadata policy.** The OpenID Federation operators (`value`, `add`, `default`, `one_of`, `subset_of`, `superset_of`, `essential`) are the one way to curate metadata. Federation chains use them, and so can a registry entry. For example, it can declare the pre-authorized token endpoint an issuer forgets to advertise.
@@ -113,14 +116,14 @@ The server is three Maven modules with a strict dependency direction: `trust-cor
 | --- | --- | --- |
 | `trust-core` | Domain model, SPIs, evaluation engine, X.509, DID, metadata | `TrustEvaluator`, `X509PathValidator`, `CertificateProfiles`, `DidResolver`, `IssuerMetadataResolver`, `MetadataPolicy`, `TrustSourceManager`, `RegistrySnapshot` |
 | `trust-adapters` | One adapter per list format, discovered via `ServiceLoader` | `static`, `x509-bundle`, `oid4vci-discovery`, `etsi-tl`, `etsi-lote`, `vical`, `openid-federation`, `ebsi-tir` |
-| `trust-server` | HTTP API, auth, caching, signing, SSRF-safe fetching, managed (JDBC) source | controllers, `SafeHttpFetcher`, `TtlCache`, `ServiceKeyManager`, `ManagedSourceFactory` |
+| `trust-server` | HTTP API, client authentication, rate limits, caching, signing, SSRF-safe fetching, managed (JDBC) source | controllers, `ClientAuthenticator`, `AccessTokenVerifier`, `SafeHttpFetcher`, `TtlCache`, `ServiceKeyManager`, `SigningKeySource`, `ManagedSourceFactory` |
 
 **Extension points (SPIs)**
 
 - `TrustSourceFactory` / `TrustSource`: a new list format is one class plus a `META-INF/services` line. Sources return entities, anchors and `ListInfo` (sequence, `nextUpdate`, signature status).
 - `OnDemandResolver`: optional, for registries too large to enumerate (OpenID Federation bottom-up chain resolution, EBSI lookup by DID).
 - `DidMethodDriver`: did:key, did:jwk and did:web are native. A generic `http-registry` driver takes a URL template (EBSI is configured this way). A Universal Resolver driver covers the rest.
-- `CertificateProfile`: purpose checks on top of RFC 5280 PKIX (ISO 18013-5 Document Signer, credential issuer, verifier access). Anchors can carry `relaxProfile` for known-deviant sandboxes, which turns errors into visible warnings.
+- `CertificateProfile`: purpose checks on top of RFC 5280 PKIX (ISO 18013-5 Document Signer, credential issuer, verifier access). Anchors can carry `relaxProfile` for known-deviant sandboxes, which turns errors into visible warnings. A client profile with `allow-relaxed-profiles: false` ignores it, so a strict verifier refuses what a demo wallet shows with warnings.
 - `HttpFetcher` / `ResourceLoader`: all I/O goes through these, so adapters never open sockets.
 
 **Evaluation pipeline** (`TrustEvaluator`):
@@ -137,16 +140,17 @@ The server is three Maven modules with a strict dependency direction: `trust-cor
 **Operational qualities**
 
 - *Caching:* a TTL cache honours upstream `max-age`, collapses concurrent loads, caches negative DID results for 1 minute and serves stale data for up to 24 hours when an upstream is down. Registry changes invalidate curated metadata.
-- *SSRF:* https only, except allow-listed dev hosts. Private, loopback, link-local, CGNAT and ULA targets are refused. Redirects are re-validated hop by hop, and bodies are capped at 8 MiB.
+- *SSRF:* https only, except allow-listed dev hosts. Private, loopback, link-local, CGNAT and ULA targets (also inside NAT64 and 6to4 addresses) are refused. Each host is resolved once per connection and the socket connects only to the addresses that passed, so DNS rebinding has no window. Redirects are re-validated hop by hop; bodies are capped at 8 MiB and a total deadline stops slow bodies. Proxy settings and cookies are ignored.
 - *Hardened parsing:* XML forbids DOCTYPE and entities. XMLDSig uses secure validation. JWS and COSE algorithms are explicit.
-- *Integrity:* an ES256 service key (JWKS published, thumbprint in discovery) signs snapshots and, on `Accept: application/jwt`, any response. Signed output is audience-bound to the client.
+- *Integrity:* an ES256 service key (JWKS published, thumbprints in discovery) signs snapshots and, on `Accept: application/jwt`, any response. Signed output is audience-bound to the client. The key comes from a JWK file, a PKCS#12/JKS keystore or a PKCS#11 HSM (the key never leaves the token). Previous keys stay in the JWKS during rotation, and discovery lists every thumbprint clients may pin.
+- *Client authentication:* API keys (stored as SHA-256 if wanted), OAuth 2.0 JWT access tokens (RFC 9068, client from `client_id`/`azp`, required scope), and mTLS client certificates (from the TLS connector, or a proxy header believed only from trusted proxy addresses), including certificate-bound tokens (RFC 8705). Per-client token-bucket rate limits answer `429` with `Retry-After`.
 - *Availability:* sources load off the startup thread, and `/actuator/health` reports per-source state. A failing source keeps serving its last good data.
 
-Test coverage: 78 tests (core 46, adapters 16, server 16). They use generated PKIs, a signed federation and VICAL, an XMLDSig-signed TL, a JAdES LoTE and the live EU LOTL as a fixture.
+Test coverage: 102 tests (core 48, adapters 16, server 38). They use generated PKIs, a signed federation and VICAL, an XMLDSig-signed TL, a JAdES LoTE and the live EU LOTL as a fixture.
 
 ## Server API
 
-All endpoints are discoverable from `/.well-known/trust-service`. Clients authenticate with `Authorization: Bearer <api-key>`, and the key selects a client profile; anonymous access is configurable. Errors are RFC 9457 problem details with a stable `code`. Registry reads carry ETags (`304` on `If-None-Match`). Any JSON endpoint returns a service-signed JWT on `Accept: application/jwt`.
+All endpoints are discoverable from `/.well-known/trust-service`, which also lists the accepted authentication methods. Clients authenticate with an API key, an OAuth 2.0 access token or a TLS client certificate, and the credential selects a client profile; anonymous access is configurable. Errors are RFC 9457 problem details with a stable `code`. Registry reads carry ETags (`304` on `If-None-Match`). Any JSON endpoint returns a service-signed JWT on `Accept: application/jwt`.
 
 | Method and path | Purpose | Notes |
 | --- | --- | --- |
@@ -183,11 +187,12 @@ A decision response looks like this, abridged:
 
 | Layer | Responsibility |
 | --- | --- |
-| `TrustClient` facade | `evaluate`, `evaluateIssuer`, `evaluateVerifier`, `evaluateCredential`, `getIssuerMetadata`, `resolveDid`, `validateChain`, `issuers`, `verifiers`, `lookup`, `syncSnapshot`, `snapshotInfo`, `status` events; `decisions: 'local' \| 'service'` |
+| `TrustClient` facade | `evaluate`, `evaluateIssuer`, `evaluateVerifier`, `evaluateCredential`, `getIssuerMetadata`, `resolveDid`, `validateChain`, `checkTokenStatus`, `checkBitstringStatus`, `issuers`, `verifiers`, `lookup`, `syncSnapshot`, `snapshotInfo`, `status` events; `decisions: 'local' \| 'service'` |
 | Snapshot manager | Fetches `trust-snapshot+jwt` (conditional GET, one request shared by concurrent callers), verifies it against service keys pinned by RFC 7638 thumbprint (TOFU optional), checks audience and expiry, refuses rollback to an older `iat`, persists it and re-verifies on load; usable 7 days past expiry with a warning |
 | Local evaluator | The server's `TrustEvaluator` rules over the snapshot (client policy, anchors with provenance, entities, DID documents, anchor CRLs) plus app-bundled anchors and entities; kept equal to the server by a live parity test |
 | Lookups | What may disclose a counterparty, opt-in per kind: issuer metadata and DIDs `direct` (default) or via the service; on-demand registry lookups of unlisted parties (signed, identifier only) |
-| Standards mechanisms | OpenID4VCI 1.0 discovery (insertion rule, `credential_issuer` and AS `issuer` checks, registry metadata policy applied); did:key, did:jwk and did:web; RFC 5280 path validation with the same profiles (EC, Ed25519, RSA PKCS#1 and PSS) |
+| Standards mechanisms | OpenID4VCI 1.0 discovery (insertion rule, `credential_issuer` and AS `issuer` checks, registry metadata policy applied, signed metadata verified on the device even when proxied); did:key, did:jwk and did:web; RFC 5280 path validation with the same profiles (EC, Ed25519, RSA PKCS#1 and PSS); CRLs |
+| Credential status | Token Status List (JWT and CWT) and Bitstring Status List checks shared by wallets and verifiers: the list's signature, signer, subject and freshness; verified lists reused for their `ttl` |
 | Transport | Timeouts, retries with jittered backoff (idempotent calls only), a circuit breaker, RFC 9457 errors, online/offline status |
 | Cache | Pluggable `CacheStore` (memory, or a localStorage/AsyncStorage adapter): the snapshot, pinned keys, metadata and DID documents |
 | Credential helpers | Issuer material per format: mdoc IssuerSigned (including MOSIP's wrapper), SD-JWT VC, JWT VC, JSON-LD VC |
@@ -211,7 +216,7 @@ const trust = createTrustClient({
 const { decision } = await trust.evaluateCredential(mdocB64, 'mso_mdoc', { credentialIssuer });   // decided on the device
 ```
 
-Test coverage: 56 unit tests (real MOSIP and Animo artefacts, generated EC and RSA PKI, Node-generated JWS/EdDSA/RSA-PSS, RFC 7638 vector, both decision modes: snapshot-only traffic, rollback and expiry, strict policy, snapshot DID documents with key rotation, metadata policy, signed on-demand lookups, CRL parsing and revocation rules, CRL sources and relays). A live parity test runs 27 queries under a lenient and a strict client profile through `/evaluate` and on the device, and requires identical decisions, error reasons, entities and revocation status.
+Test coverage: 66 unit tests (real MOSIP and Animo artefacts, generated EC and RSA PKI, Node-generated JWS/EdDSA/RSA-PSS, RFC 7638 vector, both decision modes: snapshot-only traffic, rollback and expiry, strict policy, snapshot DID documents with key rotation, metadata policy, signed metadata, signed on-demand lookups, CRL parsing and revocation rules, CRL sources and relays, status lists and their caching). A live parity test runs 29 queries under a lenient and a strict client profile through `/evaluate` and on the device, and requires identical decisions, error reasons, entities and revocation status.
 
 ## Revocation and credential status
 
@@ -249,17 +254,17 @@ Both are checked on the device, against data whose signature the device verifies
 - Devices never use OCSP. A certificate that publishes only OCSP gets the status *unknown*.
 - Verifier backends that let the service decide can turn on `trust.revocation.ocsp`. The service then checks signed responses, accepts delegated responders, and caches answers until `nextUpdate`.
 
-**Credential status**
+**Credential status.** The checks live in the client library (`checkTokenStatus`, `checkBitstringStatus`), so verifiers get them as well as wallets. A verified list is reused for its `ttl`: 5 minutes when it states none, at most 1 hour, never past its expiry. Only the list URI leaves the device, never the index.
 
 | Format | Mechanism | Verified on the device |
 | --- | --- | --- |
-| SD-JWT VC | IETF Token Status List, `statuslist+jwt` | `typ`, signature and signer, `sub` = the referenced URI, `exp`, the 1, 2 or 8-bit value |
+| SD-JWT VC | IETF Token Status List, `statuslist+jwt` | `typ`, signature and signer, `sub` = the referenced URI, `iat`, `exp`, the 1, 2, 4 or 8-bit value |
 | ISO mdoc | MSO `status.status_list`, which references a Token Status List as `statuslist+cwt` (COSE_Sign1) | The same checks, plus the `certificate` the MSO names |
 | W3C VCDM 2.0 | Bitstring Status List credential | The list credential's Data Integrity proof, same issuer, status purpose, validity |
 
 A status list may be signed by one of:
 
-- the credential's own signer;
+- the credential's own signer (by certificate, or by the same key when the list carries no certificate);
 - a certificate under the same trust anchor;
 - a trusted status list provider.
 
@@ -281,12 +286,14 @@ The wallet is a throwaway Expo app over `@vctrust/wallet-core`, a platform-neutr
 | Area | Implemented (spec) |
 | --- | --- |
 | Issuance flows | Pre-authorized code with `tx_code`; authorization code with PKCE S256, PAR when offered (FAPI2: only `client_id` + `request_uri` at `/authorize`), RFC 9207 `iss` check; wallet-initiated issuance (OID4VCI 1.0) |
-| HAIP issuance | DPoP (RFC 9449) with per-server nonces and `use_dpop_nonce` retries at AS and issuer; wallet attestation (ABCA-07, -12 compatible) with challenge endpoint; key attestation (`key-attestation+jwt`), with a precheck that refuses when the issuer demands stronger key storage than the wallet attests |
-| Credential request | Nonce endpoint and `invalid_nonce` retry; `credential_identifier` vs `credential_configuration_id`; `proofs.jwt`; holder binding by `jwk`/`cose_key`, `did:jwk` or `did:key`; deferred issuance; notification |
+| HAIP issuance | DPoP (RFC 9449) with per-server nonces and `use_dpop_nonce` retries at AS and issuer; wallet attestation (ABCA-07, -12 compatible) at every endpoint whose AS supports it, with a separate instance key per authorization server (no cross-issuer correlation), the challenge endpoint, `OAuth-Client-Attestation-Challenge` and `use_attestation_challenge` / `use_fresh_attestation` retries; key attestation (`key-attestation+jwt`), with a precheck that refuses when the issuer demands stronger key storage than the wallet attests; `locations` in `authorization_details` |
+| Credential request | Nonce endpoint and `invalid_nonce` retry; `credential_identifier` vs `credential_configuration_id`; `proofs.jwt` (ES256 checked against the issuer's algorithms) or `proofs.attestation` when the issuer accepts only key attestations; request and response encryption (JWE ECDH-ES P-256, A128GCM/A256GCM) when the issuer requires it, also at the deferred endpoint; holder binding by `jwk`/`cose_key`, `did:jwk` or `did:key`; deferred issuance |
+| Acceptance | A credential that fails verification, or an SD-JWT VC whose `x5c` issuer is not trusted, is refused and the issuer is notified (`credential_failure`); `credential_accepted` is sent only once stored, `credential_deleted` when the user discards it |
 | Verification: mdoc | COSE\_Sign1 with the DS key; every IssuerSignedItem digest; `validityInfo`; docType; `deviceKey` = holder key; DS chain to IACA via the trust client. Non-standard encodings become explicit warnings |
 | Verification: VCDM 2.0 JSON-LD | `Ed25519Signature2020`, `eddsa-rdfc-2022`, `ecdsa-rdfc-2019` over RDFC-1.0 with bundled contexts; safe mode (undefined terms are reported as unsigned); issuer key control, including key equivalence across DIDs; `assertionMethod`; validity; holder `did:jwk`; Bitstring Status List |
-| Verification: SD-JWT VC | x5c, DID kid or `jwt-vc-issuer` key resolution; disclosure digests and rejection of unreferenced disclosures; `cnf`; Token Status List |
-| Presentation (OID4VP 1.0 / HAIP) | `request_uri` (GET, or POST with `wallet_metadata` and `wallet_nonce`); JAR `typ` and signature checks; `x509_hash`, `x509_san_dns`, `decentralized_identifier`, `redirect_uri`; verifier trust via the trust client; DCQL (`credential_sets`, `claim_sets`, `values`, `trusted_authorities`); SD-JWT+KB; mdoc DeviceResponse with OpenID4VPHandover; ldp\_vp; `direct_post` and `direct_post.jwt` (ECDH-ES P-256, A128GCM/A256GCM) |
+| Verification: SD-JWT VC | `typ` `dc+sd-jwt`; x5c, DID kid or `jwt-vc-issuer` key resolution; disclosure digests and rejection of unreferenced disclosures; `cnf`; Token Status List |
+| Presentation (OID4VP 1.0 / HAIP) | `request_uri` (GET, or POST with `wallet_metadata` and `wallet_nonce`) with `client_id` required alongside; JAR `typ`, signature, `exp`/`nbf`; `x509_hash`, `x509_san_dns`, `decentralized_identifier`, `redirect_uri`; verifier trust enforced (an `x509_*` verifier must be TRUSTED, a NOT\_TRUSTED one is always refused); DCQL (`credential_sets`, `claim_sets` per candidate, `values`, `trusted_authorities`, holder binding required by default); minimal disclosure by claim path (nothing selectively disclosable when no claims are requested); SD-JWT+KB; mdoc DeviceResponse with OpenID4VPHandover; ldp\_vp; `direct_post` and `direct_post.jwt` (ECDH-ES to a JWK with `alg`, A128GCM/A256GCM); `invalid_request` / `invalid_transaction_data` returned to an authenticated verifier once the user has seen the error |
+| Display | Issuer, credential and verifier logos as PNG or SVG, from https or `data:` URIs (react-native-svg on devices) |
 
 **Use of the client library.**
 
@@ -307,12 +314,17 @@ The service is a policy decision point that wallets act on, so its answers must 
 | --- | --- |
 | Forged or replayed trust answers | Snapshots and opt-in responses are ES256 JWTs from the service key, audience-bound to the client. Clients pin the key by RFC 7638 thumbprint, re-verify the stored snapshot on load, and never replace it with an older (`iat`) or expired one; TLS in transit |
 | Fallback that fails open | Only a verified snapshot or a pinned anchor yields `TRUSTED`; otherwise `UNKNOWN`. In service mode the device takes over only on unavailability, never on policy errors. Every decision carries `source` and its snapshot version |
-| Device and service decide differently | One rule set in two implementations, held equal by a live parity test (27 queries under a lenient and a strict profile: same decision, error reasons, entity and revocation status). The snapshot carries the client policy so both apply the same profile |
+| Device and service decide differently | One rule set in two implementations, held equal by a live parity test (29 queries under a lenient and a strict profile: same decision, error reasons, entity and revocation status). The snapshot carries the client policy so both apply the same profile |
 | Tampered or stale trust lists | XMLDSig/XAdES (ETSI TL), JAdES (LoTE), COSE (VICAL) and federation chains are verified against pinned anchors. Expired LoTEs are rejected; `nextUpdate` drives refresh; a failing source keeps its last good data and the failure shows in health |
-| SSRF through the metadata or DID proxy | https only; private, loopback, link-local, CGNAT and ULA targets refused (DNS-resolved, re-checked per redirect hop); 8 MiB cap; timeouts; strict clients can forbid proxying unregistered issuers. Residual risk: DNS rebinding between check and connect |
+| SSRF through the metadata or DID proxy | https only; private, loopback, link-local, CGNAT and ULA targets refused; each host resolved once per connection and connected only at vetted addresses (no DNS-rebinding window), re-checked per redirect hop; 8 MiB cap; timeouts and a total deadline; strict clients can forbid proxying unregistered issuers |
+| Stolen or guessed API credentials | OAuth 2.0 access tokens and mTLS for production, certificate-bound tokens, hashed API keys in configuration, per-client rate limits; the admin API needs an admin client |
+| Service signing key compromise | Key in a PKCS#11 HSM or a keystore; rotation keeps previous keys in the JWKS while clients move their pinned thumbprints |
 | Cross-purpose trust | Anchors are partitioned by trust domain (IACA, credential issuer, verifier access, wallet provider, status list), each with its own certificate profile |
 | Malicious XML / CBOR / JSON | DOCTYPE and external entities disabled, XMLDSig secure validation; size-capped inputs; explicit algorithm allow-lists (no `alg: none`) |
-| Verifier impersonation | JAR `typ` and signature checks, `x509_hash` / SAN binding, `response_uri` host rule for `x509_san_dns`, `client_id` equality between query and request object, trusted verifier-access CA |
+| Verifier impersonation | JAR `typ`, signature and expiry checks, `x509_hash` / SAN binding, `response_uri` host rule for `x509_san_dns`, `client_id` equality between query and request object; the wallet refuses to present unless the `x509_*` verifier chains to a trusted verifier-access CA |
+| Spoofed issuer metadata | TLS, plus signed metadata where an ecosystem requires it: `x5c` chain to a credential-issuer anchor, no self-signed signer, `sub`, `iat`, `exp`; verified on the device even when it comes through the proxy |
+| Over-disclosure | Only the claims on the requested DCQL paths are disclosed; credentials without holder binding are offered only when the verifier allows it |
+| Sandbox deviations leaking into production decisions | `relaxProfile` anchors downgrade profile errors to warnings only for client profiles that allow it; strict verifiers see the errors |
 | Credentials borrowing trust | The issuer query uses the identifier inside the credential (`iss`/`issuer`), not the endpoint that delivered it; for JSON-LD the issuer must control the signing key |
 | Context substitution (JSON-LD) | Standard contexts are bundled; remote fetches are https-only and flagged; safe-mode canonicalization flags terms not covered by the signature |
 | Privacy | Wallets decide on the device: by default the service sees only snapshot and JWKS requests, never issuers, verifiers, certificates or credentials (asserted by a live test). Metadata and DID lookups go to the party directly; through the service (opt-in) the proxy hides wallet IPs instead. The server logs no credential contents |
@@ -320,15 +332,15 @@ The service is a policy decision point that wallets act on, so its answers must 
 | Revocation checks revealing who presents what | No OCSP on the device. Anchor CRLs arrive with the snapshot, and other CRLs are per CA. Status lists come from the issuer by default; the relay is opt-in |
 | Tampered relay, cache or status list | CRLs are verified against the issuing CA. Status lists are checked for signature, signer, subject and expiry; Bitstring lists also for the list credential's proof and issuer. A relay can withhold data, which leaves the status unknown, but it cannot forge it |
 
-The API is authenticated by API key mapped to a client profile; the admin API needs an admin client. Production should front it with mTLS or OAuth client credentials and rate limiting, and keep the signing key in an HSM/KMS (the demo uses a JWK file).
+The demo authenticates clients with API keys and signs with a JWK file. Production configuration switches on OAuth access tokens or mTLS and rate limits, and moves the signing key into a PKCS#11 HSM; the configuration reference shows both.
 
 ## Testing strategy and results
 
 Testing runs in three layers.
 
-1. **Deterministic suites:** 78 Java, 56 trust-client and 19 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors and real artefacts.
+1. **Deterministic suites:** 102 Java, 66 trust-client and 31 wallet-core tests. They use generated PKIs, signed fixtures, spec test vectors, real artefacts and an in-memory HAIP issuer for the issuance details no live issuer exercises (credential encryption, attestation proofs, refusal and notification).
 2. **Live end-to-end suites:** wallet-core against public issuers and verifiers through a running trust service.
-3. **Playwright UI tests** of the Expo web build.
+3. **UI tests:** Playwright on the Expo web build, and the same app in Expo Go on an Android emulator (Hermes).
 
 No local issuer is used; every credential below was issued by a live third-party service.
 
@@ -342,15 +354,16 @@ No local issuer is used; every credential below was issued by a live third-party
 | Animo EUDI PID SD-JWT VC | x5c issuer chain, disclosures, `cnf` | valid, TRUSTED |
 | Present mDL and SD-JWT to the Animo verifier | OID4VP 1.0: `x509_hash`, `request_uri`, DCQL, DeviceResponse with handover, KB-JWT, `direct_post.jwt` A256GCM | verifier `ResponseVerified` |
 | MOSIP Farmer VCDM 2.0 JSON-LD | Authorization code + PKCE via eSignet, `did:jwk` binding, Ed25519Signature2020, did:web | valid, TRUSTED (warnings for undefined terms) |
-| MOSIP Land VCDM 2.0 JSON-LD | Same | signature invalid (issuer defect; Digital Bazaar library agrees) |
-| MOSIP mock mDL | Non-ISO mdoc | valid, TRUSTED via `relaxProfile`; four deviations flagged |
+| MOSIP Land VCDM 2.0 JSON-LD | Same | refused: signature invalid (issuer defect; Digital Bazaar library agrees) |
+| MOSIP mock mDL | Non-ISO mdoc | valid, TRUSTED via `relaxProfile` for the wallet profile; deviations flagged; refused under the strict verifier profile |
 | Outage with a synced snapshot (service mode) | Fallback: direct discovery, local did:web, local X.509, snapshot decisions, circuit-breaker recovery | issuance and presentation work; source `snapshot` |
 | Outage without a snapshot | Fallback must not fail open | verified; trust `UNKNOWN` |
 | Decisions on the device (default mode) | mDL issue and present (Animo), JSON-LD issue (MOSIP); every request to the trust service recorded | only snapshot and JWKS requests; TRUSTED from the snapshot; MOSIP DID document from the snapshot |
-| Evaluator parity | 27 queries under lenient and strict profiles: mdoc, SD-JWT and verifier chains, revoked and on-hold Document Signers, DID keys, status, authorizations, trusted\_authorities, live Animo and MOSIP entries | service and device identical (decision, error reasons, entity, revocation status) |
+| Evaluator parity | 29 queries under lenient and strict profiles: mdoc, SD-JWT and verifier chains, revoked and on-hold Document Signers, a relaxed sandbox anchor, DID keys, status, authorizations, trusted\_authorities, live Animo and MOSIP entries | service and device identical (decision, error reasons, entity, revocation status) |
 | Revocation (Animo) | Animo mDL Document Signer against the IACA CRL from https://playground.animo.id/crl, compiled into the snapshot | not revoked, with no extra request (privacy test); the same result when the service decides |
 | Relays | The Animo CRL and the MOSIP Land status list, fetched through the service | verified on the device; MOSIP's list is signed with a key missing from its DID document, so the status is unknown |
 | Wallet web UI (Playwright) | Settings and trust list, mDL issue and present decided on the device, the same decision by the service in service mode, outage; MOSIP JSON-LD (opt-in) | pass |
+| Wallet on Android (Expo Go, emulator) | Deep-linked Animo offers (pre-authorized; DPoP + wallet attestation), mDL presentation to the Animo verifier, revocation evidence | TRUSTED, *not revoked*; verifier reports `ResponseVerified` |
 
 The offline suites include spec vectors, so wire formats are checked byte for byte:
 
@@ -369,9 +382,10 @@ One `application.yml` drives everything: frameworks, sources, clients, HTTP limi
 **Running locally**
 
 ```sh
-scripts/build.sh                # mvn install (78 tests) + npm builds
+scripts/build.sh                # mvn install (102 tests) + npm builds
 scripts/start-trust-server.sh   # :8090, loads Animo / MOSIP / EBSI sources
 scripts/test-all.sh             # offline suites, then live end-to-end (internet)
+scripts/android.sh setup|start  # the wallet in Expo Go on an Android emulator
 ```
 
 **Observability.**
@@ -388,11 +402,16 @@ scripts/test-all.sh             # offline suites, then live end-to-end (internet
 - *New certificate profile:* a `CertificateProfile` bound to a trust domain.
 - *Client storage:* any `KeyValueStorage` (AsyncStorage, localStorage).
 
+**Continuous integration.** `.github/workflows/ci.yml` runs the offline suites, the typechecks and the web and Android bundles.
+
 **Roadmap and open questions**
 
-- [ ] Production auth: mTLS or OAuth client credentials instead of static API keys; signing key in HSM/KMS.
-- [ ] Status checks in the service (Token Status List and Bitstring); today the wallet checks status itself.
-- [ ] Pin the IP between DNS check and connect, to close the residual DNS-rebinding window in the SSRF guard.
-- [ ] Signed issuer metadata (`openidvci-issuer-metadata+jwt`) is verified when served; decide whether HAIP ecosystems should require it.
-- [ ] DC API (`dc_api.jwt`) presentation in the wallet; the decision engine already supports the `origin:` client\_id prefix.
-- [ ] Report MOSIP collab defects upstream: the Land signature, the pre-auth token audience and the mdoc encoding.
+- [x] Production auth (OAuth 2.0 access tokens, mTLS, rate limits) and an HSM-capable signing key with rotation.
+- [x] Status checks for verifiers: in the client library, used by wallets and verifier backends alike. The service relays lists but does not decide status, because the status index identifies the credential.
+- [x] DNS rebinding in the SSRF guard: closed by connecting only to the vetted addresses.
+- [x] Signed issuer metadata: verified wherever it is served; required per client profile (`require-signed-issuer-metadata`) for HAIP ecosystems that ask for it.
+- [x] MOSIP's non-ISO mock mDL: trusted with warnings for wallet profiles that allow relaxed anchors, refused by strict verifiers (`allow-relaxed-profiles: false`).
+- [ ] DC API (`dc_api.jwt`) presentation needs a native wallet registered with the platform's credential manager; the Expo demo uses the redirect flow. The decision engine already supports the `origin:` client\_id prefix.
+- [ ] Batch issuance: several instances of one credential for one-time use (HAIP: when a wallet wants more than one, it SHOULD use batch requests).
+- [ ] iOS: not tested yet; the app runs on the web and on Android.
+- [ ] File the MOSIP collab defect reports (drafts in `docs/upstream-reports.md`).

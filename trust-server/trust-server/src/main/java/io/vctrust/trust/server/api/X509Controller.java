@@ -63,7 +63,7 @@ public class X509Controller {
         PathValidationResult r = validator.validate(Certificates.fromBase64List(body.chain()), anchors,
                 new X509PathValidator.Options(body.time(), CertificateProfiles.forDomain(domain),
                         new CertificateProfile.ProfileContext(body.expectedDnsName(), body.docType()), null)
-                        .withRevocation(revocation, client.requireRevocationStatus()));
+                        .withRevocation(revocation, client.requireRevocationStatus()).withRelaxedProfiles(client.allowRelaxedProfiles()));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("domain", domain.name());
         out.put("result", r);

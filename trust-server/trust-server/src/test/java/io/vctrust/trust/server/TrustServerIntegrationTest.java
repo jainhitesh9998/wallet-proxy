@@ -45,11 +45,17 @@ class TrustServerIntegrationTest {
     static final TestPki.Issued ROGUE_DS = TestPki.documentSigner("CN=Rogue DS,C=UT", ROGUE_IACA);
     static final TestPki.Issued REVOKED_DS = TestPki.documentSigner("CN=Revoked DS,C=UT", IACA);
     static final TestPki.Issued PUSHED_IACA = TestPki.rootCa("CN=Pushed IACA,C=UT");
+    static final com.nimbusds.jose.jwk.ECKey AS_KEY;
     static final HttpServer UPSTREAM;
     static final String UPSTREAM_BASE;
     static Path dataDir;
 
     static {
+        try {
+            AS_KEY = new com.nimbusds.jose.jwk.gen.ECKeyGenerator(com.nimbusds.jose.jwk.Curve.P_256).keyID("as-key").generate();
+        } catch (com.nimbusds.jose.JOSEException e) {
+            throw new IllegalStateException(e);
+        }
         try {
             UPSTREAM = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
             UPSTREAM_BASE = "http://localhost:" + UPSTREAM.getAddress().getPort();
@@ -165,6 +171,11 @@ class TrustServerIntegrationTest {
         r.add("trust.clients[2].api-key", () -> "key-admin");
         r.add("trust.clients[2].admin", () -> "true");
         r.add("trust.anonymous.enabled", () -> "false");
+        Path jwks = dataDir.resolve("as-jwks.json");
+        Files.writeString(jwks, new JWKSet(AS_KEY.toPublicJWK()).toString());
+        r.add("trust.auth.oauth.enabled", () -> "true");
+        r.add("trust.auth.oauth.issuer", () -> "https://as.trust.test");
+        r.add("trust.auth.oauth.jwks-uri", () -> jwks.toUri().toString());
         r.add("trust.service.snapshot-ttl", () -> "PT4S");
     }
 
@@ -481,6 +492,47 @@ class TrustServerIntegrationTest {
         SignedJWT jwt = SignedJWT.parse(signed.body());
         assertThat(jwt.getHeader().getType().toString()).isEqualTo("trust-registry+jwt");
         assertThat((List<?>) jwt.getJWTClaimsSet().getClaim("data")).isEmpty();
+    }
+
+    static String accessToken(String clientId, String audience) throws Exception {
+        Instant now = Instant.now();
+        com.nimbusds.jwt.SignedJWT jwt = new com.nimbusds.jwt.SignedJWT(new com.nimbusds.jose.JWSHeader.Builder(com.nimbusds.jose.JWSAlgorithm.ES256)
+                .type(new com.nimbusds.jose.JOSEObjectType("at+jwt")).keyID("as-key").build(),
+                new com.nimbusds.jwt.JWTClaimsSet.Builder().issuer("https://as.trust.test").audience(audience).claim("client_id", clientId)
+                        .subject(clientId).issueTime(java.util.Date.from(now)).expirationTime(java.util.Date.from(now.plusSeconds(300))).build());
+        jwt.sign(new com.nimbusds.jose.crypto.ECDSASigner(AS_KEY));
+        return jwt.serialize();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void oauthAccessTokensAndPublishedAuthMethods() throws Exception {
+        var issuers = get("/api/v1/issuers", accessToken("wallet-a", "https://trust.test"));
+        assertThat(issuers.statusCode()).isEqualTo(200);
+        assertThat(get("/admin/v1/sources", accessToken("wallet-a", "https://trust.test")).statusCode()).isEqualTo(403);
+        assertThat(get("/admin/v1/sources", accessToken("admin", "https://trust.test")).statusCode()).isEqualTo(200);
+        var wrongAudience = get("/api/v1/issuers", accessToken("wallet-a", "https://other.test"));
+        assertThat(wrongAudience.statusCode()).isEqualTo(401);
+        assertThat(wrongAudience.headers().firstValue("WWW-Authenticate").orElse("")).contains("error=\"invalid_token\"");
+        assertThat(json(wrongAudience).get("code")).isEqualTo("invalid_token");
+        assertThat(get("/api/v1/issuers", accessToken("nobody", "https://trust.test")).statusCode()).isEqualTo(401);
+
+        var d = json(get("/.well-known/trust-service", null));
+        assertThat((List<String>) d.get("auth_methods_supported")).containsExactly("api_key", "oauth2_jwt");
+        assertThat(d.get("oauth_token_issuer")).isEqualTo("https://as.trust.test");
+        assertThat((List<String>) d.get("signing_key_thumbprints")).containsExactly((String) d.get("signing_key_thumbprint"));
+    }
+
+    @Test
+    void errorsAreProblemJsonWhateverTheRequestAccepts() throws Exception {
+        var r = get("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/status/page", "key-a", "Accept", "application/pkix-crl");
+        assertThat(r.statusCode()).isEqualTo(502);
+        assertThat(r.headers().firstValue("Content-Type").orElse("")).startsWith("application/problem+json");
+        assertThat(json(r).get("code")).isEqualTo("invalid_crl");
+        var missing = get("/api/v1/revocation/status-list", "key-a", "Accept", "application/statuslist+jwt");
+        assertThat(missing.statusCode()).isEqualTo(400);
+        assertThat(missing.headers().firstValue("Content-Type").orElse("")).startsWith("application/problem+json");
+        assertThat(missing.body()).isNotBlank();
     }
 
     @Test

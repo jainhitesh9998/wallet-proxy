@@ -24,7 +24,10 @@ Every certificate below the trust anchor is checked against a CRL that its issue
   - `x509.revoked` or `x509.on_hold` (ERROR, so the decision is `NOT_TRUSTED`);
   - `x509.revocation_unknown`: a WARNING, or an ERROR when the client profile sets `requireRevocationStatus` (carried in the snapshot policy).
 - **No OCSP on the device.** An OCSP request names the exact certificate being checked. A certificate that publishes only OCSP is reported as unknown. A verifier backend can enable OCSP on the service (`trust.revocation.ocsp`).
-- **Credential status lists** (Token Status List, Bitstring Status List) are fetched with `fetchStatusList()` per `lookups.statusLists`. `@vctrust/wallet-core` verifies them, including through the relay: signature, signer, subject and expiry, and for Bitstring lists the list credential's proof and issuer.
+- **Credential status lists** are checked here, for wallets and verifiers alike:
+  - `checkTokenStatus(ref, { form })`: IETF Token Status List, `statuslist+jwt` (SD-JWT VC) or `statuslist+cwt` (ISO mdoc MSO `status`). Checked: `typ`, signature, signer (the credential's signer, a certificate under the credential's anchor, or a trusted `status-list` provider), `sub`, `iat`, `exp`, `bits`.
+  - `checkBitstringStatus(entry, { issuer, verifyListCredential })`: W3C Bitstring Status List; the list credential's proof (verified by the caller's JSON-LD verifier), issuer, purpose and validity.
+  - Lists are fetched per `lookups.statusLists` and reused for their `ttl` (5 min without one, at most 1 h, never past expiry). A relay or cache can withhold a list, which leaves the status unknown, but cannot forge it.
 
 ```ts
 import { createTrustClient, KeyValueCacheStore } from '@vctrust/trust-client';
@@ -37,6 +40,7 @@ const trust = createTrustClient({
   cache: new KeyValueCacheStore(localStorage),                                      // or AsyncStorage; persists the snapshot
   // decisions: 'local',                                    // default; 'service' for verifier backends / thin clients
   // lookups: { metadata: 'direct', did: 'direct', unknownParties: false },   // local-mode defaults
+  // issuerMetadata: { signed: 'off' },                     // 'verify' | 'require': signed issuer metadata (OID4VCI §12.2.3)
   fallback: { localAnchors: [{ domain: 'mdoc-iaca', certificate: IACA_PEM }] },   // optional app-pinned anchors
 });
 const { decision } = await trust.evaluateCredential(credential, 'mso_mdoc');   // decided on this device
@@ -72,6 +76,7 @@ const { decision } = await trust.evaluateCredential(credential, 'mso_mdoc');   /
 | `getIssuerMetadata(issuer)` | per `lookups.metadata` | per `lookups.metadata` (default proxy, direct while unreachable) |
 | `resolveDid(didUrl)` | per `lookups.did` | per `lookups.did` |
 | `syncSnapshot()`, `snapshotInfo()` | Download / describe the snapshot | Same |
+| `checkTokenStatus(ref)`, `checkBitstringStatus(entry)` | Fetched per `lookups.statusLists`, verified on the device, cached for the list's `ttl` | Same |
 | `fetchCrls(urls)`, `fetchStatusList(uri, accept)` | per `lookups.crl` / `lookups.statusLists`; the caller verifies what comes back | Same |
 
 Every `TrustDecision` says who decided:
@@ -81,6 +86,20 @@ Every `TrustDecision` says who decided:
   - `fallback`: this device decided with app-pinned anchors only.
 - `reasons`: includes `local.snapshot` (INFO) or, in service mode, `fallback.snapshot` (WARNING).
 - In service mode, fallback happens only on `TrustServiceUnavailableError` (network failure, timeout, 5xx, open circuit). `TrustServiceError` (for example a 403 policy denial) and `TrustIntegrityError` (for example a bad snapshot signature) are thrown, never bypassed.
+
+### Signed issuer metadata
+`issuerMetadata.signed` (or a client profile with `requireSignedIssuerMetadata`, from the snapshot policy):
+- `'verify'` asks issuers for `application/jwt` and uses signed metadata when served; `'require'` refuses issuers without it.
+- The JWT must have `typ: openidvci-issuer-metadata+jwt`, an asymmetric `alg`, an `x5c` whose leaf is not self-signed and chains to a `credential-issuer` anchor, `sub` equal to the Credential Issuer, `iat`, and no past `exp`.
+- Signed metadata that arrives through the service's proxy is verified again on the device; the registry's metadata policy is then applied locally.
+
+### Client policy from the snapshot
+| Policy | Effect on the device |
+| --- | --- |
+| `strictAuthorization` | entities without explicit authorizations are not authorized |
+| `requireRevocationStatus` | an undeterminable certificate status is an error |
+| `requireSignedIssuerMetadata` | unsigned issuer metadata is refused |
+| `allowRelaxedProfiles` (default true) | anchors' `relaxProfile` turns certificate-profile errors into warnings; false enforces the profile |
 
 ## Verifier example: trust the issuer of a presented mdoc
 
@@ -95,14 +114,20 @@ if (decision.decision !== 'TRUSTED') reject(decision.summary, decision.reasons);
 // DCQL trusted_authorities matching (aki / etsi_tl / openid_federation)
 const r = await trust.evaluateCredential(sdJwt, 'dc+sd-jwt', { trustedAuthorities: [{ type: 'aki', values: [aki] }] });
 const matched = r.decision.evidence?.trustedAuthorities?.some((m) => m.matched);
+
+// The credential's status (MSO status.status_list), against the decision's anchor
+const status = await trust.checkTokenStatus({ idx, uri }, { form: 'cwt', signerX5c: x5chain, decision });
+if (status.status === 'revoked' || status.status === 'suspended') reject(status.detail);
 ```
 
 Building blocks are exported for reuse:
 - `LocalEvaluator`, `parseCertificate`, `validateCertificateChain`, `validateChainOnDevice`
 - `parseCrl`, `checkRevocation`, `verifyX509Signature`
+- `checkTokenStatus`, `checkBitstringStatus` (standalone, with your own fetcher)
+- `fetchIssuerMetadata`, `verifySignedMetadata`
 - `decodeJws`, `verifyJws`, `verifySignature`, `coseAlgToJose`
 - `resolveDidLocally`, `verificationMethodPublicKey`
-- `fetchIssuerMetadata`, `applyMetadataPolicy`
+- `applyMetadataPolicy`
 - the `cbor` codec
 
-Tests: `npx vitest run` (56 tests). `npm run test:live` adds the parity test against a running trust service. It runs 27 queries, including revoked, on-hold and covered Document Signers, under a lenient profile and a strict one (strict authorization, revocation status required), and compares `/evaluate` with the device for each.
+Tests: `npx vitest run` (66 tests). `npm run test:live` adds the parity test against a running trust service. It runs 29 queries, including revoked, on-hold and covered Document Signers and a relaxed sandbox anchor, under a lenient profile and a strict one (strict authorization, revocation status required, relaxed anchors refused), and compares `/evaluate` with the device for each.

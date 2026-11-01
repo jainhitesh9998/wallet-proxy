@@ -23,7 +23,8 @@ export const OAUTH_CHANNEL = 'vctwallet-oauth';
 /** Routes an incoming URL (QR content, deep link) to the right screen. Returns false when not recognised. */
 export function routeIncoming(raw: string): boolean {
   let url = raw.trim();
-  const wrapped = /^vctwallet:\/\/(receive|present)\?(?:uri|offer|request)=(.+)$/.exec(url);
+  // vctwallet://receive?offer=… (development build) or exp://host:port/--/receive?offer=… (Expo Go)
+  const wrapped = /^(?:vctwallet:\/\/|exps?:\/\/[^?#]*\/--\/)(receive|present)\?(?:uri|offer|request)=(.+)$/.exec(url);
   if (wrapped) url = decodeURIComponent(wrapped[2]!);
   const nonce = Date.now();
   if (/^(io\.mosip\.residentapp\.inji:\/\/|vctwallet:\/\/oauth-callback)/.test(url) || /[?&]code=.+[?&]state=|[?&]state=.+[?&]code=/.test(url) && !/credential_offer|request_uri/.test(url)) {

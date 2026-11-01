@@ -104,7 +104,7 @@ async function issuerKey(header: Record<string, unknown>, payload: Record<string
 }
 
 export async function verifySdJwtVc(credential: string, opts: { trust?: TrustClient; fetch?: typeof fetch; holderJwk?: Jwk; now?: Date;
-  credentialIssuer?: string; checkStatus?: boolean }): Promise<VerificationReport> {
+  credentialIssuer?: string; checkStatus?: boolean; format?: string }): Promise<VerificationReport> {
   const checks = new Checks();
   const f = opts.fetch ?? fetch;
   const now = opts.now ?? new Date();
@@ -113,13 +113,17 @@ export async function verifySdJwtVc(credential: string, opts: { trust?: TrustCli
   let issuerInfo = { format: 'dc+sd-jwt' } as ReturnType<typeof extractIssuerInfo>;
   let vct: string | undefined;
   let statusRef: StatusListReference | undefined;
+  let signerKey: PublicKey | undefined;
   try {
     issuerInfo = extractIssuerInfo(credential, 'dc+sd-jwt');
     const { issuerJwt, disclosures } = parseSdJwt(credential);
     const jws = decodeJws<Record<string, unknown>>(issuerJwt);
+    // SD-JWT VC §3.2.1: typ MUST be dc+sd-jwt; vc+sd-jwt is tolerated only for the pre-1.0 format of that name.
     if (jws.header.typ === 'dc+sd-jwt') checks.pass('sdjwt.typ', 'Media type', 'dc+sd-jwt');
-    else checks.warn('sdjwt.typ', 'Media type', `typ ${String(jws.header.typ)}`);
+    else if (opts.format === 'vc+sd-jwt' && jws.header.typ === 'vc+sd-jwt') checks.warn('sdjwt.typ', 'Media type', 'vc+sd-jwt (pre-1.0 format)');
+    else checks.fail('sdjwt.typ', 'Media type', `typ ${String(jws.header.typ)}; dc+sd-jwt is required`);
     const { key, how } = await issuerKey(jws.header, jws.payload, f, opts.trust);
+    signerKey = key;
     if (verifyJws(jws, key)) checks.pass('sdjwt.signature', 'Issuer signature', `${String(jws.header.alg)} via ${how}`);
     else checks.fail('sdjwt.signature', 'Issuer signature', 'Signature does not verify');
     if ((jws.payload._sd_alg ?? 'sha-256') !== 'sha-256') throw new Error(`Unsupported _sd_alg ${String(jws.payload._sd_alg)}`);
@@ -145,7 +149,7 @@ export async function verifySdJwtVc(credential: string, opts: { trust?: TrustCli
   }
   const trust = opts.trust ? await opts.trust.evaluate(issuerTrustQuery(issuerInfo, opts.credentialIssuer)) : null;
   if (statusRef && opts.checkStatus !== false) {
-    const s = await checkTokenStatus(statusRef, { trust: opts.trust, fetch: f, signerX5c: issuerInfo.x5c, decision: trust, now });
+    const s = await checkTokenStatus(statusRef, { trust: opts.trust, fetch: f, signerX5c: issuerInfo.x5c, signerKey, decision: trust, now });
     if (s.status === 'valid') checks.pass('sdjwt.status', 'Status', s.detail);
     else if (s.status === 'unknown') checks.warn('sdjwt.status', 'Status', s.detail);
     else checks.fail('sdjwt.status', 'Status', `${s.status}: ${s.detail}`);

@@ -64,6 +64,7 @@ test('demo wallet: trust settings, mDL issuance, presentation, outage fallback',
     await expect(page.getByTestId('snapshot-version')).toContainText('version');
     await expect(page.getByTestId('snapshot-contents')).toContainText('DID documents');
     await expect(page.getByTestId('snapshot-contents')).toContainText('CRLs');
+    await expect(page.getByTestId('snapshot-policy')).toContainText('relaxed anchors honoured');
     await expect(page.getByTestId('settings-trust-status')).toHaveText('Trust service: online');
     await expect(page.getByTestId('settings-trust-status-mode')).toContainText('Decisions on this device · trust list v');
   });

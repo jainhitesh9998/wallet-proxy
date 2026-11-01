@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { liveTrust } from './live-trust.js';
-import { Oid4vciClient, SoftwareKeyStore, type IssuerClientRegistration } from '../src/index.js';
+import { IssuanceError, Oid4vciClient, SoftwareKeyStore, type IssuerClientRegistration } from '../src/index.js';
 // Headless eSignet OTP login (Playwright) from tools/mosip-issuance
 // @ts-expect-error untyped helper script
 import { loginAndGetCode } from '../../../tools/mosip-issuance/issue.mjs';
@@ -34,11 +34,15 @@ describe('MOSIP collab (W3C VCDM 2.0 JSON-LD, mDL)', () => {
       expect(session.issuerTrust.decision).toBe('TRUSTED');
       const { authorizationUrl } = await session.beginAuthorization();
       const { redirectUrl } = await loginAndGetCode(authorizationUrl, REDIRECT, { log: () => undefined });
-      const [cred] = await session.completeAuthorization(redirectUrl);
-      log(`\n== ${config}: format=${cred!.format} valid=${cred!.report?.valid} trusted=${cred!.report?.trusted}`);
-      for (const c of cred!.report!.checks) log(`  [${c.status}] ${c.label}: ${c.detail ?? ''}`.slice(0, 200));
-      expect(cred!.report!.valid).toBe(expectValid);
-      expect(cred!.report!.trust?.decision).toBe('TRUSTED');
+      // A credential that fails verification is refused (credential_failure to the issuer); its report comes with the error.
+      const outcome = await session.completeAuthorization(redirectUrl).then(([c]) => ({ cred: c!, report: c!.report! }),
+        (e: unknown) => { if (e instanceof IssuanceError && e.code === 'invalid_credential' && e.report) return { cred: undefined, report: e.report }; throw e; });
+      const { report } = outcome;
+      log(`\n== ${config}: format=${report.format} valid=${report.valid} trusted=${report.trusted}${outcome.cred ? '' : ' (refused)'}`);
+      for (const c of report.checks) log(`  [${c.status}] ${c.label}: ${c.detail ?? ''}`.slice(0, 200));
+      expect(report.valid).toBe(expectValid);
+      expect(!!outcome.cred).toBe(expectValid);
+      expect(report.trust?.decision).toBe('TRUSTED');
     }, 180_000);
   }
 });

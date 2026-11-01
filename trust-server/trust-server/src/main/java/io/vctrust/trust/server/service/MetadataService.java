@@ -88,6 +88,11 @@ public class MetadataService {
             throw new ApiException(HttpStatus.BAD_GATEWAY, "fetch_failed", e.getMessage());
         }
         IssuerMetadata md = hit.value();
+        if (client.requireSignedIssuerMetadata() && !Boolean.TRUE.equals(md.signedMetadataVerified())) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "signed_metadata_required", credentialIssuer
+                    + (md.signedMetadataVerified() == null ? " serves no signed metadata" : " serves signed metadata whose signer is not trusted")
+                    + ", which client " + client.clientId() + " requires");
+        }
         TrustDecision decision = evaluator.evaluate(new TrustQuery(EntityRole.CREDENTIAL_ISSUER,
                 new TrustQuery.Subject(credentialIssuer, null, null, null),
                 new TrustQuery.Context("oid4vci", null, null, null, null, null)), client);

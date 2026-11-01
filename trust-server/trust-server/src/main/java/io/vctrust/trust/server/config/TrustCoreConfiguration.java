@@ -9,6 +9,10 @@ import io.vctrust.trust.core.did.HttpRegistryDidDriver;
 import io.vctrust.trust.core.did.UniversalResolverDriver;
 import io.vctrust.trust.core.evaluation.TrustEvaluator;
 import io.vctrust.trust.core.metadata.IssuerMetadataResolver;
+import io.vctrust.trust.core.model.TrustDomain;
+import io.vctrust.trust.core.x509.CertificateProfiles;
+import io.vctrust.trust.core.x509.ValidationIssue;
+import io.vctrust.trust.core.x509.PathValidationResult;
 import io.vctrust.trust.core.model.TrustFramework;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
@@ -193,10 +197,22 @@ public class TrustCoreConfiguration {
                 props.getRevocation().isEnabled() ? revocation : null);
     }
 
+    /**
+     * The metadata proxy asks issuers for signed metadata and uses it when its signer chains to a credential-issuer
+     * anchor (rejected signatures fall back to JSON, flagged); clients with require-signed-issuer-metadata get only
+     * verified signed metadata.
+     */
     @Bean
-    IssuerMetadataResolver issuerMetadataResolver(HttpFetcher http, Clock clock, TrustProperties props) {
+    IssuerMetadataResolver issuerMetadataResolver(HttpFetcher http, Clock clock, TrustProperties props, TrustRegistry registry,
+                                                  X509PathValidator validator) {
+        IssuerMetadataResolver.SignerTrust signerTrust = chain -> {
+            PathValidationResult r = validator.validate(chain, registry.snapshot().anchors(TrustDomain.CREDENTIAL_ISSUER),
+                    new X509PathValidator.Options(clock.instant(), CertificateProfiles.forDomain(TrustDomain.CREDENTIAL_ISSUER), null, null));
+            return r.valid() ? null : r.issues().stream().filter(ValidationIssue::isError).map(ValidationIssue::message)
+                    .reduce((x, y) -> x + "; " + y).orElse("no trusted anchor");
+        };
         return new IssuerMetadataResolver(http, clock, props.getCache().getMetadataMinTtl(),
-                props.getCache().getMetadataMaxTtl(), false);
+                props.getCache().getMetadataMaxTtl(), true, signerTrust);
     }
 
     @Bean
@@ -206,8 +222,8 @@ public class TrustCoreConfiguration {
     }
 
     @Bean
-    ServiceKeyManager serviceKeyManager(TrustProperties props) throws Exception {
-        return new ServiceKeyManager(props.getService().getSigningKeyFile(), props.getService().getIssuer());
+    ServiceKeyManager serviceKeyManager(TrustProperties props) {
+        return ServiceKeyManager.fromConfig(props.getService());
     }
 
     @Bean

@@ -135,5 +135,10 @@ class X509PathValidatorTest {
         assertThat(r.valid()).isTrue();
         assertThat(r.issues()).extracting(ValidationIssue::code).contains("x509.profile_relaxed", "mdoc.ds.eku");
         assertThat(r.issues()).noneMatch(ValidationIssue::isError);
+        // A client that does not honour relaxations (allow-relaxed-profiles: false) sees the profile errors.
+        var strict = validator.validate(List.of(notDs.certificate()), List.of(relaxed),
+                X509PathValidator.Options.at(Instant.now(), CertificateProfiles.MDOC_DOCUMENT_SIGNER).withRelaxedProfiles(false));
+        assertThat(strict.valid()).isFalse();
+        assertThat(strict.issues()).extracting(ValidationIssue::code).contains("mdoc.ds.eku").doesNotContain("x509.profile_relaxed");
     }
 }

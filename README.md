@@ -30,15 +30,20 @@ Toolchains are user-local in `~/.local/tools` (JDK 21, Maven 3.9, Node 22). Load
 them permanent, add `source ~/.local/tools/env.sh` to your shell profile.
 
 ```sh
-scripts/build.sh                 # mvn install (61 tests) + npm install + TS builds
+scripts/build.sh                 # mvn install (102 tests) + npm install + TS builds
 scripts/start-trust-server.sh    # http://localhost:8090 — loads live sources (Animo, MOSIP collab, EBSI on demand)
 open http://localhost:8090/swagger-ui.html
 curl -H 'Authorization: Bearer demo-wallet-key' 'localhost:8090/api/v1/issuers?format=mso_mdoc'
 scripts/test-all.sh              # unit + integration + live end-to-end (needs internet); --offline for unit only
+scripts/android.sh setup && scripts/android.sh start   # the wallet in Expo Go on an Android emulator
 ```
 
+CI (`.github/workflows/ci.yml`) runs the offline suites, typechecks and the web and Android bundles.
+
 Demo API keys (from `application.yml`): `demo-wallet-key` (wallet profile), `demo-verifier-key` (strict verifier
-profile) and `admin-key` (admin API).
+profile: strict authorization, revocation status required, relaxed anchors refused) and `admin-key` (admin API).
+Production deployments use OAuth 2.0 access tokens or mTLS client certificates instead, with rate limits, and keep the
+signing key in a PKCS#11 HSM; see the configuration reference.
 
 ## Where trust is decided
 
@@ -65,10 +70,10 @@ profile) and `admin-key` (admin API).
   - The device verifies every CRL again, so neither the service nor a cache is trusted with revocation.
   - Other CRLs are fetched directly from the CA, or through the service's CRL relay.
 - **No OCSP on the device**, because an OCSP request names the exact certificate. A verifier backend can turn OCSP on in the service.
-- **Credential status:**
+- **Credential status** (in the client library, so verifiers get it too: `checkTokenStatus`, `checkBitstringStatus`):
   - Token Status List: JWT for SD-JWT VC, CWT for ISO mdoc via the MSO `status`.
   - W3C Bitstring Status List.
-  - Lists are fetched from the issuer, or through the service's status list relay (opt-in), and are verified on the device either way: signature, signer, subject, expiry, and for Bitstring lists the list credential's proof and issuer.
+  - Lists are fetched from the issuer, or through the service's status list relay (opt-in), and are verified on the device either way: signature, signer, subject, expiry, and for Bitstring lists the list credential's proof and issuer. A verified list is reused for its `ttl` (at most 1 h).
 
 ## What the server does
 
@@ -82,6 +87,7 @@ profile) and `admin-key` (admin API).
 | Signed trust snapshot: everything a client needs to decide on the device, including the anchors' CRLs | `GET /api/v1/snapshot` (`trust-snapshot+jwt`) |
 | CRL relay and status list relay (signed objects, passed through and cached; verified by the client); anchor CRL status | `GET /api/v1/revocation/crl?url=`, `/revocation/status-list?uri=`, `/revocation/crls` |
 | On-demand registry lookup for parties absent from the snapshot (opt-in, signed) | `GET /api/v1/entities/lookup?identifier=&onDemand=true` |
+| Client authentication: API keys, OAuth 2.0 JWT access tokens (RFC 9068), mTLS (RFC 8705 bound tokens), per-client rate limits | `Authorization`, TLS client certificate; methods listed in discovery |
 | ToIP Trust Registry Query Protocol v2 | `POST /trqp/authorization`, `/trqp/recognition` |
 | Operator API | `/admin/v1/sources`, `/registry`, `/managed/{entities,anchors}/{id}` |
 
@@ -108,11 +114,13 @@ const trust = createTrustClient({
   serviceKeys: { thumbprints: ['<signing_key_thumbprint from /.well-known/trust-service>'] },   // required to accept snapshots
   // decisions: 'local' (default) | 'service'
   // lookups: { metadata: 'direct', did: 'direct', unknownParties: false, crl: 'direct', statusLists: 'direct' }
+  // issuerMetadata: { signed: 'off' | 'verify' | 'require' }   // a client profile can require signed metadata
   fallback: { localAnchors: [{ domain: 'mdoc-iaca', certificate: IACA_PEM }] },   // optional app-bundled anchors
 });
 const md = await trust.getIssuerMetadata(credentialIssuer);         // from the issuer, registry metadata policy applied
 const { decision } = await trust.evaluateCredential(credential, 'mso_mdoc', { credentialIssuer });   // decided on the device
 const verifier = await trust.evaluateVerifier({ clientId, x5c, responseUri });
+const status = await trust.checkTokenStatus(statusRef, { signerX5c: x5c, decision, form: 'cwt' });   // mdoc MSO status
 ```
 
 Every decision says who decided (`source`: `trust-service`, `snapshot` = this device from the signed snapshot, or
@@ -128,9 +136,9 @@ See [`apps/wallet/README.md`](apps/wallet/README.md) for running it on the web a
 ```ts
 const wallet = new Wallet({ trust, keyStore: new SoftwareKeyStore(), credentials: new MemoryCredentialStore(), redirectUri });
 const session = await wallet.receive('openid-credential-offer://?credential_offer_uri=...');   // issuer trust: session.issuerTrust
-const [cred] = await wallet.store(await session.acceptPreAuthorized(txCode));                  // cred.report: checks + trust
+const [cred] = await wallet.store(await session.acceptPreAuthorized(txCode));   // refused if invalid; stored → credential_accepted
 const p = await wallet.startPresentation('openid4vp://?client_id=x509_hash:...&request_uri=...');  // p.verifier.trust, p.dcql
-await p.respond();
+await p.respond();                         // refused unless an x509 verifier is TRUSTED; discloses only the requested claims
 ```
 
 ## Tested end to end against live services
@@ -145,16 +153,20 @@ await p.respond();
 | Animo EUDI PID SD-JWT VC issuance | valid + TRUSTED (x5c chain) |
 | OpenID4VP to Animo verifier: `x509_hash`, `request_uri`, DCQL, `direct_post.jwt` (mdoc DeviceResponse and SD-JWT+KB) | verifier TRUSTED; verifier reports `ResponseVerified` |
 | MOSIP Farmer VCDM 2.0 JSON-LD (eSignet authorization code + PKCE) | valid + TRUSTED (Ed25519Signature2020 over RDFC-1.0, did:web) |
-| MOSIP Land VCDM 2.0 JSON-LD | signature **invalid** — issuer defect, confirmed with Digital Bazaar's reference library |
-| MOSIP mock mDL | valid + TRUSTED under a `relaxProfile` anchor, with ISO deviations reported |
+| MOSIP Land VCDM 2.0 JSON-LD | **refused**: signature invalid (issuer defect, confirmed with Digital Bazaar's reference library); the issuer is sent `credential_failure` |
+| MOSIP mock mDL | valid + TRUSTED under a `relaxProfile` anchor for the wallet profile, with ISO deviations reported; the strict verifier profile refuses it |
 | Decisions on the device (default): mDL issue + present to Animo, MOSIP JSON-LD issue | TRUSTED from the snapshot; the trust service saw only snapshot/JWKS requests; MOSIP DID document from the snapshot |
-| Parity: 27 queries (including revoked / on-hold / CRL-covered Document Signers) × lenient and strict client profiles, service `/evaluate` vs device | identical decisions, error reasons, entities and per-certificate revocation status |
+| Parity: 29 queries (including revoked / on-hold / CRL-covered Document Signers and a relaxed sandbox anchor) × lenient and strict client profiles, service `/evaluate` vs device | identical decisions, error reasons, entities and per-certificate revocation status |
 | Revocation, live: Animo mDL Document Signer against the Animo IACA CRL (`https://playground.animo.id/crl`) | `GOOD`; the CRL comes from the snapshot, with no other request to the service or to Animo |
 | Relays, live: the Animo CRL and a MOSIP status list fetched through the service | verified on the device; MOSIP's list is signed with a key missing from its DID document, so its status is reported as unknown |
 | Trust service outage, `service` mode with a synced snapshot (mDL issue + present, JSON-LD issue) | works; trust from `snapshot`; recovers afterwards |
 | Trust service outage without a snapshot | credential verified; trust `UNKNOWN` (`fallback`) |
+| Wallet in Expo Go on an Android emulator: Animo mDL (pre-authorized; DPoP + wallet attestation), presentation to the Animo verifier | TRUSTED, *not revoked*; verifier reports `ResponseVerified` |
+| HAIP details no live issuer exercises (offline, in-memory issuer): credential request/response encryption, attestation proofs, refusal and notifications, minimal disclosure, holder binding, verifier trust enforcement, error responses | pass |
 
 ### Findings about the live issuers
+
+Draft defect reports for MOSIP are in [`docs/upstream-reports.md`](docs/upstream-reports.md); nothing has been filed.
 
 - **MOSIP Land `LandStatementCredential_VCDM2.0`:** the signature does not verify with standard RDFC-1.0 / Ed25519Signature2020 (our verifier and `jsonld-signatures` agree). The credential subject carries native JSON doubles, which points at a Java-side canonicalization difference in Inji Certify.
 - **MOSIP Farmer:** uses terms that its contexts do not define, so they are not covered by the signature. The wallet reports this as a warning; strict libraries reject the credential.

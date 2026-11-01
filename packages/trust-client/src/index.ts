@@ -1,5 +1,6 @@
 export { TrustClient, createTrustClient } from './client.js';
-export type { TrustClientConfig, LocalAnchorConfig, Logger, CredentialTrustResult, DecisionMode, LookupPolicy, SnapshotInfo, FetchedStatusList } from './client.js';
+export type { TrustClientConfig, LocalAnchorConfig, Logger, CredentialTrustResult, DecisionMode, LookupPolicy, SnapshotInfo, FetchedStatusList,
+  StatusCheckOptions } from './client.js';
 export * from './types.js';
 export { TrustServiceError, TrustServiceUnavailableError, TrustIntegrityError } from './errors.js';
 export { MemoryCacheStore, KeyValueCacheStore, ExpiringCache } from './cache/store.js';
@@ -22,6 +23,8 @@ export type { Crl, CrlEntry } from './x509/crl.js';
 export { checkRevocation, crlUrlsToFetch } from './x509/revocation.js';
 export type { HeldCrl, RevocationOptions } from './x509/revocation.js';
 export { verifyX509Signature } from './x509/signature.js';
+export { checkTokenStatus, checkBitstringStatus } from './status/status.js';
+export type { StatusResult, StatusContext, StatusListFetcher, TokenStatusReference, ListCredentialVerifier } from './status/status.js';
 export { decodeJws, verifyJws, x5cFromHeader, toPublicKey } from './jose/jws.js';
 export type { DecodedJws } from './jose/jws.js';
 export { verifySignature, coseAlgToJose } from './crypto/verify.js';
@@ -33,8 +36,8 @@ export { parseDid, findVerificationMethod, hasRelationship, didError } from './d
 export { verificationMethodPublicKey, verificationMethodJwk, samePublicKey, publicKeyFromMulticodec, decodeMultibase } from './did/keys.js';
 export { base58Encode, base58Decode, writeVarint, MULTICODEC } from './did/multibase.js';
 export { resolveDidLocally } from './did/resolver.js';
-export { fetchIssuerMetadata, fetchAuthorizationServerMetadata, wellKnownInserted } from './metadata/issuer.js';
-export type { RegistryMetadataPolicy } from './metadata/issuer.js';
+export { fetchIssuerMetadata, fetchAuthorizationServerMetadata, wellKnownInserted, verifySignedMetadata } from './metadata/issuer.js';
+export type { RegistryMetadataPolicy, SignedMetadataCheck } from './metadata/issuer.js';
 export { applyMetadataPolicy, MetadataPolicyError } from './metadata/policy.js';
 export * as cbor from './encoding/cbor.js';
 export * as bytes from './util/bytes.js';

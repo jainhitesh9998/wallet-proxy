@@ -22,7 +22,7 @@ export interface LocalTrustData {
   source: 'snapshot' | 'fallback';
   /** 'local': device-side decisions are the normal path; 'outage': the service (normally deciding) is unreachable */
   mode: 'local' | 'outage';
-  policy?: { strictAuthorization?: boolean; requireRevocationStatus?: boolean };
+  policy?: { strictAuthorization?: boolean; requireRevocationStatus?: boolean; allowRelaxedProfiles?: boolean };
   snapshot?: SnapshotRef | null;
   stale?: boolean;
 }
@@ -79,6 +79,7 @@ export type CrlFetcher = (urls: string[]) => Promise<CrlFetchResult>;
 export async function validateChainOnDevice(chain: Certificate[], anchors: LocalAnchor[], opts: ValidateOptions,
                                             data: Pick<LocalTrustData, 'crls' | 'policy'>, fetchCrls?: CrlFetcher) {
   const revocation = { crls: data.crls ?? [], require: data.policy?.requireRevocationStatus === true };
+  opts = { ...opts, allowRelaxedProfile: data.policy?.allowRelaxedProfiles !== false };
   const r = validateCertificateChain(chain, anchors, { ...opts, revocation });
   const urls = fetchCrls && r.anchorFound ? crlUrlsToFetch(chain, r.revocation) : [];
   if (urls.length === 0) return r;

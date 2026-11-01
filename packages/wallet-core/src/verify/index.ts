@@ -20,7 +20,7 @@ export async function verifyCredential(format: string, credential: unknown, opts
     case 'mso_mdoc': return verifyMdoc(String(credential), opts);
     case 'ldp_vc': return verifyLdpVc(credential as Record<string, unknown>, opts);
     case 'dc+sd-jwt':
-    case 'vc+sd-jwt': return verifySdJwtVc(String(credential), opts);
+    case 'vc+sd-jwt': return verifySdJwtVc(String(credential), { ...opts, format });
     default: throw new Error(`Unsupported credential format ${format}`);
   }
 }

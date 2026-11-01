@@ -9,7 +9,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createTrustClient, KeyValueCacheStore, type ServiceStatus, type SnapshotInfo, type TrustClient } from '@vctrust/trust-client';
-import { KeyValueCredentialStore, SoftwareKey, SoftwareKeyStore, Wallet, WalletAttester, type StoredCredential, type SigningKey } from '@vctrust/wallet-core';
+import { KeyValueCredentialStore, SoftwareKey, SoftwareKeyStore, Wallet, WalletAttester, type InstanceKeyProvider, type StoredCredential,
+  type SigningKey } from '@vctrust/wallet-core';
 import { Platform } from 'react-native';
 import * as Linking from 'expo-linking';
 import { DEFAULT_REDIRECT_URI, MOSIP_REGISTRATIONS, OUTAGE_URL, WALLET_PROVIDER } from '../config/defaults';
@@ -41,18 +42,30 @@ const kv = (prefix: string) => ({
   get: (k: string) => AsyncStorage.getItem(prefix + k),
   set: (k: string, v: string) => AsyncStorage.setItem(prefix + k, v),
 });
-const INSTANCE_KEY = 'wallet:instance-key-id';
+const INSTANCE_KEY_PREFIX = 'wallet:instance-key:';
 
 /** The trust-client cache (snapshot, pinned service key, cached metadata) survives client rebuilds and restarts. */
 const trustCache = new KeyValueCacheStore(AsyncStorage, 'vctrust:');
 
-async function instanceKey(keyStore: SoftwareKeyStore): Promise<SigningKey> {
-  const id = await AsyncStorage.getItem(INSTANCE_KEY);
-  const existing = id ? await keyStore.get(id) : undefined;
-  if (existing) return existing;
-  const k = await keyStore.create();
-  await AsyncStorage.setItem(INSTANCE_KEY, k.id);
-  return k;
+/**
+ * The wallet instance key that attestations bind, one per authorization server and kept across restarts, so an
+ * attestation's cnf key does not link the user across issuers.
+ */
+function instanceKeys(keyStore: SoftwareKeyStore): InstanceKeyProvider {
+  const keys = new Map<string, Promise<SigningKey>>();
+  return (as) => {
+    if (!keys.has(as)) {
+      keys.set(as, (async () => {
+        const id = await AsyncStorage.getItem(INSTANCE_KEY_PREFIX + as);
+        const existing = id ? await keyStore.get(id) : undefined;
+        if (existing) return existing;
+        const k = await keyStore.create();
+        await AsyncStorage.setItem(INSTANCE_KEY_PREFIX + as, k.id);
+        return k;
+      })());
+    }
+    return keys.get(as)!;
+  };
 }
 
 /** redirect_uri for issuers without a registration: back into this app (web: the /oauth-callback page). */
@@ -65,7 +78,7 @@ function appRedirectUri(): string {
   }
 }
 
-function build(s: Settings, wiKey: SigningKey | undefined, keyStore: SoftwareKeyStore): { trust: TrustClient; wallet: Wallet } {
+function build(s: Settings, wiKeys: InstanceKeyProvider | undefined, keyStore: SoftwareKeyStore): { trust: TrustClient; wallet: Wallet } {
   const appFetch = createAppFetch(s.corsRelayUrl);
   const trust = createTrustClient({
     baseUrl: s.simulateOutage ? OUTAGE_URL : s.trustUrl,
@@ -81,13 +94,13 @@ function build(s: Settings, wiKey: SigningKey | undefined, keyStore: SoftwareKey
     serviceKeys: { trustOnFirstUse: true },
     fallback: { enabled: s.fallbackEnabled, useSnapshot: true },
   });
-  const attester = wiKey ? new WalletAttester({
+  const attester = wiKeys ? new WalletAttester({
     ...WALLET_PROVIDER,
     ...(s.highAssurance ? { keyStorage: ['iso_18045_high'], userAuthentication: ['iso_18045_high'] } : {}),
     // DEMO ONLY: the wallet provider key is bundled with the app (see scripts/gen-wallet-provider.mjs).
     signingKey: SoftwareKey.fromJwk({ ...WALLET_PROVIDER_SIGNER_JWK }),
     x5c: WALLET_PROVIDER_X5C,
-  }, wiKey) : undefined;
+  }, wiKeys) : undefined;
   const wallet = new Wallet({
     trust, keyStore, credentials: new KeyValueCredentialStore(kv('wallet:')), fetch: appFetch, attester,
     redirectUri: appRedirectUri(), registrations: MOSIP_REGISTRATIONS,
@@ -99,13 +112,13 @@ function build(s: Settings, wiKey: SigningKey | undefined, keyStore: SoftwareKey
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const keyStore = useMemo(() => new SoftwareKeyStore(kv('wallet:')), []);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [wiKey, setWiKey] = useState<SigningKey>();
+  const [wiKeys, setWiKeys] = useState<InstanceKeyProvider>();
   const [ready, setReady] = useState(false);
   const [credentials, setCredentials] = useState<StoredCredential[]>([]);
   const [snapshot, setSnapshot] = useState<SnapshotInfo | null>(null);
   const [status, setStatus] = useState<{ status: ServiceStatus; reason?: string }>({ status: 'unknown' });
 
-  const built = useMemo(() => build(settings, wiKey, keyStore), [settings, wiKey, keyStore]);
+  const built = useMemo(() => build(settings, wiKeys, keyStore), [settings, wiKeys, keyStore]);
   const { trust, wallet } = built;
   const walletRef = useRef(wallet);
   walletRef.current = wallet;
@@ -126,9 +139,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       const s = await loadSettings();
-      const k = await instanceKey(keyStore);
       setSettings(s);
-      setWiKey(k);
+      setWiKeys(() => instanceKeys(keyStore));
       setReady(true);
     })();
   }, [keyStore]);
@@ -165,8 +177,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const wipe = useCallback(async () => {
     const keys = await AsyncStorage.getAllKeys();
     await AsyncStorage.multiRemove(keys.filter((k) => k !== SETTINGS_KEY));
-    const k = await instanceKey(keyStore);
-    setWiKey(k);
+    setWiKeys(() => instanceKeys(keyStore));
     setCredentials([]);
     setSnapshot(null);
   }, [keyStore]);

@@ -98,6 +98,8 @@ public class SnapshotService {
         policy.put("frameworks", new TreeSet<>(client.frameworks()));
         policy.put("strictAuthorization", client.strictAuthorization());
         policy.put("requireRevocationStatus", client.requireRevocationStatus());
+        policy.put("requireSignedIssuerMetadata", client.requireSignedIssuerMetadata());
+        policy.put("allowRelaxedProfiles", client.allowRelaxedProfiles());
 
         Map<String, Object> claims = new LinkedHashMap<>();
         claims.put("format", FORMAT);
