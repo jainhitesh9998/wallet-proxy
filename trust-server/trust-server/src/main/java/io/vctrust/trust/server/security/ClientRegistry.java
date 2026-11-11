@@ -37,9 +37,14 @@ public class ClientRegistry {
             if (byId.containsKey(c.getId())) {
                 throw new IllegalArgumentException("Duplicate client id " + c.getId());
             }
+            // Nothing is granted by omission: a client names its frameworks ("*" for all); an operator sees all.
+            Set<String> frameworks = c.getFrameworks().isEmpty() && c.isAdmin() ? Set.of(ClientProfile.ALL_FRAMEWORKS) : Set.copyOf(c.getFrameworks());
+            if (frameworks.isEmpty()) {
+                throw new IllegalArgumentException("Client " + c.getId() + " accepts no framework: list frameworks, or \"*\" for all");
+            }
             ClientProfile p = new ClientProfile(c.getId(), c.getName() == null ? c.getId() : c.getName(),
-                    Set.copyOf(c.getFrameworks()), c.isStrictAuthorization(), c.isAllowUnregisteredMetadata(), c.isAdmin(),
-                    c.isRequireRevocationStatus(), c.isRequireSignedIssuerMetadata(), c.isAllowRelaxedProfiles());
+                    frameworks, c.isStrictAuthorization(), c.isAllowUnregisteredMetadata(), c.isAdmin(),
+                    c.isRequireRevocationStatus(), c.isRequireSignedIssuerMetadata());
             boolean credential = false;
             if (apiKeys && c.getApiKey() != null && !c.getApiKey().isBlank()) {
                 put(byKeyHash, hash(c.getApiKey()), p, "API key");

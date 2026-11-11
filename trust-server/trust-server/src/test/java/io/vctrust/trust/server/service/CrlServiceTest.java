@@ -8,6 +8,7 @@ import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.testing.TestPki;
 import io.vctrust.trust.core.testing.TestPki.Revoked;
 import io.vctrust.trust.core.x509.Certificates;
+import io.vctrust.trust.server.cache.ResourceCache;
 import io.vctrust.trust.server.config.TrustProperties;
 import io.vctrust.trust.server.http.SafeHttpFetcher;
 import org.junit.jupiter.api.AfterEach;
@@ -121,7 +122,7 @@ class CrlServiceTest {
                 anchor("wrong", wrong, "fw-a", Map.of("crlUrls", base + "/wrong.crl")))));
         TrustProperties.Revocation cfg = new TrustProperties.Revocation();
         cfg.setEnabled(false); // no background thread: the test drives refresh()
-        service = new CrlService(registry, fetcher(), cfg, clock);
+        service = new CrlService(registry, fetcher(), cfg, new ResourceCache.Settings(1_000_000, Duration.ofSeconds(30), Duration.ofDays(1), false), clock);
         AtomicInteger changes = new AtomicInteger();
         service.onChange(changes::incrementAndGet);
         service.refresh();
@@ -163,7 +164,7 @@ class CrlServiceTest {
         serve("/page", "<html>no</html>".getBytes(StandardCharsets.UTF_8), "text/html");
         TrustProperties.Revocation cfg = new TrustProperties.Revocation();
         cfg.setEnabled(false);
-        service = new CrlService(new TrustRegistry(), fetcher(), cfg, clock);
+        service = new CrlService(new TrustRegistry(), fetcher(), cfg, new ResourceCache.Settings(1_000_000, Duration.ofSeconds(30), Duration.ofDays(1), false), clock);
         assertThat(service.fetch(base + "/inter.crl").issuedBy(inter.certificate())).isTrue();
         service.fetch(base + "/inter.crl");
         assertThat(hits.get("/inter.crl").get()).isEqualTo(1);

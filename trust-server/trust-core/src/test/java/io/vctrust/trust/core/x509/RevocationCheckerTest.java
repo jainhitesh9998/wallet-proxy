@@ -73,7 +73,7 @@ class RevocationCheckerTest {
     }
 
     private static PathValidationResult validate(List<X509Certificate> chain, TestPki.Issued root, Crls crls, boolean required) {
-        return validate(chain, root, new RevocationChecker(crls, null, "trust-service"), required);
+        return validate(chain, root, new RevocationChecker(crls, "trust-service"), required);
     }
 
     private static PathValidationResult validate(List<X509Certificate> chain, TestPki.Issued root, RevocationChecker checker, boolean required) {
@@ -198,24 +198,12 @@ class RevocationCheckerTest {
         var root = TestPki.rootCa("CN=OCSP Root,C=UT");
         var ocspOnly = TestPki.withRevocationUrls("CN=OCSP only,C=UT", root, false, List.of(), List.of("http://ocsp.test"), null);
         var r = validate(List.of(ocspOnly.certificate()), root, new Crls(), false);
-        assertThat(r.revocation().getFirst().reason()).isEqualTo("the issuer publishes only OCSP, which is disabled");
+        assertThat(r.revocation().getFirst().reason()).isEqualTo("the issuer publishes only OCSP, which is not used");
 
         var unreachable = TestPki.withRevocationUrls("CN=Unreachable CRL,C=UT", root, false, List.of("http://crl.test/missing.crl"), List.of(), null);
         var u = validate(List.of(unreachable.certificate()), root, new Crls(), true);
         assertThat(u.valid()).isFalse();
         assertThat(u.revocation().getFirst().reason()).startsWith("CRL unavailable: HTTP 404");
-    }
-
-    @Test
-    void ocspAnswersWhenEnabledAndNoCrlCovers() {
-        var root = TestPki.rootCa("CN=OCSP Root 2,C=UT");
-        var leaf = TestPki.withRevocationUrls("CN=OCSP leaf,C=UT", root, false, List.of(), List.of("http://ocsp.test"), null);
-        RevocationChecker.OcspSource ocsp = (c, i, url, t) -> new RevocationChecker.OcspResult(Status.REVOKED, "keyCompromise",
-                Instant.now().minus(Duration.ofDays(1)), Instant.now(), null);
-        var r = validate(List.of(leaf.certificate()), root, new RevocationChecker(new Crls(), ocsp, "trust-service"), false);
-        assertThat(codes(r)).contains("x509.revoked");
-        assertThat(r.revocation().getFirst().method()).isEqualTo("ocsp");
-        assertThat(r.revocation().getFirst().crlUrl()).isEqualTo("http://ocsp.test");
     }
 
     @Test

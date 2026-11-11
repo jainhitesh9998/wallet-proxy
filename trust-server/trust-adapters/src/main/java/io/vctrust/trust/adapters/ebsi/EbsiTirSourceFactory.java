@@ -19,18 +19,20 @@ import io.vctrust.trust.core.spi.TrustSource;
 import io.vctrust.trust.core.spi.TrustSourceException;
 import io.vctrust.trust.core.spi.TrustSourceFactory;
 
+import io.vctrust.trust.core.util.ExpiringMap;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@code type: ebsi-tir} — EBSI Trusted Issuers Registry v5. Properties: {@code baseUrl} (default the pilot
@@ -54,17 +56,23 @@ public final class EbsiTirSourceFactory implements TrustSourceFactory {
         return new EbsiSource(def, ctx);
     }
 
+    static final Duration ON_DEMAND_TTL = Duration.ofMinutes(10);
+    static final Duration ON_DEMAND_NEGATIVE_TTL = Duration.ofMinutes(1);
+    static final int ON_DEMAND_MAX_ENTRIES = 5_000;
+
     static final class EbsiSource implements TrustSource, OnDemandResolver {
         private final SourceDefinition def;
         private final SourceContext ctx;
         private final String base;
-        private final Map<String, Optional<TrustedEntity>> cache = new ConcurrentHashMap<>();
+        /** On-demand answers: an issuer is re-asked after a few minutes, so a revocation in the registry takes effect. */
+        private final ExpiringMap<String, Optional<TrustedEntity>> cache;
 
         EbsiSource(SourceDefinition def, SourceContext ctx) {
             this.def = def;
             this.ctx = ctx;
             String b = def.string("baseUrl");
             this.base = (b == null ? DEFAULT_BASE : b).replaceAll("/+$", "");
+            this.cache = new ExpiringMap<>(ON_DEMAND_MAX_ENTRIES, ctx.clock());
         }
 
         @Override
@@ -112,16 +120,16 @@ public final class EbsiTirSourceFactory implements TrustSourceFactory {
 
         @Override
         public Optional<TrustedEntity> resolve(Identifier identifier) throws TrustSourceException {
+            Optional<Optional<TrustedEntity>> cached = cache.get(identifier.value());
+            if (cached.isPresent()) {
+                return cached.get();
+            }
             try {
-                return cache.computeIfAbsent(identifier.value(), did -> {
-                    try {
-                        return fetchIssuer(did);
-                    } catch (IOException e) {
-                        throw new java.io.UncheckedIOException(e);
-                    }
-                });
-            } catch (java.io.UncheckedIOException e) {
-                throw new TrustSourceException("EBSI lookup failed: " + e.getCause().getMessage(), e);
+                Optional<TrustedEntity> issuer = fetchIssuer(identifier.value());
+                cache.put(identifier.value(), issuer, ctx.clock().instant().plus(issuer.isPresent() ? ON_DEMAND_TTL : ON_DEMAND_NEGATIVE_TTL));
+                return issuer;
+            } catch (IOException e) {
+                throw new TrustSourceException("EBSI lookup failed: " + e.getMessage(), e);
             }
         }
 

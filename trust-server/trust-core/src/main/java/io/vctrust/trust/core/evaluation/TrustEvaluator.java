@@ -33,9 +33,13 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.function.Predicate;
+import java.util.Comparator;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -105,17 +109,26 @@ public class TrustEvaluator {
         Set<Identifier> ids = new LinkedHashSet<>();
         Set<Identifier> identIds = new LinkedHashSet<>();
         EntityRole role = query.role();
-        String format = CredentialFormats.canonical(query.context().credentialFormat());
-        String type = query.context().credentialType();
+        // An empty format or type is no format or type: the two evaluators must not read "" differently.
+        String format = CredentialFormats.canonical(blankToNull(query.context().credentialFormat()));
+        String type = blankToNull(query.context().credentialType());
+        // Every type the credential asserts must be authorized (a W3C VC may carry several).
+        Set<String> types = new LinkedHashSet<>();
+        if (type != null) {
+            types.add(type);
+        }
+        query.context().credentialTypes().stream().filter(t -> t != null && !t.isBlank()).forEach(types::add);
 
         // 1. Identifiers from the identifier string (incl. OpenID4VP client_id prefixes)
         String expectedDns = null;
         String expectedHash = null;
+        ClientId clientId = null;
         Map<String, Object> clientIdEvidence = null;
         String identifier = query.subject().identifier();
         if (identifier != null && !identifier.isBlank()) {
             if (role == EntityRole.VERIFIER) {
                 ClientId cid = ClientId.parse(identifier);
+                clientId = cid;
                 clientIdEvidence = new LinkedHashMap<>(Map.of("clientId", cid.raw(), "prefix", cid.prefix()));
                 identIds.add(Identifier.of(IdentifierType.CLIENT_ID, cid.raw()));
                 switch (cid.prefix()) {
@@ -204,12 +217,12 @@ public class TrustEvaluator {
             String docType = CredentialFormats.MSO_MDOC.equals(format) ? type : null;
             x509 = pathValidator.validate(chain, anchors, new X509PathValidator.Options(now, certProfile,
                     new CertificateProfile.ProfileContext(expectedDns, docType), null)
-                    .withRevocation(revocation, profile.requireRevocationStatus()).withRelaxedProfiles(profile.allowRelaxedProfiles()));
+                    .withRevocation(revocation, profile.requireRevocationStatus()));
             if (x509.valid()) {
                 validatedAnchor = x509.anchor();
                 // The leaf's names are authenticated once the chain validates; use them to find the registered entity.
                 Certificates.subjectKeyIdentifier(leaf).ifPresent(s -> ids.add(Identifier.of(IdentifierType.X509_SKI, s)));
-                ids.add(Identifier.of(IdentifierType.X509_SUBJECT, leaf.getSubjectX500Principal().getName()));
+                ids.add(Identifier.of(IdentifierType.X509_SUBJECT, Certificates.subjectName(leaf)));
                 Certificates.dnsNames(leaf).forEach(n -> ids.add(Identifier.of(IdentifierType.DNS, n)));
                 Certificates.uriNames(leaf).forEach(u -> ids.add(Identifier.url(u)));
                 reasons.add(Reason.info("x509.valid", "Certificate chain validates to trust anchor "
@@ -231,11 +244,18 @@ public class TrustEvaluator {
             }
         }
 
-        // 5. Registry candidates. With key material (x5c, DID kid, JWK) the entity must be bound to that key: by the
-        // key's own identifiers, a pinned leaf certificate or the anchor's entity. The identifier alone is only a claim
-        // then; it counts when the validated anchor is not tied to one entity and belongs to the identified entity's
-        // framework. Without key material the identifier is a registry lookup (issuer metadata, or a key the caller
-        // fetched from that identifier).
+        // A client identifier the presented key itself proves is one of the key's identifiers, so a verifier registered
+        // by its client_id is found: x509_hash of the leaf certificate, x509_san_dns naming a dNSName of a validated
+        // leaf, decentralized_identifier of the key's DID.
+        if (clientId != null && provesClientId(clientId, chain, x509, query.subject().kid() != null && query.subject().kid().startsWith("did:") ? did : null)) {
+            ids.add(Identifier.of(IdentifierType.CLIENT_ID, clientId.raw()));
+        }
+
+        // 5. Registry candidates. With key material (x5c, DID kid, JWK) an entity is found only through what that key
+        // proves: the key's own identifiers (a validated certificate's names, the DID of a DID key, a JWK thumbprint),
+        // a pinned leaf certificate, or the entity the validated anchor belongs to. The identifier in the query is
+        // then only a claim. Without key material the identifier is a registry lookup (issuer metadata, or a key the
+        // caller fetched from that identifier).
         boolean keyMaterial = !chain.isEmpty() || (query.subject().kid() != null && query.subject().kid().startsWith("did:"))
                 || (query.subject().jwk() != null && !query.subject().jwk().isEmpty());
         Map<TrustedEntity, String> byIdentifier = new LinkedHashMap<>();
@@ -264,13 +284,13 @@ public class TrustEvaluator {
                 snap.entity(validatedAnchor.entityId()).filter(e -> profile.accepts(e.frameworkId())).ifPresent(e -> {
                     if (candidates.add(e)) matched.add("ANCHOR:" + e.id());
                 });
-            } else if (validatedAnchor != null && validatedAnchor.frameworkId() != null
-                    && candidates.stream().noneMatch(e -> role == null || e.hasRole(role))) {
-                // Only when the key's own names bind no entity in this role: a key bound to one entity is never another's.
-                String fw = validatedAnchor.frameworkId();
-                byIdentifier.forEach((e, how) -> {
-                    if (fw.equals(e.frameworkId()) && candidates.add(e)) matched.add(how + " (anchor framework)");
-                });
+            }
+            if (!chain.isEmpty() && validatedAnchor == null && !candidates.isEmpty()) {
+                // No anchor vouches for this certificate: it stands only as a registered pin, and then only while valid.
+                X509Certificate leaf = chain.getFirst();
+                if (now.isBefore(leaf.getNotBefore().toInstant()) || now.isAfter(leaf.getNotAfter().toInstant())) {
+                    reasons.add(Reason.error("x509.pinned_expired", "The pinned certificate is not valid at " + now));
+                }
             }
             // Refused when the identifier names entities in this role and the key is bound to none of them.
             List<TrustedEntity> named = byIdentifier.keySet().stream().filter(e -> role == null || e.hasRole(role)).toList();
@@ -282,7 +302,7 @@ public class TrustEvaluator {
         if (candidates.isEmpty() && sources != null) {
             // On-demand discovery follows the same rule: the key's identifiers, or the identifier without key material.
             for (Identifier id : keyMaterial ? ids : identIds) {
-                Optional<TrustedEntity> od = sources.resolveOnDemand(id, profile.frameworks());
+                Optional<TrustedEntity> od = sources.resolveOnDemand(id, profile::accepts);
                 if (od.isPresent() && profile.accepts(od.get().frameworkId())) {
                     candidates.add(od.get());
                     matched.add(id + " (on-demand)");
@@ -299,7 +319,8 @@ public class TrustEvaluator {
             }
             candidates.retainAll(withRole);
         }
-        TrustedEntity entity = pick(candidates, validatedAnchor);
+        boolean strict = profile.strictAuthorization();
+        TrustedEntity entity = pick(candidates, validatedAnchor, now, e -> denied(e, format, types, strict) == null);
 
         // 6. DID evidence
         DidEvidence didEvidence = null;
@@ -315,13 +336,7 @@ public class TrustEvaluator {
                         + (entity.validUntil() != null && now.isAfter(entity.validUntil()) ? " (expired)" : "")));
             }
             if (format != null || type != null) {
-                // Every type the credential asserts must be authorized (a W3C VC may carry several).
-                Set<String> types = new LinkedHashSet<>();
-                if (type != null) types.add(type);
-                types.addAll(query.context().credentialTypes());
-                String denied = types.isEmpty()
-                        ? (entity.isAuthorizedFor(format, null, profile.strictAuthorization()) ? null : "")
-                        : types.stream().filter(t -> !entity.isAuthorizedFor(format, t, profile.strictAuthorization())).findFirst().orElse(null);
+                String denied = denied(entity, format, types, strict);
                 boolean ok = denied == null;
                 authz = new AuthorizationEvidence(format, type, ok, entity.authorizations().isEmpty()
                         ? (profile.strictAuthorization() ? "strict: no authorizations registered" : "unconstrained")
@@ -341,11 +356,13 @@ public class TrustEvaluator {
 
         // 8. OpenID4VP: response_uri host must match x509_san_dns (OID4VP §5.9.3), unless the RP is registered
         if (expectedDns != null && query.context().responseUri() != null) {
-            String host = hostOf(query.context().responseUri());
-            if (host != null && !host.equalsIgnoreCase(expectedDns)) {
-                if (entity == null) {
-                    reasons.add(Reason.error("client_id.response_uri_host",
-                            "response_uri host '" + host + "' does not match x509_san_dns '" + expectedDns + "'"));
+            // A response_uri that is not a plain https URL has no host to compare, and is refused like a mismatch.
+            String host = Identifier.httpsHost(query.context().responseUri());
+            if (host == null || !host.equals(expectedDns.toLowerCase(Locale.ROOT))) {
+                if (entity == null || host == null) {
+                    reasons.add(Reason.error("client_id.response_uri_host", host == null
+                            ? "response_uri is not a plain https URL"
+                            : "response_uri host '" + host + "' does not match x509_san_dns '" + expectedDns + "'"));
                 } else {
                     reasons.add(Reason.warning("client_id.response_uri_host",
                             "response_uri host differs from x509_san_dns; accepted because the verifier is registered"));
@@ -406,7 +423,7 @@ public class TrustEvaluator {
         List<Identifier> out = new ArrayList<>();
         if (identifier.startsWith("did:")) {
             out.add(Identifier.did(identifier));
-        } else if (identifier.regionMatches(true, 0, "https://", 0, 8) || identifier.regionMatches(true, 0, "http://", 0, 7)) {
+        } else if (identifier.startsWith("https://") || identifier.startsWith("http://")) {
             out.add(Identifier.url(identifier));
             out.add(Identifier.of(IdentifierType.FEDERATION_ENTITY, identifier));
         } else {
@@ -429,6 +446,16 @@ public class TrustEvaluator {
         };
     }
 
+    private static boolean provesClientId(ClientId cid, List<X509Certificate> chain, PathValidationResult x509, String keyDid) {
+        return switch (cid.prefix()) {
+            case "x509_hash" -> !chain.isEmpty() && cid.value().equals(Certificates.sha256Thumbprint(chain.getFirst()));
+            case "x509_san_dns" -> x509 != null && x509.valid()
+                    && Certificates.dnsNames(chain.getFirst()).stream().anyMatch(d -> d.equalsIgnoreCase(cid.value()));
+            case "decentralized_identifier" -> keyDid != null && keyDid.equals(Identifier.did(cid.value()).value());
+            default -> false;
+        };
+    }
+
     private DidEvidence checkDid(String did, String kid, EntityRole role, List<Reason> reasons) {
         DidResolutionResult res = didResolver.resolve(did);
         if (!res.isSuccess()) {
@@ -446,12 +473,9 @@ public class TrustEvaluator {
             return new DidEvidence(did, true, null, vmRef, false, null, null);
         }
         String relationship = role == EntityRole.VERIFIER || role == EntityRole.WALLET_PROVIDER ? "authentication" : "assertionMethod";
+        // DID Core: a relationship lists verification methods (by reference or embedded), never the DID itself.
         boolean rel = res.hasRelationship(relationship, vmRef);
-        if (!rel && res.hasRelationship(relationship, did)) {
-            reasons.add(Reason.warning("did.relationship_lenient", relationship
-                    + " lists the DID itself rather than the verification method; accepted leniently"));
-            rel = true;
-        } else if (!rel) {
+        if (!rel) {
             reasons.add(Reason.error("did.relationship", "Verification method " + vmRef + " is not authorized for " + relationship));
         }
         return new DidEvidence(did, true, null, vmRef, true, relationship, rel);
@@ -494,22 +518,43 @@ public class TrustEvaluator {
         }
     }
 
-    private static TrustedEntity pick(Set<TrustedEntity> candidates, TrustAnchor anchor) {
+    /**
+     * The entity a decision is about. When the key is bound to several registered parties, which one is meant must
+     * not depend on the order a registry or a snapshot happens to list them in: the entity the anchor belongs to;
+     * else, in order of entity id, the first in good standing that is authorized for what is asked; else the first
+     * in good standing; else the first.
+     */
+    private static TrustedEntity pick(Collection<TrustedEntity> candidates, TrustAnchor anchor, Instant now, Predicate<TrustedEntity> authorized) {
         if (candidates.isEmpty()) {
             return null;
         }
+        List<TrustedEntity> ordered = candidates.stream().sorted(Comparator.comparing(TrustedEntity::id)).toList();
         if (anchor != null && anchor.entityId() != null) {
-            for (TrustedEntity e : candidates) {
+            for (TrustedEntity e : ordered) {
                 if (e.id().equals(anchor.entityId())) {
                     return e;
                 }
             }
         }
-        return candidates.stream().filter(e -> e.status().isUsable()).findFirst().orElse(candidates.iterator().next());
+        return ordered.stream().filter(e -> e.isUsableAt(now) && authorized.test(e)).findFirst()
+                .or(() -> ordered.stream().filter(e -> e.isUsableAt(now)).findFirst())
+                .orElse(ordered.getFirst());
     }
 
-    /** As the device reads it (WHATWG): java.net.URI has no host for names with '_' or non-ASCII characters. */
-    private static String hostOf(String uri) {
-        return Identifier.urlHost(uri);
+    /** The type the entity is not authorized for ("" when no type is asked and the format is refused); null when it is authorized. */
+    private static String denied(TrustedEntity entity, String format, Set<String> types, boolean strict) {
+        if (format == null && types.isEmpty()) {
+            return null;
+        }
+        if (types.isEmpty()) {
+            return entity.isAuthorizedFor(format, null, strict) ? null : "";
+        }
+        return types.stream().filter(t -> !entity.isAuthorizedFor(format, t, strict)).findFirst().orElse(null);
     }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
+    }
+
+
 }

@@ -125,20 +125,27 @@ class X509PathValidatorTest {
     }
 
     @Test
-    void relaxedAnchorTurnsProfileErrorsIntoWarnings() {
-        var iaca = TestPki.rootCa("CN=Sandbox Root,C=IN");
-        var notDs = TestPki.leaf("CN=Sandbox signer,C=IN", iaca, List.of(), null);
-        var relaxed = new TrustAnchor(null, TrustDomain.MDOC_IACA, iaca.certificate(), "fw", null, null,
-                java.util.Map.of("relaxProfile", true), null);
-        var r = validator.validate(List.of(notDs.certificate()), List.of(relaxed),
-                X509PathValidator.Options.at(Instant.now(), CertificateProfiles.MDOC_DOCUMENT_SIGNER));
-        assertThat(r.valid()).isTrue();
-        assertThat(r.issues()).extracting(ValidationIssue::code).contains("x509.profile_relaxed", "mdoc.ds.eku");
-        assertThat(r.issues()).noneMatch(ValidationIssue::isError);
-        // A client that does not honour relaxations (allow-relaxed-profiles: false) sees the profile errors.
-        var strict = validator.validate(List.of(notDs.certificate()), List.of(relaxed),
-                X509PathValidator.Options.at(Instant.now(), CertificateProfiles.MDOC_DOCUMENT_SIGNER).withRelaxedProfiles(false));
-        assertThat(strict.valid()).isFalse();
-        assertThat(strict.issues()).extracting(ValidationIssue::code).contains("mdoc.ds.eku").doesNotContain("x509.profile_relaxed");
+    void anAnchorThatIsNotACaCannotIssue() {
+        // A pinned end-entity certificate is trusted as itself; it does not make certificates it signed trusted.
+        var root = TestPki.rootCa("CN=Root,C=UT");
+        var pinnedLeaf = TestPki.leaf("CN=Pinned leaf,C=UT", root, List.of("pinned.example"), null);
+        var child = TestPki.leaf("CN=Child,C=UT", pinnedLeaf, List.of("bank.example"), null);
+        var anchor = new TrustAnchor(null, TrustDomain.VERIFIER_ACCESS, pinnedLeaf.certificate(), "fw", null, null, null, null);
+        var r = validator.validate(List.of(child.certificate()), List.of(anchor), X509PathValidator.Options.at(Instant.now(), null));
+        assertThat(r.valid()).isFalse();
+        assertThat(r.issues()).extracting(ValidationIssue::code).contains("x509.anchor_not_ca");
+        assertThat(validator.validate(List.of(pinnedLeaf.certificate()), List.of(anchor), X509PathValidator.Options.at(Instant.now(), null)).valid()).isTrue();
+    }
+
+    @Test
+    void anAnchorsPathLengthLimitsTheChainBelowIt() {
+        // An ISO 18013-5 IACA has pathLenConstraint 0: it signs Document Signers, not further CAs.
+        var iaca = TestPki.iaca("CN=IACA,C=UT");
+        var intermediate = TestPki.intermediateCa("CN=Sub CA,C=UT", iaca);
+        var leaf = TestPki.leaf("CN=Leaf,C=UT", intermediate, List.of(), null);
+        var anchor = new TrustAnchor(null, TrustDomain.CREDENTIAL_ISSUER, iaca.certificate(), "fw", null, null, null, null);
+        var r = validator.validate(List.of(leaf.certificate(), intermediate.certificate()), List.of(anchor), X509PathValidator.Options.at(Instant.now(), null));
+        assertThat(r.valid()).isFalse();
+        assertThat(r.issues()).extracting(ValidationIssue::code).contains("x509.anchor_path_length");
     }
 }

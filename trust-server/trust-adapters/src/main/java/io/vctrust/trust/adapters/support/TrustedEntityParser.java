@@ -1,6 +1,7 @@
 package io.vctrust.trust.adapters.support;
 
 import io.vctrust.trust.core.json.Json;
+import io.vctrust.trust.core.metadata.Oid4vciMetadataMapper;
 import io.vctrust.trust.core.model.CredentialAuthorization;
 import io.vctrust.trust.core.model.CredentialFormats;
 import io.vctrust.trust.core.model.EntityRole;
@@ -17,6 +18,7 @@ import io.vctrust.trust.core.spi.ResourceLoader;
 import java.io.IOException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -86,6 +88,26 @@ public final class TrustedEntityParser {
         }
         if (m.get("attributes") instanceof Map<?, ?> attrs) {
             ((Map<String, Object>) attrs).forEach(b::attribute);
+        }
+        // contexts: the JSON-LD contexts this party's credentials use, as a URL or {url, sha256} (a pinned digest).
+        if (m.get("contexts") instanceof List<?> contexts) {
+            List<String> urls = new ArrayList<>();
+            Map<String, String> pins = new LinkedHashMap<>();
+            for (Object c : contexts) {
+                Map<String, Object> cm = c instanceof Map<?, ?> ? Json.object(c) : Map.of("url", String.valueOf(c));
+                String url = Json.string(cm, "url");
+                if (url == null) {
+                    throw new IllegalArgumentException("Entity " + id + ": a context needs a url");
+                }
+                urls.add(url);
+                if (Json.string(cm, "sha256") != null) {
+                    pins.put(url, Json.string(cm, "sha256"));
+                }
+            }
+            b.attribute(Oid4vciMetadataMapper.CONTEXTS, urls);
+            if (!pins.isEmpty()) {
+                b.attribute(Oid4vciMetadataMapper.CONTEXT_DIGESTS, pins);
+            }
         }
         return b.build();
     }

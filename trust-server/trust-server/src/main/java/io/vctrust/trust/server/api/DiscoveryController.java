@@ -46,27 +46,19 @@ public class DiscoveryController {
     public ResponseEntity<Map<String, Object>> discovery() {
         String base = keys.issuer().replaceAll("/+$", "");
         Map<String, Object> endpoints = new LinkedHashMap<>();
-        endpoints.put("frameworks", base + "/api/v1/frameworks");
-        endpoints.put("entities", base + "/api/v1/entities");
+        endpoints.put("snapshot", base + "/api/v1/snapshot");
+        endpoints.put("proxy_issuer_metadata", base + "/api/v1/proxy/issuer-metadata");
+        endpoints.put("proxy_did", base + "/api/v1/proxy/did/{did}");
+        endpoints.put("proxy_crl", base + "/api/v1/proxy/crl");
+        endpoints.put("proxy_status_list", base + "/api/v1/proxy/status-list");
         endpoints.put("issuers", base + "/api/v1/issuers");
         endpoints.put("verifiers", base + "/api/v1/verifiers");
+        endpoints.put("frameworks", base + "/api/v1/frameworks");
         endpoints.put("entity_lookup", base + "/api/v1/entities/lookup");
-        endpoints.put("issuer_metadata", base + "/api/v1/issuers/metadata");
         endpoints.put("evaluate", base + "/api/v1/evaluate");
-        endpoints.put("evaluate_batch", base + "/api/v1/evaluate/batch");
-        endpoints.put("x509_validate", base + "/api/v1/x509/validate");
-        endpoints.put("x509_anchors", base + "/api/v1/x509/anchors");
-        endpoints.put("did_resolve", base + "/api/v1/did/{did}");
-        endpoints.put("universal_resolver", base + "/1.0/identifiers/{did}");
-        endpoints.put("snapshot", base + "/api/v1/snapshot");
-        endpoints.put("crls", base + "/api/v1/revocation/crls");
-        endpoints.put("crl_relay", base + "/api/v1/revocation/crl");
-        endpoints.put("status_list_relay", base + "/api/v1/revocation/status-list");
-        endpoints.put("trqp_authorization", base + "/trqp/authorization");
-        endpoints.put("trqp_recognition", base + "/trqp/recognition");
         Map<String, Object> doc = new LinkedHashMap<>();
         doc.put("issuer", keys.issuer());
-        doc.put("service", "vc-trust-service");
+        doc.put("service", "wallet-proxy");
         doc.put("api_version", "v1");
         doc.put("jwks_uri", base + "/.well-known/jwks.json");
         doc.put("signing_key_thumbprint", keys.thumbprint());
@@ -74,15 +66,13 @@ public class DiscoveryController {
         doc.put("signing_key_thumbprints", keys.thumbprints());
         doc.put("endpoints", endpoints);
         doc.put("signed_response_media_type", "application/jwt");
-        // Wallets decide locally from the signed snapshot; /evaluate serves verifier backends and thin clients.
-        doc.put("decision_modes", List.of("local", "service"));
         doc.put("snapshot_format", SnapshotService.FORMAT);
-        // Devices check CRLs (anchor CRLs ship in the snapshot); OCSP is server-side only and opt-in.
+        doc.put("ready", sources.ready());
+        // Devices check CRLs themselves: anchor CRLs ship in the snapshot, others come from the CA or through the proxy.
         Map<String, Object> rev = new LinkedHashMap<>();
         rev.put("crl", revocation.isEnabled());
-        rev.put("ocsp", revocation.isEnabled() && revocation.isOcsp());
-        rev.put("crl_relay", revocation.isEnabled() && revocation.isRelayCrls());
-        rev.put("status_list_relay", revocation.isEnabled() && revocation.isRelayStatusLists());
+        rev.put("crl_proxy", revocation.isEnabled() && revocation.isRelayCrls());
+        rev.put("status_list_proxy", revocation.isEnabled() && revocation.isRelayStatusLists());
         doc.put("revocation", rev);
         List<String> methods = new java.util.ArrayList<>();
         if (auth.isApiKeys()) {

@@ -37,18 +37,7 @@ public final class Dtos {
     public record TrustedAuthority(String type, List<String> values) {
     }
 
-    public record BatchEvaluateRequest(List<EvaluateRequest> queries) {
-    }
-
-    public record X509ValidateRequest(List<String> chain, String domain, Instant time, String expectedDnsName,
-                                      String docType, String framework) {
-    }
-
     public record Page<T>(List<T> items, int total, int page, int size, long registryVersion) {
-    }
-
-    public record EntityDetail(EntityView entity, Map<String, Map<String, Object>> metadata,
-                               Map<String, Map<String, Object>> metadataPolicy, List<Map<String, Object>> anchors) {
     }
 
     public static EntityRole parseRole(String role) {

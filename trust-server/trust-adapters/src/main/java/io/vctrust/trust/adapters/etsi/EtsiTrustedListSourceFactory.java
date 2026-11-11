@@ -92,7 +92,8 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                     Map<String, String> domains = new LinkedHashMap<>(DEFAULT_DOMAINS);
                     def.map("serviceTypeDomains").forEach((k, v) -> domains.put(k, String.valueOf(v)));
                     boolean includeAll = def.bool("includeAllServiceTypes", false);
-                    Parsed root = parse(ctx.resources().load(location), location, signers, ctx.clock().instant());
+                    Parsed root = parse(ctx.resources().load(location), location, signers, ctx.clock().instant(),
+                            def.bool("allowUnverified", false));
                     List<TrustedEntity> entities = new ArrayList<>();
                     List<TrustAnchor> anchors = new ArrayList<>();
                     List<String> warnings = new ArrayList<>(root.warnings);
@@ -107,7 +108,9 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                             try {
                                 SignerVerification ps = def.bool("verifyPointerSignatures", true)
                                         ? SignerVerification.of(p.certificates) : SignerVerification.of(List.of());
-                                Parsed tl = parse(ctx.resources().load(p.location), p.location, ps, ctx.clock().instant());
+                                // Pointed-to lists are verified with the certificates the list of lists names for them.
+                                Parsed tl = parse(ctx.resources().load(p.location), p.location, ps, ctx.clock().instant(),
+                                        !def.bool("verifyPointerSignatures", true));
                                 warnings.addAll(tl.warnings);
                                 map(tl, def, domains, includeAll, ctx.clock().instant(), entities, anchors);
                             } catch (Exception e) {
@@ -145,14 +148,14 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                   List<String> warnings) {
     }
 
-    static Parsed parse(byte[] xml, String location, SignerVerification signers, Instant now) throws Exception {
+    static Parsed parse(byte[] xml, String location, SignerVerification signers, Instant now, boolean allowUnverified) throws Exception {
         Document doc = secureParse(xml);
         Element root = doc.getDocumentElement();
         if (!"TrustServiceStatusList".equals(root.getLocalName()) || !NS.equals(root.getNamespaceURI())) {
             throw new TrustSourceException("Not an ETSI TS 119 612 TrustServiceStatusList");
         }
         List<String> warnings = new ArrayList<>();
-        ListInfo.SignatureStatus sig = verifySignature(doc, signers, now, warnings);
+        ListInfo.SignatureStatus sig = verifySignature(doc, signers, now, warnings, allowUnverified);
         Element si = child(root, "SchemeInformation");
         String territory = text(child(si, "SchemeTerritory"));
         Map<String, Object> details = new LinkedHashMap<>();
@@ -267,7 +270,7 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                     constraints.put("trustedListUri", tl.location);
                     anchors.add(new TrustAnchor(null, TrustDomain.of(domain), c, def.frameworkId(), entityId,
                             active ? EntityStatus.ACTIVE : EntityStatus.REVOKED, constraints, prov));
-                    b.identifier(IdentifierType.X509_SUBJECT, c.getSubjectX500Principal().getName());
+                    b.identifier(IdentifierType.X509_SUBJECT, Certificates.subjectName(c));
                 }
                 s.skis.forEach(ski -> b.identifier(IdentifierType.X509_SKI, ski));
             }
@@ -284,16 +287,20 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
     }
 
     private static ListInfo.SignatureStatus verifySignature(Document doc, SignerVerification signers, Instant now,
-                                                            List<String> warnings) throws TrustSourceException {
+                                                            List<String> warnings, boolean allowUnverified) throws TrustSourceException {
         NodeList sigs = doc.getElementsByTagNameNS(XMLSignature.XMLNS, "Signature");
         if (sigs.getLength() == 0) {
-            if (signers.configured()) {
-                throw new TrustSourceException("Trusted list is not signed but signer certificates are configured");
+            if (signers.configured() || !allowUnverified) {
+                throw new TrustSourceException("Trusted list is not signed");
             }
             return ListInfo.SignatureStatus.NOT_SIGNED;
         }
         if (!signers.configured()) {
-            warnings.add("Trusted list signature not verified: no signer certificates configured");
+            if (!allowUnverified) {
+                throw new TrustSourceException("Trusted list signature cannot be verified: configure signer certificates, "
+                        + "or set allowUnverified: true to load the list on the strength of its transport alone");
+            }
+            warnings.add("Trusted list signature not verified: no signer certificates configured (allowUnverified)");
             return ListInfo.SignatureStatus.NOT_CHECKED;
         }
         registerIds(doc.getDocumentElement());

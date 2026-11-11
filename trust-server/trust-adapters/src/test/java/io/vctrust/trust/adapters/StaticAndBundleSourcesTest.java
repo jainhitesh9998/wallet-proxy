@@ -7,6 +7,7 @@ import io.vctrust.trust.core.model.EntityRole;
 import io.vctrust.trust.core.model.IdentifierType;
 import io.vctrust.trust.core.model.TrustDomain;
 import io.vctrust.trust.core.spi.SourceDefinition;
+import io.vctrust.trust.core.spi.TrustSourceException;
 import io.vctrust.trust.core.testing.TestPki;
 import io.vctrust.trust.core.x509.Certificates;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class StaticAndBundleSourcesTest {
 
@@ -62,9 +64,19 @@ class StaticAndBundleSourcesTest {
         var ca = TestPki.rootCa("CN=Animo,C=NL");
         var ctx = new TestContext();
         ctx.http.json("https://playground.example/api/x509", "{\"base64\":\"" + Certificates.toBase64(ca.certificate()) + "\"}");
-        var def = new SourceDefinition("b", "x509-bundle", "animo", null, true, Map.of(
-                "domain", "mdoc-iaca", "certificateLocation", "https://playground.example/api/x509", "certificateJsonField", "base64",
-                "docTypes", List.of("org.iso.18013.5.1.mDL")));
+        Map<String, Object> remote = Map.of("domain", "mdoc-iaca", "certificateLocation", "https://playground.example/api/x509",
+                "certificateJsonField", "base64", "docTypes", List.of("org.iso.18013.5.1.mDL"));
+        // Whoever answers at a URL must not decide what is trusted: a fetched certificate needs a pinned fingerprint.
+        assertThatThrownBy(() -> new X509BundleSourceFactory().create(new SourceDefinition("b", "x509-bundle", "animo", null, true, remote), ctx).load())
+                .isInstanceOf(TrustSourceException.class).hasMessageContaining("need sha256 fingerprints");
+        var other = TestPki.rootCa("CN=Someone else,C=NL");
+        assertThatThrownBy(() -> new X509BundleSourceFactory().create(new SourceDefinition("b", "x509-bundle", "animo", null, true,
+                with(remote, "sha256", List.of(Certificates.sha256Thumbprint(other.certificate())))), ctx).load())
+                .isInstanceOf(TrustSourceException.class).hasMessageContaining("not among the pinned fingerprints");
+        // The fingerprint as openssl prints it (hex with colons) or as base64url.
+        String hex = java.util.HexFormat.ofDelimiter(":").withUpperCase().formatHex(
+                java.util.Base64.getUrlDecoder().decode(Certificates.sha256Thumbprint(ca.certificate())));
+        var def = new SourceDefinition("b", "x509-bundle", "animo", null, true, with(remote, "sha256", List.of(hex)));
         var r = new X509BundleSourceFactory().create(def, ctx).load();
         assertThat(r.anchors()).singleElement().satisfies(a -> {
             assertThat(a.domain()).isEqualTo(TrustDomain.MDOC_IACA);
@@ -81,7 +93,7 @@ class StaticAndBundleSourcesTest {
                  "display":[{"name":"Tenant One","locale":"en","logo":{"uri":"https://issuer.example/logo.png"}}],
                  "credential_configurations_supported":{
                    "mdl":{"format":"mso_mdoc","doctype":"org.iso.18013.5.1.mDL"},
-                   "degree":{"format":"ldp_vc","credential_definition":{"@context":["https://www.w3.org/ns/credentials/v2"],"type":["VerifiableCredential","UniversityDegreeCredential"]}}}}""");
+                   "degree":{"format":"ldp_vc","credential_definition":{"@context":["https://www.w3.org/ns/credentials/v2","https://issuer.example/contexts/degree/v1"],"type":["VerifiableCredential","UniversityDegreeCredential"]}}}}""");
         ctx.http.json("https://issuer.example/.well-known/oauth-authorization-server/t1", "{\"issuer\":\"https://issuer.example/t1\"}");
         var def = new SourceDefinition("d", "oid4vci-discovery", "fw", null, true,
                 Map.of("issuers", List.of(Map.of("url", "https://issuer.example/t1", "entityId", "tenant-one"))));
@@ -89,7 +101,14 @@ class StaticAndBundleSourcesTest {
         var e = r.entities().getFirst();
         assertThat(e.id()).isEqualTo("tenant-one");
         assertThat(e.displayName("en")).isEqualTo("Tenant One");
-        assertThat(e.authorizations()).extracting(a -> a.type()).containsExactlyInAnyOrder("org.iso.18013.5.1.mDL", "UniversityDegreeCredential");
-        assertThat(e.metadata()).containsKey("openid_credential_issuer");
+        // What an issuer says about itself describes it and grants nothing.
+        assertThat(e.authorizations()).isEmpty();
+        assertThat(e.attributes().get("jsonLdContexts")).isEqualTo(List.of("https://www.w3.org/ns/credentials/v2", "https://issuer.example/contexts/degree/v1"));
+    }
+
+    private static Map<String, Object> with(Map<String, Object> base, String key, Object value) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>(base);
+        m.put(key, value);
+        return m;
     }
 }

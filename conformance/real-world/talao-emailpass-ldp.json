@@ -1,0 +1,48 @@
+{
+ "issuer": "https://talao.co/issuer/jfzmmdaedq",
+ "format": "ldp_vc",
+ "type": "EmailPass",
+ "obtained": "2026-11-11",
+ "holderJwk": {
+  "kty": "EC",
+  "crv": "P-256",
+  "x": "DBhgnLQjixQvuYESvwoqymOHjRy1G6zaXCOqQFd45Kc",
+  "y": "lkaLtuIy3srfAIRv44fpjBAaeR7rnPXHX7mbjm-AnKI"
+ },
+ "credential": {
+  "@context": [
+   "https://www.w3.org/2018/credentials/v1",
+   {
+    "EmailPass": "https://doc.wallet-provider.io/wallet/vc_type/#EmailPass",
+    "@vocab": "https://schema.org/"
+   }
+  ],
+  "id": "urn:uuid:dc01a0ac-de06-11f1-960f-0a1628958560",
+  "type": [
+   "VerifiableCredential",
+   "EmailPass"
+  ],
+  "credentialSubject": {
+   "email": "john.doe@example.com",
+   "type": "EmailPass"
+  },
+  "issuer": "did:web:app.altme.io:issuer",
+  "issuanceDate": "2026-11-11T19:34:06Z",
+  "proof": {
+   "type": "Ed25519Signature2020",
+   "proofPurpose": "assertionMethod",
+   "proofValue": "z2n4YQjrjdYBusw2jdUb1RsdeVtHyWqqaA8Z3fMBsNyy1a5jFt4w47K24GpJfAx6mXvpbkGANEDnYCCvtkaBBcmju",
+   "verificationMethod": "did:web:app.altme.io:issuer#key-1",
+   "created": "2026-11-11T19:34:06.833Z"
+  },
+  "expirationDate": "2027-11-11T19:34:06Z",
+  "credentialStatus": {
+   "id": "https://talao.co/sandbox/issuer/bitstringstatuslist/1#52019",
+   "type": "BitstringStatusListEntry",
+   "statusListCredential": "https://talao.co/sandbox/issuer/bitstringstatuslist/1",
+   "statusListIndex": "52019",
+   "statusPurpose": "revocation",
+   "statusSize": 1
+  }
+ }
+}

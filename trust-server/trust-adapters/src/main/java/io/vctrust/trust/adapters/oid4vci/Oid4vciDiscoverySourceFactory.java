@@ -21,10 +21,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * {@code type: oid4vci-discovery} — builds issuer entities by fetching each configured issuer's OpenID4VCI
- * metadata. Each entry of {@code issuers} is either a URL or {@code {url, entityId, authorizations: bool}};
- * {@code entityId} lets the discovered data merge into an entity defined by another source (e.g. a static
- * entry that carries policy and framework membership).
+ * {@code type: oid4vci-discovery} — describes issuers from their own OpenID4VCI metadata: identifier, display, and
+ * the JSON-LD contexts their credential configurations use. Each entry of {@code issuers} is a URL or
+ * {@code {url, entityId}}; {@code entityId} merges the description into an entity another source defines.
+ *
+ * <p>What an issuer says about itself never authorizes it: authorizations come only from sources an operator or a
+ * trusted list vouches for (static, managed, signed lists).
  */
 public final class Oid4vciDiscoverySourceFactory implements TrustSourceFactory {
 
@@ -52,13 +54,12 @@ public final class Oid4vciDiscoverySourceFactory implements TrustSourceFactory {
                     Map<String, Object> spec = o instanceof Map<?, ?> ? Json.object(o) : Map.of("url", String.valueOf(o));
                     String url = Json.string(spec, "url");
                     String entityId = Json.string(spec, "entityId") != null ? Json.string(spec, "entityId") : url;
-                    boolean authz = !"false".equals(String.valueOf(spec.getOrDefault("authorizations", "true")));
                     try {
                         IssuerMetadata md = resolver.resolve(url, null);
                         TrustedEntity.Builder b = TrustedEntity.builder(entityId).framework(def.frameworkId())
                                 .role(EntityRole.CREDENTIAL_ISSUER)
                                 .provenance(Provenance.of(def.id(), type(), def.frameworkId(), url, ctx.clock().instant()));
-                        Oid4vciMetadataMapper.enrich(b, md.issuer(), authz);
+                        Oid4vciMetadataMapper.describe(b, md.issuer());
                         md.authorizationServers().forEach((as, asMd) -> b.attribute("authorizationServer:" + as, Json.string(asMd, "issuer")));
                         md.warnings().forEach(w -> warnings.add(url + ": " + w));
                         entities.add(b.build());

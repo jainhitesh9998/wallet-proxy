@@ -13,7 +13,7 @@ import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.policy.ClientProfile;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.server.api.ApiException;
-import io.vctrust.trust.server.cache.TtlCache;
+import io.vctrust.trust.server.cache.ResourceCache;
 import io.vctrust.trust.server.config.TrustProperties;
 import org.springframework.http.HttpStatus;
 
@@ -55,7 +55,8 @@ public class MetadataService {
     private final ClientSignerTrust signerTrust;
     private final TrustRegistry registry;
     private final TrustEvaluator evaluator;
-    private final TtlCache<String, IssuerMetadata> cache;
+    private final ResourceCache<IssuerMetadata> cache;
+    private final int maxDocumentBytes;
     private final Clock clock;
 
     public MetadataService(IssuerMetadataResolver resolver, TrustRegistry registry, TrustEvaluator evaluator,
@@ -65,8 +66,15 @@ public class MetadataService {
         this.registry = registry;
         this.evaluator = evaluator;
         this.clock = clock;
-        this.cache = new TtlCache<>(cfg.getMaxEntries(), cfg.getStaleIfError(), clock);
-        registry.onChange(s -> cache.invalidateAll());
+        this.maxDocumentBytes = cfg.getMaxDocumentBytes();
+        // Anything but a failed fetch is the issuer's answer (no metadata, wrong issuer, invalid): it replaces a cached copy.
+        this.cache = new ResourceCache<>(cfg.settings(false), MetadataService::weight,
+                e -> e instanceof MetadataException m && !"fetch_failed".equals(m.code()), clock);
+    }
+
+    private static int weight(IssuerMetadata md) {
+        return Json.write(md.issuer()).length() + Json.write(md.authorizationServers()).length()
+                + (md.signedMetadata() == null ? 0 : md.signedMetadata().length());
     }
 
     public IssuerMetadataEnvelope issuer(String credentialIssuer, ClientProfile client) {
@@ -82,11 +90,17 @@ public class MetadataService {
                     "Issuer is not registered in the frameworks accepted by client " + client.clientId());
         }
         Map<String, Map<String, Object>> policy = entity == null ? null : entity.metadataPolicy();
-        String key = credentialIssuer + "|" + (entity == null ? "-" : entity.id());
-        TtlCache.Hit<IssuerMetadata> hit;
+        // The registry's metadata policy is part of the cached result, so a changed policy is a different entry.
+        String key = credentialIssuer + "|" + (entity == null ? "-" : entity.id() + "|" + (policy == null ? 0 : policy.hashCode()));
+        ResourceCache.Hit<IssuerMetadata> hit;
         try {
-            hit = cache.get(key, () -> resolver.resolve(credentialIssuer, policy),
-                    md -> Duration.between(clock.instant(), md.expiresAt()));
+            hit = cache.get(key, () -> {
+                IssuerMetadata md = resolver.resolve(credentialIssuer, policy);
+                if (weight(md) > maxDocumentBytes) {
+                    throw new MetadataException("metadata_invalid", "Issuer metadata exceeds " + maxDocumentBytes + " bytes");
+                }
+                return md;
+            }, md -> Duration.between(clock.instant(), md.expiresAt()));
         } catch (MetadataException e) {
             HttpStatus status = switch (e.code()) {
                 case "metadata_not_found" -> HttpStatus.NOT_FOUND;
@@ -140,6 +154,10 @@ public class MetadataService {
         } catch (Exception e) {
             throw new IllegalStateException("Verified signed metadata no longer parses", e);
         }
+    }
+
+    public void clear() {
+        cache.invalidateAll();
     }
 
     /** Remaining freshness in seconds, for Cache-Control. */

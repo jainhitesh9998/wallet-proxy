@@ -38,6 +38,10 @@ public class TrustProperties {
         private int snapshotMaxDidDocuments = 200;
         /** Upper bound on DID resolution while building a snapshot; slower documents are left out. */
         private Duration snapshotDidDeadline = Duration.ofSeconds(5);
+        /** JSON-LD context documents are embedded in a snapshot up to this total; past it only their digests are. */
+        private int snapshotMaxContextBytes = 256 * 1024;
+        /** How often a client's snapshot content is re-derived (DID documents and contexts change without the registry). */
+        private Duration snapshotRecheck = Duration.ofMinutes(1);
 
         public String getIssuer() { return issuer; }
         public void setIssuer(String issuer) { this.issuer = issuer; }
@@ -57,6 +61,10 @@ public class TrustProperties {
         public void setSnapshotMaxDidDocuments(int v) { this.snapshotMaxDidDocuments = v; }
         public Duration getSnapshotDidDeadline() { return snapshotDidDeadline; }
         public void setSnapshotDidDeadline(Duration v) { this.snapshotDidDeadline = v; }
+        public int getSnapshotMaxContextBytes() { return snapshotMaxContextBytes; }
+        public void setSnapshotMaxContextBytes(int v) { this.snapshotMaxContextBytes = v; }
+        public Duration getSnapshotRecheck() { return snapshotRecheck; }
+        public void setSnapshotRecheck(Duration v) { this.snapshotRecheck = v; }
     }
 
     /**
@@ -146,14 +154,21 @@ public class TrustProperties {
         public void setUserAgent(String v) { this.userAgent = v; }
     }
 
+    /** The proxy's caches (issuer metadata, DID documents, CRLs, status lists, JSON-LD contexts). */
     public static class Cache {
         private Duration metadataMinTtl = Duration.ofMinutes(1);
         private Duration metadataMaxTtl = Duration.ofHours(1);
         private Duration didTtl = Duration.ofMinutes(15);
-        private Duration negativeTtl = Duration.ofMinutes(1);
+        /** JSON-LD contexts are meant to be immutable; a changed one is logged. */
+        private Duration contextTtl = Duration.ofHours(24);
+        /** How long a failure is remembered, and how long a failed refresh is not retried. */
+        private Duration negativeTtl = Duration.ofSeconds(30);
         /** How long a stale entry may be served when the upstream is unavailable. */
         private Duration staleIfError = Duration.ofHours(24);
-        private long maxEntries = 10_000;
+        /** Bound on each cache, in bytes of cached content. */
+        private long maxBytes = 32L * 1024 * 1024;
+        /** Largest issuer metadata document, DID document or JSON-LD context the proxy will hold. */
+        private int maxDocumentBytes = 1024 * 1024;
 
         public Duration getMetadataMinTtl() { return metadataMinTtl; }
         public void setMetadataMinTtl(Duration v) { this.metadataMinTtl = v; }
@@ -165,8 +180,17 @@ public class TrustProperties {
         public void setNegativeTtl(Duration v) { this.negativeTtl = v; }
         public Duration getStaleIfError() { return staleIfError; }
         public void setStaleIfError(Duration v) { this.staleIfError = v; }
-        public long getMaxEntries() { return maxEntries; }
-        public void setMaxEntries(long v) { this.maxEntries = v; }
+        /** Settings every proxy cache shares; {@code refreshInBackground}: serve a stale entry at once and refresh it off the request. */
+        public io.vctrust.trust.server.cache.ResourceCache.Settings settings(boolean refreshInBackground) {
+            return new io.vctrust.trust.server.cache.ResourceCache.Settings(maxBytes, negativeTtl, staleIfError, refreshInBackground);
+        }
+
+        public Duration getContextTtl() { return contextTtl; }
+        public void setContextTtl(Duration v) { this.contextTtl = v; }
+        public long getMaxBytes() { return maxBytes; }
+        public void setMaxBytes(long v) { this.maxBytes = v; }
+        public int getMaxDocumentBytes() { return maxDocumentBytes; }
+        public void setMaxDocumentBytes(int v) { this.maxDocumentBytes = v; }
     }
 
     public static class Did {
@@ -185,7 +209,7 @@ public class TrustProperties {
         public void setUniversalResolverMethods(List<String> v) { this.universalResolverMethods = v; }
     }
 
-    /** Certificate revocation (CRLs, optional OCSP) and the CRL / status list relays. */
+    /** Certificate revocation (CRLs) and the CRL / status list relays. */
     public static class Revocation {
         private boolean enabled = true;
         /** Anchor CRLs are re-fetched after min(refresh, nextUpdate - now), at least a minute apart. */
@@ -195,8 +219,6 @@ public class TrustProperties {
         private int snapshotMaxCrlBytes = 256 * 1024;
         /** Fetch the CRL distribution points of non-anchor issuers during server-side checks. */
         private boolean fetchOnDemand = true;
-        /** OCSP for certificates without CRL coverage (server-side decisions only; devices never use OCSP). */
-        private boolean ocsp = false;
         private boolean relayCrls = true;
         private boolean relayStatusLists = true;
         private Duration statusListMaxTtl = Duration.ofHours(1);
@@ -213,8 +235,6 @@ public class TrustProperties {
         public void setSnapshotMaxCrlBytes(int v) { this.snapshotMaxCrlBytes = v; }
         public boolean isFetchOnDemand() { return fetchOnDemand; }
         public void setFetchOnDemand(boolean v) { this.fetchOnDemand = v; }
-        public boolean isOcsp() { return ocsp; }
-        public void setOcsp(boolean v) { this.ocsp = v; }
         public boolean isRelayCrls() { return relayCrls; }
         public void setRelayCrls(boolean v) { this.relayCrls = v; }
         public boolean isRelayStatusLists() { return relayStatusLists; }
@@ -227,10 +247,11 @@ public class TrustProperties {
         public void setMaxStatusListBytes(int v) { this.maxStatusListBytes = v; }
     }
 
+    /** Requests without credentials. Off unless an operator turns it on and names the frameworks they may see. */
     public static class Anonymous {
-        private boolean enabled = true;
+        private boolean enabled = false;
         private List<String> frameworks = new ArrayList<>();
-        private boolean allowUnregisteredMetadata = true;
+        private boolean allowUnregisteredMetadata = false;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean v) { this.enabled = v; }
@@ -329,7 +350,7 @@ public class TrustProperties {
 
     /** Per-client token bucket; anonymous callers are limited per address. */
     public static class RateLimit {
-        private boolean enabled = false;
+        private boolean enabled = true;
         private int requestsPerMinute = 600;
         /** Requests a client may make at once before the per-minute rate applies. */
         private int burst = 100;
@@ -370,6 +391,8 @@ public class TrustProperties {
         private String framework;
         private Duration refresh = Duration.ofHours(1);
         private boolean enabled = true;
+        /** The service is not ready (and serves no snapshot) until every required source has loaded once. */
+        private boolean required = true;
         private Map<String, Object> properties = new LinkedHashMap<>();
 
         public String getId() { return id; }
@@ -382,6 +405,8 @@ public class TrustProperties {
         public void setRefresh(Duration v) { this.refresh = v; }
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean v) { this.enabled = v; }
+        public boolean isRequired() { return required; }
+        public void setRequired(boolean v) { this.required = v; }
         public Map<String, Object> getProperties() { return properties; }
         public void setProperties(Map<String, Object> v) { this.properties = v; }
     }
@@ -401,14 +426,13 @@ public class TrustProperties {
         private Integer requestsPerMinute;
         private List<String> frameworks = new ArrayList<>();
         private boolean strictAuthorization = false;
-        private boolean allowUnregisteredMetadata = true;
+        /** Whether the metadata proxy fetches issuers that are in none of the client's frameworks. */
+        private boolean allowUnregisteredMetadata = false;
         private boolean admin = false;
         /** An undeterminable certificate revocation status fails validation (otherwise a warning). */
         private boolean requireRevocationStatus = false;
         /** Issuer metadata must be signed by a certificate under a credential-issuer anchor (HAIP 1.0 §4.1 ecosystems). */
         private boolean requireSignedIssuerMetadata = false;
-        /** Honour anchors' relaxProfile (sandbox deviations become warnings); false enforces certificate profiles strictly. */
-        private boolean allowRelaxedProfiles = true;
 
         public String getId() { return id; }
         public void setId(String v) { this.id = v; }
@@ -436,8 +460,6 @@ public class TrustProperties {
         public void setRequireRevocationStatus(boolean v) { this.requireRevocationStatus = v; }
         public boolean isRequireSignedIssuerMetadata() { return requireSignedIssuerMetadata; }
         public void setRequireSignedIssuerMetadata(boolean v) { this.requireSignedIssuerMetadata = v; }
-        public boolean isAllowRelaxedProfiles() { return allowRelaxedProfiles; }
-        public void setAllowRelaxedProfiles(boolean v) { this.allowRelaxedProfiles = v; }
     }
 
     public Service getService() { return service; }

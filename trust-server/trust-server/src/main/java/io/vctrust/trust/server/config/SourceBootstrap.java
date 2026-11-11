@@ -9,14 +9,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Loads all trust sources once the application is ready, off the startup thread; exposes readiness. */
+/** Loads all trust sources once the application is ready, off the startup thread. */
 @Component
 public class SourceBootstrap {
 
     private static final Logger log = LoggerFactory.getLogger(SourceBootstrap.class);
-
     private final TrustSourceManager manager;
-    private final AtomicBoolean ready = new AtomicBoolean();
 
     public SourceBootstrap(TrustSourceManager manager) {
         this.manager = manager;
@@ -27,14 +25,13 @@ public class SourceBootstrap {
         Thread t = new Thread(() -> {
             long t0 = System.currentTimeMillis();
             manager.start();
-            ready.set(true);
-            log.info("Trust registry ready in {} ms", System.currentTimeMillis() - t0);
+            if (manager.ready()) {
+                log.info("Trust registry ready in {} ms", System.currentTimeMillis() - t0);
+            } else {
+                log.warn("Trust registry not ready: required sources {} have not loaded; they are retried", manager.waitingFor());
+            }
         }, "trust-bootstrap");
         t.setDaemon(true);
         t.start();
-    }
-
-    public boolean isReady() {
-        return ready.get();
     }
 }

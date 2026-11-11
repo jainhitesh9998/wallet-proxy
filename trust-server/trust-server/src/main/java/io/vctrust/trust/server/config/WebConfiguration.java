@@ -1,5 +1,7 @@
 package io.vctrust.trust.server.config;
 
+import io.vctrust.trust.core.registry.TrustSourceManager;
+import io.vctrust.trust.server.api.ReadinessInterceptor;
 import io.vctrust.trust.server.security.AccessTokenVerifier;
 import io.vctrust.trust.server.security.ClientAuthenticationFilter;
 import io.vctrust.trust.server.security.ClientAuthenticator;
@@ -12,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.util.List;
@@ -20,9 +23,11 @@ import java.util.List;
 public class WebConfiguration implements WebMvcConfigurer {
 
     private final TrustProperties props;
+    private final TrustSourceManager sources;
 
-    public WebConfiguration(TrustProperties props) {
+    public WebConfiguration(TrustProperties props, TrustSourceManager sources) {
         this.props = props;
+        this.sources = sources;
     }
 
     @Bean
@@ -51,9 +56,15 @@ public class WebConfiguration implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         String[] origins = props.getCorsOrigins().toArray(String[]::new);
-        for (String path : List.of("/api/**", "/.well-known/**", "/1.0/**", "/trqp/**")) {
+        for (String path : List.of("/api/**", "/.well-known/**")) {
             registry.addMapping(path).allowedOriginPatterns(origins).allowedMethods("GET", "POST", "OPTIONS")
                     .allowedHeaders("*").exposedHeaders("ETag", "Cache-Control", "X-Trust-Decision", "X-Trust-Source", "Retry-After", "WWW-Authenticate").maxAge(3600);
         }
+    }
+
+    /** Nothing derived from the registry is served before the registry is complete. */
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(new ReadinessInterceptor(sources)).addPathPatterns("/api/**");
     }
 }

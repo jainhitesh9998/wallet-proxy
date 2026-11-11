@@ -11,7 +11,7 @@
   </parent>
 
   <artifactId>trust-server</artifactId>
-  <name>VC Trust Service :: Server</name>
+  <name>Wallet Proxy :: Trust service</name>
   <description>Spring Boot HTTP service exposing trust evaluation, metadata proxy, X.509 and DID resolution</description>
 
   <dependencies>

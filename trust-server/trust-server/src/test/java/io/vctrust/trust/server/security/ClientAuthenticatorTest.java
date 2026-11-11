@@ -94,6 +94,7 @@ class ClientAuthenticatorTest {
     static TrustProperties.Client client(String id, java.util.function.Consumer<TrustProperties.Client> f) {
         TrustProperties.Client c = new TrustProperties.Client();
         c.setId(id);
+        c.setFrameworks(List.of("fw"));
         f.accept(c);
         return c;
     }
@@ -429,5 +430,26 @@ class ClientAuthenticatorTest {
         dup.getClients().add(client("a", c -> c.setApiKey("same")));
         dup.getClients().add(client("b", c -> c.setApiKey("same")));
         assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> new ClientRegistry(dup))).hasMessageContaining("share the same API key");
+    }
+
+    @Test
+    void nothingIsGrantedByOmission() {
+        // A client without frameworks used to see every framework; it is now a configuration error.
+        TrustProperties p = new TrustProperties();
+        p.getClients().add(client("wallet", c -> { c.setApiKey("k"); c.setFrameworks(List.of()); }));
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> new ClientRegistry(p))).hasMessageContaining("accepts no framework");
+        TrustProperties ok = new TrustProperties();
+        ok.getClients().add(client("wallet", c -> { c.setApiKey("k"); c.setFrameworks(List.of("*")); }));
+        ok.getClients().add(client("ops", c -> { c.setApiKey("o"); c.setFrameworks(List.of()); c.setAdmin(true); }));
+        ClientRegistry registry = new ClientRegistry(ok);
+        assertThat(registry.byApiKey("k").orElseThrow().accepts("anything")).isTrue();
+        assertThat(registry.byApiKey("o").orElseThrow().accepts("anything")).isTrue();
+        // Without credentials there is no profile unless the operator enables anonymous access, and then only for the frameworks named.
+        assertThat(registry.anonymous()).isEmpty();
+        ok.getAnonymous().setEnabled(true);
+        ok.getAnonymous().setFrameworks(List.of("public"));
+        var anonymous = new ClientRegistry(ok).anonymous().orElseThrow();
+        assertThat(anonymous.accepts("public")).isTrue();
+        assertThat(anonymous.accepts("fw")).isFalse();
     }
 }

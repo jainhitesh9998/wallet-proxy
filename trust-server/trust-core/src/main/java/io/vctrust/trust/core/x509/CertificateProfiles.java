@@ -30,9 +30,14 @@ public final class CertificateProfiles {
         }
     };
 
+    /** The doctype ISO/IEC 18013-5 defines, and whose signer certificates its Annex B profiles. */
+    public static final String MDL_DOCTYPE = "org.iso.18013.5.1.mDL";
+
     /**
-     * ISO/IEC 18013-5 Annex B: the Document Signer must carry EKU 1.0.18013.5.1.2, must not be a CA, and its
-     * country must match the IACA's. Missing EKU is an error; country mismatch is an error when both are set.
+     * The signer of an mdoc must not be a CA and must be allowed to sign. For an mDL, ISO/IEC 18013-5 Annex B
+     * applies on top: the Document Signer carries EKU 1.0.18013.5.1.2, and its country is the IACA's. Other
+     * doctypes (an EUDI PID as mdoc, say) are issued under other certificate profiles, so those two rules are
+     * applied to an mDL, and when the doctype is not known.
      */
     public static final CertificateProfile MDOC_DOCUMENT_SIGNER = new CertificateProfile() {
         @Override
@@ -47,7 +52,8 @@ public final class CertificateProfiles {
             if (Certificates.isCa(ds)) {
                 issues.add(ValidationIssue.error("mdoc.ds.is_ca", "Document Signer certificate must not be a CA"));
             }
-            if (!Certificates.extendedKeyUsage(ds).contains(EKU_MDL_DS)) {
+            boolean mdl = ctx == null || ctx.docType() == null || MDL_DOCTYPE.equals(ctx.docType());
+            if (mdl && !Certificates.extendedKeyUsage(ds).contains(EKU_MDL_DS)) {
                 issues.add(ValidationIssue.error("mdoc.ds.eku",
                         "Document Signer certificate lacks extended key usage " + EKU_MDL_DS));
             }
@@ -57,7 +63,7 @@ public final class CertificateProfiles {
             }
             Optional<String> dsC = Certificates.subjectCountry(ds);
             Optional<String> iacaC = Certificates.subjectCountry(anchor);
-            if (dsC.isPresent() && iacaC.isPresent() && !dsC.get().equalsIgnoreCase(iacaC.get())) {
+            if (mdl && dsC.isPresent() && iacaC.isPresent() && !dsC.get().equalsIgnoreCase(iacaC.get())) {
                 issues.add(ValidationIssue.error("mdoc.ds.country",
                         "Document Signer country " + dsC.get() + " differs from IACA country " + iacaC.get()));
             }

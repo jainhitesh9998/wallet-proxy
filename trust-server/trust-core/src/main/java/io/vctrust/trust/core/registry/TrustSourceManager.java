@@ -1,6 +1,7 @@
 package io.vctrust.trust.core.registry;
 
 import io.vctrust.trust.core.model.Identifier;
+import io.vctrust.trust.core.model.Provenance;
 import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustFramework;
 import io.vctrust.trust.core.model.TrustedEntity;
@@ -26,10 +27,16 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Predicate;
 
 /**
- * Loads trust sources, refreshes them on their schedule (honouring a list's own {@code nextUpdate}),
- * keeps the last good result of a failing source, and publishes merged snapshots to the {@link TrustRegistry}.
+ * Loads trust sources, refreshes them on their schedule (honouring a list's own {@code nextUpdate}), keeps the last
+ * good result of a failing source, and publishes the merged registry to the {@link TrustRegistry}.
+ *
+ * <p>A new registry version is published only when its content changed, so a reload that finds nothing new does not
+ * invalidate what was derived from it. The registry is {@link #ready()} once every required source has loaded;
+ * before that it must not be served, because a registry missing a source looks like that source's parties being
+ * delisted.
  */
 public class TrustSourceManager implements AutoCloseable {
 
@@ -61,7 +68,17 @@ public class TrustSourceManager implements AutoCloseable {
             states.put(s.id(), new SourceState(s.id(), s.type(), s.definition().frameworkId(), s.definition().enabled(),
                     null, null, null, 0, 0, null, List.of(), null));
         }
-        rebuild();
+    }
+
+    /** True once every enabled, required source has loaded successfully at least once. */
+    public boolean ready() {
+        return waitingFor().isEmpty();
+    }
+
+    /** The enabled, required sources that have never loaded: why the registry is not ready. */
+    public List<String> waitingFor() {
+        return sources.values().stream().filter(s -> s.definition().enabled() && s.definition().required())
+                .map(TrustSource::id).filter(id -> !results.containsKey(id)).toList();
     }
 
     /** Loads every enabled source once, synchronously, then schedules refreshes. */
@@ -91,13 +108,12 @@ public class TrustSourceManager implements AutoCloseable {
     }
 
     /** Asks on-demand capable sources to resolve an identifier missing from the pre-loaded registry. */
-    public Optional<TrustedEntity> resolveOnDemand(Identifier identifier, Collection<String> allowedFrameworks) {
+    public Optional<TrustedEntity> resolveOnDemand(Identifier identifier, Predicate<String> acceptsFramework) {
         for (TrustSource s : sources.values()) {
             if (!s.definition().enabled() || !(s instanceof OnDemandResolver r) || !r.canResolve(identifier)) {
                 continue;
             }
-            if (allowedFrameworks != null && !allowedFrameworks.isEmpty()
-                    && !allowedFrameworks.contains(s.definition().frameworkId())) {
+            if (!acceptsFramework.test(s.definition().frameworkId())) {
                 continue;
             }
             try {
@@ -171,8 +187,30 @@ public class TrustSourceManager implements AutoCloseable {
                 anchors.addAll(r.anchors());
             }
         }
-        registry.publish(new RegistrySnapshot(version.incrementAndGet(), clock.instant(), frameworks,
-                RegistrySnapshot.mergeById(entities), anchors));
+        List<TrustedEntity> merged = RegistrySnapshot.mergeById(entities);
+        List<Object> content = List.of(merged.stream().map(TrustSourceManager::withoutRetrievalTime).toList(),
+                anchors.stream().map(TrustSourceManager::withoutRetrievalTime).toList());
+        if (content.equals(published)) {
+            return;
+        }
+        published = content;
+        registry.publish(new RegistrySnapshot(version.incrementAndGet(), clock.instant(), frameworks, merged, anchors));
+    }
+
+    /** What the last published registry held, for comparison; when something was fetched is not content. */
+    private List<Object> published;
+
+    private static TrustedEntity withoutRetrievalTime(TrustedEntity e) {
+        return e.provenance() == null ? e : e.toBuilder().provenance(timeless(e.provenance())).build();
+    }
+
+    private static TrustAnchor withoutRetrievalTime(TrustAnchor a) {
+        return a.provenance() == null ? a : new TrustAnchor(a.id(), a.domain(), a.certificate(), a.frameworkId(), a.entityId(),
+                a.status(), a.constraints(), timeless(a.provenance()));
+    }
+
+    private static Provenance timeless(Provenance p) {
+        return new Provenance(p.sourceId(), p.sourceType(), p.frameworkId(), p.sourceUri(), null, p.details());
     }
 
     @Override

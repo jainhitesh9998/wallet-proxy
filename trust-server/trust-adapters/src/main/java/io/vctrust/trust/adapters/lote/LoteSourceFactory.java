@@ -91,8 +91,8 @@ public final class LoteSourceFactory implements TrustSourceFactory {
                     if (text.startsWith("{")) {
                         doc = Json.parseObject(text);
                         sig = ListInfo.SignatureStatus.NOT_SIGNED;
-                        if (signers.configured()) {
-                            throw new TrustSourceException("LoTE is unsigned but signer certificates are configured");
+                        if (signers.configured() || !def.bool("allowUnverified", false)) {
+                            throw new TrustSourceException("LoTE is not signed");
                         }
                     } else {
                         JWSObject jws = JWSObject.parse(text);
@@ -111,9 +111,12 @@ public final class LoteSourceFactory implements TrustSourceFactory {
                                 throw new TrustSourceException("LoTE signer is not trusted: " + pv.issues());
                             }
                             sig = ListInfo.SignatureStatus.VERIFIED;
-                        } else {
-                            warnings.add("LoTE signature not verified: no signer certificates configured");
+                        } else if (def.bool("allowUnverified", false)) {
+                            warnings.add("LoTE signature not verified: no signer certificates configured (allowUnverified)");
                             sig = ListInfo.SignatureStatus.NOT_CHECKED;
+                        } else {
+                            throw new TrustSourceException("LoTE signature cannot be verified: configure signer certificates, "
+                                    + "or set allowUnverified: true to load the list on the strength of its transport alone");
                         }
                     }
                     Map<String, Object> lote = Json.object(doc.get("LoTE"));
@@ -179,7 +182,7 @@ public final class LoteSourceFactory implements TrustSourceFactory {
                     Object val = c instanceof Map<?, ?> cm ? Json.object(cm).get("val") : c;
                     try {
                         X509Certificate cert = Certificates.fromBase64(String.valueOf(val).replaceAll("\\s", ""));
-                        b.identifier(IdentifierType.X509_SUBJECT, cert.getSubjectX500Principal().getName());
+                        b.identifier(IdentifierType.X509_SUBJECT, Certificates.subjectName(cert));
                         for (String domain : m == null ? List.<String>of() : m.domains()) {
                             Map<String, Object> constraints = new LinkedHashMap<>();
                             constraints.put("serviceType", st);

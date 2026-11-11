@@ -7,7 +7,7 @@ import io.vctrust.trust.core.util.Hashes;
 import io.vctrust.trust.core.x509.Certificates;
 import io.vctrust.trust.core.x509.RevocationChecker;
 import io.vctrust.trust.core.x509.RevocationChecker.Crl;
-import io.vctrust.trust.server.cache.TtlCache;
+import io.vctrust.trust.server.cache.ResourceCache;
 import io.vctrust.trust.server.config.TrustProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -81,18 +81,21 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     private final HttpFetcher http;
     private final TrustProperties.Revocation cfg;
     private final Clock clock;
-    private final TtlCache<String, Crl> byUrl;
+    private final ResourceCache<Crl> byUrl;
     private final ScheduledExecutorService scheduler;
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private final AtomicLong version = new AtomicLong();
     private volatile Map<String, AnchorCrl> anchorCrls = Map.of();
 
-    public CrlService(TrustRegistry registry, HttpFetcher http, TrustProperties.Revocation cfg, Clock clock) {
+    public CrlService(TrustRegistry registry, HttpFetcher http, TrustProperties.Revocation cfg, ResourceCache.Settings cache, Clock clock) {
         this.registry = registry;
         this.http = http;
         this.cfg = cfg;
         this.clock = clock;
-        this.byUrl = new TtlCache<>(1_000, Duration.ofDays(1), clock);
+        // "No such CRL" and "not a CRL" are answers; anything else is an outage, through which the last CRL keeps being served.
+        this.byUrl = new ResourceCache<>(cache, crl -> crl.der().length,
+                e -> e instanceof IllegalArgumentException || e.getCause() instanceof IllegalArgumentException
+                        || (e instanceof HttpFetcher.HttpStatusException h && h.status() >= 400 && h.status() < 500), clock);
         if (cfg.isEnabled()) {
             scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "crl-refresh");
@@ -136,14 +139,14 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
 
     /** The CRL at {@code url} for the relay (not verified: the relay does not know the issuer; clients verify). */
     public Relayed relay(String url) throws IOException {
-        TtlCache.Hit<Crl> hit = cachedCrl(url);
+        ResourceCache.Hit<Crl> hit = cachedCrl(url);
         return new Relayed(hit.value().der(), hit.expiresAt());
     }
 
-    private TtlCache.Hit<Crl> cachedCrl(String url) throws IOException {
+    private ResourceCache.Hit<Crl> cachedCrl(String url) throws IOException {
         for (AnchorCrl a : anchorCrls.values()) {
             if (url.equals(a.url()) && a.crl() != null) {
-                return new TtlCache.Hit<>(a.crl(), a.fetchedAt(), a.nextFetch(), false);
+                return new ResourceCache.Hit<>(a.crl(), a.fetchedAt(), a.nextFetch(), false);
             }
         }
         try {

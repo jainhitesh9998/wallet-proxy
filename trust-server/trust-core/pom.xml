@@ -11,7 +11,7 @@
   </parent>
 
   <artifactId>trust-core</artifactId>
-  <name>VC Trust Service :: Core</name>
+  <name>Wallet Proxy :: Core</name>
   <description>Framework-free domain model, SPIs and trust evaluation engine</description>
 
   <dependencies>

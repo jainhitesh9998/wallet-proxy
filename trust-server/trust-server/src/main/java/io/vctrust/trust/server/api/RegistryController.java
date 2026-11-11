@@ -64,18 +64,6 @@ public class RegistryController {
         return cached(req, client, snap, out);
     }
 
-    @GetMapping("/entities")
-    public ResponseEntity<Object> entities(ClientProfile client, HttpServletRequest req,
-                                           @RequestParam(required = false) String role,
-                                           @RequestParam(required = false) String framework,
-                                           @RequestParam(required = false) String format,
-                                           @RequestParam(required = false) String type,
-                                           @RequestParam(required = false) String q,
-                                           @RequestParam(defaultValue = "0") int page,
-                                           @RequestParam(defaultValue = "100") int size) {
-        return list(client, req, Dtos.parseRole(role), framework, format, type, q, page, size);
-    }
-
     @GetMapping("/issuers")
     public ResponseEntity<Object> issuers(ClientProfile client, HttpServletRequest req,
                                           @RequestParam(required = false) String framework,
@@ -109,7 +97,7 @@ public class RegistryController {
         if (found.isEmpty() && onDemand) {
             // Registries too large for the snapshot (OpenID Federation, EBSI) are asked about this one identifier.
             for (Identifier id : ids) {
-                sources.resolveOnDemand(id, client.frameworks()).filter(e -> client.accepts(e.frameworkId())).ifPresent(found::add);
+                sources.resolveOnDemand(id, client::accepts).filter(e -> client.accepts(e.frameworkId())).ifPresent(found::add);
                 if (!found.isEmpty()) {
                     break;
                 }
@@ -118,25 +106,6 @@ public class RegistryController {
                     ResponseEntity.ok().cacheControl(CacheControl.noStore()));
         }
         return cached(req, client, snap, found.stream().map(EntityView::of).toList());
-    }
-
-    @GetMapping("/entities/by-id")
-    public ResponseEntity<Object> byIdParam(ClientProfile client, HttpServletRequest req, @RequestParam String id) {
-        return detail(client, req, id);
-    }
-
-    @GetMapping("/entities/{id}")
-    public ResponseEntity<Object> byId(ClientProfile client, HttpServletRequest req, @PathVariable String id) {
-        return detail(client, req, id);
-    }
-
-    private ResponseEntity<Object> detail(ClientProfile client, HttpServletRequest req, String id) {
-        RegistrySnapshot snap = registry.snapshot();
-        TrustedEntity e = snap.entity(id).filter(x -> client.accepts(x.frameworkId()))
-                .orElseThrow(() -> ApiException.notFound("No entity " + id));
-        List<Map<String, Object>> anchors = snap.allAnchors().stream().filter(a -> id.equals(a.entityId()))
-                .map(TrustJacksonModule::anchorView).toList();
-        return cached(req, client, snap, new Dtos.EntityDetail(EntityView.of(e), e.metadata(), e.metadataPolicy(), anchors));
     }
 
     private ResponseEntity<Object> list(ClientProfile client, HttpServletRequest req, EntityRole role, String framework,

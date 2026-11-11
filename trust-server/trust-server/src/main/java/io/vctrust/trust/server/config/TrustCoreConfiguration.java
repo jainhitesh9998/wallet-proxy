@@ -33,10 +33,9 @@ import io.vctrust.trust.server.security.ClientRegistry;
 import io.vctrust.trust.server.service.CrlService;
 import io.vctrust.trust.server.service.DidService;
 import io.vctrust.trust.server.service.MetadataService;
-import io.vctrust.trust.server.service.OcspClient;
+import io.vctrust.trust.server.service.ContextService;
 import io.vctrust.trust.server.service.StatusListRelay;
 import io.vctrust.trust.server.service.SnapshotService;
-import io.vctrust.trust.server.service.TrqpService;
 import io.vctrust.trust.server.signing.ServiceKeyManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -132,7 +131,7 @@ public class TrustCoreConfiguration {
             @SuppressWarnings("unchecked")
             Map<String, Object> props2 = (Map<String, Object>) PropertyTrees.normalize(s.getProperties());
             sources.add(f.create(new SourceDefinition(s.getId(), s.getType(), s.getFramework(), s.getRefresh(),
-                    s.isEnabled(), props2), ctx));
+                    s.isEnabled(), s.isRequired(), props2), ctx));
         }
         List<TrustFramework> frameworks = props.getFrameworks().stream()
                 .map(f -> new TrustFramework(f.getId(), f.getName() == null ? f.getId() : f.getName(), f.getDescription(),
@@ -166,24 +165,24 @@ public class TrustCoreConfiguration {
     /** CRL distribution points are mostly http; CRLs are signed, so the CRL service may fetch them over http. */
     @Bean(destroyMethod = "close")
     CrlService crlService(TrustRegistry registry, HttpFetcher http, TrustProperties props, Clock clock) {
-        return new CrlService(registry, http instanceof SafeHttpFetcher safe ? safe.allowingPlainHttp() : http, props.getRevocation(), clock);
+        return new CrlService(registry, http instanceof SafeHttpFetcher safe ? safe.allowingPlainHttp() : http, props.getRevocation(),
+                props.getCache().settings(false), clock);
     }
 
-    /** OCSP responders are mostly http too, and their responses are signed. */
+    /** CRLs from the trust list and distribution points. */
     @Bean
-    OcspClient ocspClient(HttpFetcher http, Clock clock) {
-        return new OcspClient(http instanceof SafeHttpFetcher safe ? safe.allowingPlainHttp() : http, clock);
-    }
-
-    /** CRLs from the trust list and distribution points; OCSP only when enabled (server-side decisions). */
-    @Bean
-    RevocationChecker revocationChecker(CrlService crls, OcspClient ocsp, TrustProperties props) {
-        return new RevocationChecker(crls, props.getRevocation().isOcsp() ? ocsp : null, "trust-service");
+    RevocationChecker revocationChecker(CrlService crls) {
+        return new RevocationChecker(crls, "trust-service");
     }
 
     @Bean
     StatusListRelay statusListRelay(HttpFetcher http, TrustProperties props, Clock clock) {
-        return new StatusListRelay(http, props.getRevocation(), clock);
+        return new StatusListRelay(http, props.getRevocation(), props.getCache().settings(false), clock);
+    }
+
+    @Bean
+    ContextService contextService(HttpFetcher http, TrustProperties props, Clock clock) {
+        return new ContextService(http, props.getCache(), clock);
     }
 
     @Bean
@@ -228,7 +227,7 @@ public class TrustCoreConfiguration {
                     .filter(a -> client.accepts(a.frameworkId())).toList();
             PathValidationResult r = validator.validate(chain, anchors, new X509PathValidator.Options(clock.instant(),
                     CertificateProfiles.forDomain(TrustDomain.CREDENTIAL_ISSUER), null, null)
-                    .withRevocation(checker, client.requireRevocationStatus()).withRelaxedProfiles(client.allowRelaxedProfiles()));
+                    .withRevocation(checker, client.requireRevocationStatus()));
             return r.valid() ? null : r.issues().stream().filter(ValidationIssue::isError).map(ValidationIssue::message)
                     .reduce((x, y) -> x + "; " + y).orElse("no trusted anchor");
         };
@@ -242,16 +241,12 @@ public class TrustCoreConfiguration {
 
     @Bean
     SnapshotService snapshotService(TrustRegistry registry, ServiceKeyManager keys, JsonMapper mapper, DidService dids,
-                                    CrlService crls, TrustProperties props, Clock clock) {
+                                    CrlService crls, ContextService contexts, TrustProperties props, Clock clock) {
         TrustProperties.Service s = props.getService();
-        return new SnapshotService(registry, keys, mapper, dids, props.getRevocation().isEnabled() ? crls : null,
+        return new SnapshotService(registry, keys, mapper, dids, props.getRevocation().isEnabled() ? crls : null, contexts,
                 new SnapshotService.Options(s.getSnapshotTtl(), s.isSnapshotDidDocuments(), s.getSnapshotMaxDidDocuments(),
-                        s.getSnapshotDidDeadline(), props.getRevocation().getSnapshotMaxCrlBytes()), clock);
-    }
-
-    @Bean
-    TrqpService trqpService(TrustRegistry registry, TrustEvaluator evaluator, Clock clock) {
-        return new TrqpService(registry, evaluator, clock);
+                        s.getSnapshotDidDeadline(), props.getRevocation().getSnapshotMaxCrlBytes(), s.getSnapshotMaxContextBytes(),
+                        s.getSnapshotRecheck()), clock);
     }
 
     @Bean

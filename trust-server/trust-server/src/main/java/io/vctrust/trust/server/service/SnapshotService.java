@@ -18,7 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HexFormat;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,24 +32,33 @@ import java.util.concurrent.TimeUnit;
 /**
  * The signed trust snapshot ({@code typ: trust-snapshot+jwt}): everything one client needs to make trust
  * decisions on its own device — the frameworks, entities, trust anchors and evaluation policy visible to that
- * client, the DID documents of registered DID identifiers, and the trust anchors' CRLs. Clients verify it with
- * the pinned service key and evaluate locally, so the service never learns which issuers or verifiers a user
- * deals with, nor which certificates they check for revocation.
+ * client, the DID documents of registered DID identifiers, the JSON-LD contexts their credentials use, and the
+ * trust anchors' CRLs. Clients verify it with the pinned service key and evaluate locally, so the service never
+ * learns which issuers or verifiers a user deals with, nor which certificates they check for revocation.
  *
- * <p>Snapshots are cached per registry version, CRL version and client, and re-signed once half their lifetime
- * has passed so that a client polling with {@code If-None-Match} never keeps an expired snapshot.
+ * <p>A snapshot is identified by its content: its ETag is a digest of the claims, so a client polling with
+ * {@code If-None-Match} gets 304 for as long as nothing it would see has changed, on any replica. The content is
+ * re-derived at most once per {@code recheck} (DID documents rotate without the registry changing), and a snapshot
+ * is re-signed once half its lifetime has passed so that a polling client never holds an expiring one.
  */
 public class SnapshotService {
 
     /** Bumped when the claim layout changes incompatibly. */
-    public static final int FORMAT = 3;
+    public static final int FORMAT = 4;
 
-    public record Snapshot(String jwt, String etag, long version, Instant issuedAt) {
+    public record Snapshot(String jwt, String etag, Instant issuedAt) {
     }
 
-    /** @param maxCrlBytes larger anchor CRLs are left out (clients fetch them per their lookup policy) */
+    /**
+     * @param maxCrlBytes     larger anchor CRLs are left out (clients fetch them per their lookup policy)
+     * @param maxContextBytes JSON-LD context documents are embedded up to this total; past it only their digests are
+     * @param recheck         how often a client's snapshot content is re-derived
+     */
     public record Options(Duration ttl, boolean embedDidDocuments, int maxDidDocuments, Duration didResolutionDeadline,
-                          int maxCrlBytes) {
+                          int maxCrlBytes, int maxContextBytes, Duration recheck) {
+    }
+
+    private record Cached(Snapshot snapshot, String digest, Instant checkedAt) {
     }
 
     private final TrustRegistry registry;
@@ -57,36 +66,54 @@ public class SnapshotService {
     private final JsonMapper mapper;
     private final DidService dids;
     private final CrlService crls;
+    private final ContextService contexts;
     private final Options options;
     private final Clock clock;
-    private final Map<String, Snapshot> cache = new ConcurrentHashMap<>();
+    private final Map<String, Cached> cache = new ConcurrentHashMap<>();
 
-    /** @param crls anchor CRLs to embed (null: none) */
+    /**
+     * @param crls     anchor CRLs to embed (null: none)
+     * @param contexts JSON-LD contexts to embed (null: none)
+     */
     public SnapshotService(TrustRegistry registry, ServiceKeyManager keys, JsonMapper mapper, DidService dids,
-                           CrlService crls, Options options, Clock clock) {
+                           CrlService crls, ContextService contexts, Options options, Clock clock) {
         this.registry = registry;
         this.keys = keys;
         this.mapper = mapper;
         this.dids = dids;
         this.crls = crls;
+        this.contexts = contexts;
         this.options = options;
         this.clock = clock;
-        registry.onChange(s -> cache.clear());
+        // A change in the registry or the CRLs is looked at on the next request instead of after the recheck interval.
+        registry.onChange(s -> cache.replaceAll((k, c) -> new Cached(c.snapshot(), c.digest(), Instant.MIN)));
         if (crls != null) {
-            crls.onChange(cache::clear);
+            crls.onChange(() -> cache.replaceAll((k, c) -> new Cached(c.snapshot(), c.digest(), Instant.MIN)));
         }
     }
 
     public Snapshot snapshot(ClientProfile client) {
-        RegistrySnapshot snap = registry.snapshot();
         String scope = String.join(",", new TreeSet<>(client.frameworks()));
-        String key = snap.version() + "|" + (crls == null ? 0 : crls.version()) + "|" + scope + "|" + client.clientId();
-        Instant refreshAfter = clock.instant().minus(options.ttl().dividedBy(2));
-        return cache.compute(key, (k, old) -> old != null && old.issuedAt().isAfter(refreshAfter) ? old : build(snap, client, scope));
+        Instant now = clock.instant();
+        return cache.compute(scope + "|" + client.clientId(), (k, old) -> {
+            if (old != null && old.checkedAt().plus(options.recheck()).isAfter(now)) {
+                return old;
+            }
+            Map<String, Object> claims = claims(registry.snapshot(), client);
+            String digest = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    Hashes.sha256(mapper.writeValueAsString(claims).getBytes(StandardCharsets.UTF_8))).substring(0, 22);
+            boolean resign = old == null || !old.digest().equals(digest)
+                    || !old.snapshot().issuedAt().isAfter(now.minus(options.ttl().dividedBy(2)));
+            if (!resign) {
+                return new Cached(old.snapshot(), digest, now);
+            }
+            String jwt = keys.sign("trust-snapshot+jwt", claims, options.ttl(), client.clientId());
+            return new Cached(new Snapshot(jwt, "\"" + digest + "." + now.getEpochSecond() + "\"", now), digest, now);
+        }).snapshot();
     }
 
     @SuppressWarnings("unchecked")
-    private Snapshot build(RegistrySnapshot snap, ClientProfile client, String scope) {
+    private Map<String, Object> claims(RegistrySnapshot snap, ClientProfile client) {
         List<Map<String, Object>> frameworks = snap.frameworks().stream().filter(f -> client.accepts(f.id()))
                 .map(f -> (Map<String, Object>) mapper.convertValue(f, Map.class)).toList();
         List<TrustedEntity> visible = snap.entities().stream().filter(e -> client.accepts(e.frameworkId())).toList();
@@ -99,11 +126,9 @@ public class SnapshotService {
         policy.put("strictAuthorization", client.strictAuthorization());
         policy.put("requireRevocationStatus", client.requireRevocationStatus());
         policy.put("requireSignedIssuerMetadata", client.requireSignedIssuerMetadata());
-        policy.put("allowRelaxedProfiles", client.allowRelaxedProfiles());
 
         Map<String, Object> claims = new LinkedHashMap<>();
         claims.put("format", FORMAT);
-        claims.put("version", snap.version());
         claims.put("client_id", client.clientId());
         claims.put("policy", policy);
         claims.put("frameworks", frameworks);
@@ -112,14 +137,13 @@ public class SnapshotService {
         if (options.embedDidDocuments()) {
             claims.put("didDocuments", didDocuments(visible));
         }
+        if (contexts != null) {
+            claims.put("contexts", contexts.forSnapshot(visible, options.maxContextBytes()));
+        }
         if (crls != null) {
             claims.put("crls", crls.snapshotClaims(a -> client.accepts(a.frameworkId()), options.maxCrlBytes()));
         }
-        Instant issuedAt = clock.instant();
-        String jwt = keys.sign("trust-snapshot+jwt", claims, options.ttl(), client.clientId());
-        String etag = "\"snap-" + snap.version() + "-" + issuedAt.getEpochSecond() + "-" + HexFormat.of().formatHex(
-                Hashes.sha256((scope + client.clientId()).getBytes(StandardCharsets.UTF_8))).substring(0, 12) + "\"";
-        return new Snapshot(jwt, etag, snap.version(), issuedAt);
+        return claims;
     }
 
     @SuppressWarnings("unchecked")

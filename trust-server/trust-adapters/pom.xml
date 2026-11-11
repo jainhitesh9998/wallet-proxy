@@ -11,7 +11,7 @@
   </parent>
 
   <artifactId>trust-adapters</artifactId>
-  <name>VC Trust Service :: Source adapters</name>
+  <name>Wallet Proxy :: Trust list adapters</name>
   <description>Trust source adapters: static registry, X.509 bundles, OID4VCI discovery, ETSI TL / LoTE, ISO 18013-5 VICAL, OpenID Federation, EBSI TIR</description>
 
   <dependencies>

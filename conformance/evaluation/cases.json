@@ -1,0 +1,1488 @@
+{
+  "description": "Cases for the two trust evaluators (TrustEvaluator.java, LocalEvaluator in trust-client). 'pem:NAME', 'pki:NAME' (base64 DER), 'crl:NAME', 'sha256:NAME' (base64url certificate hash), 'aki:NAME' (subject key identifier) and 'subject:NAME' (subject name) refer to conformance/pki. vectors.json is generated from this file by the service: see conformance/README.md.",
+  "registry": {
+    "anchors": {
+      "vec-iaca": {
+        "domain": "mdoc-iaca",
+        "entity": "vec-dmv",
+        "certificate": "pem:iaca",
+        "constraints": {
+          "docTypes": [
+            "org.iso.18013.5.1.mDL"
+          ],
+          "crl": "crl:iaca"
+        }
+      },
+      "vec-rp-ca": {
+        "domain": "verifier-access",
+        "certificate": "pem:rp-ca"
+      },
+      "vec-rsa-root": {
+        "domain": "credential-issuer",
+        "entity": "vec-rsa",
+        "certificate": "pem:rsa-root"
+      },
+      "vec-shared-ca": {
+        "domain": "credential-issuer",
+        "certificate": "pem:rp-ca"
+      },
+      "vec-other-mdoc-ca": {
+        "domain": "mdoc-iaca",
+        "certificate": "pem:rp-ca"
+      },
+      "vec-eudi-pid-ca": {
+        "domain": "credential-issuer",
+        "certificate": "pem:real-eudi-pid-ca"
+      }
+    },
+    "entities": {
+      "vec-dmv": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Vector DMV",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://dmv.vectors.example"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-verifier": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Vector verifier",
+        "identifiers": [
+          {
+            "type": "DNS",
+            "value": "verifier.example"
+          }
+        ]
+      },
+      "vec-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Revoked issuer",
+        "status": "REVOKED",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://revoked.vectors.example"
+          }
+        ]
+      },
+      "vec-expired": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Expired issuer",
+        "validUntil": "2020-01-01T00:00:00Z",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://expired.vectors.example"
+          }
+        ]
+      },
+      "vec-open": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "No authorizations",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://open.vectors.example"
+          }
+        ]
+      },
+      "vec-did": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "DID issuer",
+        "identifiers": [
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        ],
+        "authorizations": [
+          {
+            "format": "ldp_vc",
+            "type": "UniversityDegreeCredential"
+          }
+        ]
+      },
+      "vec-rsa": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "RSA issuer",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://rsa.vectors.example"
+          }
+        ]
+      },
+      "vec-pinned": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Pinned certificate",
+        "certificates": [
+          "pem:selfsigned-issuer"
+        ]
+      },
+      "vec-redirect": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Redirect verifier",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://rp.vectors.example/cb"
+          }
+        ]
+      },
+      "vec-suspended": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Suspended verifier",
+        "status": "SUSPENDED",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://fed.example/rp"
+          }
+        ]
+      },
+      "vec-wallet-only": {
+        "roles": [
+          "WALLET_PROVIDER"
+        ],
+        "name": "Not an issuer",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://wallet.vectors.example"
+          }
+        ]
+      },
+      "vec-by-subject": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by certificate subject",
+        "identifiers": [
+          {
+            "type": "X509_SUBJECT",
+            "value": "subject:rp"
+          }
+        ]
+      },
+      "vec-by-ski": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by subject key identifier",
+        "identifiers": [
+          {
+            "type": "X509_SKI",
+            "value": "aki:rp-uri"
+          }
+        ]
+      },
+      "vec-by-hash-client-id": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Registered by its x509_hash client_id",
+        "identifiers": [
+          {
+            "type": "CLIENT_ID",
+            "value": "x509_hash:sha256:selfsigned-verifier"
+          }
+        ]
+      },
+      "vec-by-did-client-id": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Registered by its DID client_id",
+        "identifiers": [
+          {
+            "type": "CLIENT_ID",
+            "value": "decentralized_identifier:did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9"
+          }
+        ]
+      },
+      "vec-by-long-subject": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by a subject name with an organizationIdentifier",
+        "identifiers": [
+          {
+            "type": "X509_SUBJECT",
+            "value": "subject:real-waltid-pid-provider"
+          }
+        ]
+      },
+      "vec-a-by-uri": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by a URI name, authorized for one type",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://fed.example/rp"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "dc+sd-jwt",
+            "type": "urn:vectors:one"
+          }
+        ]
+      },
+      "vec-by-bmp-subject": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by a subject whose common name is a BMPString",
+        "identifiers": [
+          {
+            "type": "X509_SUBJECT",
+            "value": "subject:odd-bmp"
+          }
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "mDL document signer under the registered IACA",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer, doctype outside the anchor's constraint",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "eu.europa.ec.eudi.pid.1"
+        }
+      }
+    },
+    {
+      "name": "document signer without the mDL extended key usage",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-noeku"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer from another country than its IACA",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-nl"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer under an unknown IACA",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rogue-ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer with the unknown IACA appended to the chain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rogue-ds",
+            "pki:rogue-iaca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer revoked in the IACA CRL",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-revoked"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer on hold in the IACA CRL",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-hold"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer naming a CRL distribution point, not revoked",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-crldp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer naming only an OCSP responder, covered by the IACA CRL",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-ocsp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "a certificate that is not a document signer, presented as one",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "document signer chain in the wrong trust domain (SD-JWT VC)",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "urn:eudi:pid:1"
+        }
+      }
+    },
+    {
+      "name": "mdoc of another doctype, signed by a certificate without the mDL key usage (Annex B is the mDL's profile)",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "eu.europa.ec.eudi.pid.1"
+        }
+      }
+    },
+    {
+      "name": "mDL signed by that certificate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "mdoc of unknown doctype signed by that certificate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc"
+        }
+      }
+    },
+    {
+      "name": "mdoc with an empty doctype signed by that certificate (empty is unknown)",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": ""
+        }
+      }
+    },
+    {
+      "name": "mDL signer whose country sits in a multi-valued RDN and is not its IACA's",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:odd-ds-multi"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "unparseable certificate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "AAAA"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "trusted_authorities aki, one matching and one not",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL",
+          "trustedAuthorities": [
+            {
+              "type": "aki",
+              "values": [
+                "aki:iaca"
+              ]
+            },
+            {
+              "type": "aki",
+              "values": [
+                "bm9wZQ"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "issuer URL, authorized format and type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://dmv.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "issuer URL with a trailing slash is another identifier",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://dmv.vectors.example/"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "issuer URL in another case is another identifier",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://DMV.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "issuer URL with the default port is another identifier",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://dmv.vectors.example:443"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "issuer URL, type it is not authorized for",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://dmv.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "urn:eudi:pid:1"
+        }
+      }
+    },
+    {
+      "name": "issuer URL, legacy vc+sd-jwt format name",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://open.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "vc+sd-jwt",
+          "credentialType": "urn:eudi:pid:1"
+        }
+      }
+    },
+    {
+      "name": "revoked issuer",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://revoked.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      }
+    },
+    {
+      "name": "issuer whose registration has expired",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://expired.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      }
+    },
+    {
+      "name": "issuer without authorizations (the strict profile refuses)",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://open.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "urn:eudi:pid:1"
+        }
+      }
+    },
+    {
+      "name": "registered party that is not an issuer",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://wallet.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      }
+    },
+    {
+      "name": "unknown issuer",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://nobody.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      }
+    },
+    {
+      "name": "identifier that is neither a URL nor a DID",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "dmv.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      }
+    },
+    {
+      "name": "DID issuer, key in the document, authorized type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential"
+        }
+      }
+    },
+    {
+      "name": "DID issuer, one of several types not authorized",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential",
+          "credentialTypes": [
+            "UniversityDegreeCredential",
+            "PidCredential"
+          ]
+        }
+      }
+    },
+    {
+      "name": "DID issuer, key not in the document",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#missing"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc"
+        }
+      }
+    },
+    {
+      "name": "DID issuer, key named by a relative reference",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential"
+        }
+      }
+    },
+    {
+      "name": "DID issuer, relative reference to a key that is not in the document",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "#missing"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc"
+        }
+      }
+    },
+    {
+      "name": "DID issuer claimed with a key of another DID",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9#0"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc"
+        }
+      }
+    },
+    {
+      "name": "unregistered DID with its own key",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9",
+          "kid": "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9#0"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc"
+        }
+      }
+    },
+    {
+      "name": "kid that is not a DID URL",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc"
+        }
+      }
+    },
+    {
+      "name": "RSA chain under an anchor registered to its issuer",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "the same chain claiming that issuer's URL",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://rsa.vectors.example",
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "the same chain claiming another issuer's URL",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://open.vectors.example",
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor, issuer registered by the certificate's subject",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor claiming a registered issuer's URL",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://open.vectors.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor, issuer registered by the subject key identifier",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-uri"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "key bound to two registered issuers: the one authorized for the type asked is meant, whatever the listing order",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-uri"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "urn:vectors:one"
+        }
+      }
+    },
+    {
+      "name": "key bound to two registered issuers, another type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-uri"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "urn:vectors:two"
+        }
+      }
+    },
+    {
+      "name": "issuer registered by a subject name whose common name is a BMPString",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:odd-bmp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "RSA chain evaluated at a later date within its validity",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "time": "2027-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "real PID provider certificate (EUDI pre-production PKI), issuer registered by its subject name",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:real-waltid-pid-provider"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "urn:eudi:pid:1",
+          "time": "2026-11-12T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "issuer URL claimed with a chain under no anchor",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://dmv.vectors.example",
+          "x5c": [
+            "pki:rogue-ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "issuer URL of another entity than the anchor's",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://open.vectors.example",
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "pinned self-signed certificate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:selfsigned-issuer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "pinned certificate after its validity",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:selfsigned-issuer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "time": "2099-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "pinned certificate appended behind another leaf",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:selfsigned-verifier",
+            "pki:selfsigned-issuer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "anchored chain evaluated after the leaf has expired",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL",
+          "time": "2099-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns verifier, registered by its DNS name",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns, response_uri on another host (registered verifier)",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://evil.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns, response_uri with userinfo",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example@evil.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns, response_uri with an upper-case host",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://Verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns, response_uri over http",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "http://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns, response_uri with a port and query",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example:8443/post?a=1"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns naming a host the certificate does not carry",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:other.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://other.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns with a certificate outside the anchors",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:selfsigned-verifier"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns without a certificate",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example"
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_hash verifier",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:rp",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_hash that is not the certificate's",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:AAAA",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_hash without a certificate",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:rp"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "x509_hash, certificate with a URI name of a suspended verifier",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:rp-uri",
+          "x5c": [
+            "pki:rp-uri"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "verifier registered by its x509_hash client_id, certificate pinned by that hash",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:selfsigned-verifier",
+          "x5c": [
+            "pki:selfsigned-verifier"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "the registered x509_hash client_id claimed with another certificate",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:selfsigned-verifier",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "the registered x509_hash client_id without a certificate",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:selfsigned-verifier"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "verifier registered by its decentralized_identifier client_id, signed with that DID's key",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "decentralized_identifier:did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9",
+          "kid": "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9#0"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "the registered decentralized_identifier client_id signed with another DID's key",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "decentralized_identifier:did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "redirect_uri verifier, registered",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "redirect_uri:https://rp.vectors.example/cb"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "redirect_uri verifier, unregistered",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "redirect_uri:https://nobody.vectors.example/cb"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "unsigned Digital Credentials API request from an unregistered origin",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "origin:https://nobody.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "decentralized_identifier verifier with its own key, unregistered",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "decentralized_identifier:did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "kid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH#z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "pre-registered client id nobody registered",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "my-client"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "certificate chain and a DID key together",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:rp",
+          "x5c": [
+            "pki:rp"
+          ],
+          "kid": "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9#0"
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    }
+  ]
+}

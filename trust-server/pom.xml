@@ -15,8 +15,15 @@
   <artifactId>trust-parent</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
-  <name>VC Trust Service :: Parent</name>
-  <description>Spec-agnostic trust service for OpenID4VCI / OpenID4VP wallets and verifiers</description>
+  <name>Wallet Proxy :: Parent</name>
+  <description>A trust layer for OpenID4VCI / OpenID4VP wallets and verifiers: signed trust snapshots and a lookup proxy</description>
+  <url>https://github.com/jainhitesh9998/wallet-proxy</url>
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/license/mit</url>
+    </license>
+  </licenses>
 
   <modules>
     <module>trust-core</module>

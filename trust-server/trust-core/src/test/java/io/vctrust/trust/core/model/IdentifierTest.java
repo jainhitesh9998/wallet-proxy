@@ -1,40 +1,35 @@
 package io.vctrust.trust.core.model;
 
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Both sides must index URL identifiers identically: the vectors in test-ecosystem/vectors/url-identifiers.json also run
- * in packages/trust-client/test/binding.test.ts, against Node's and Expo's WHATWG URL parsers.
- */
+/** Identifiers compare as the specifications say; the client library applies the same rules (binding.test.ts). */
 class IdentifierTest {
 
-    static final Path VECTORS = Path.of("../../test-ecosystem/vectors/url-identifiers.json");
-
     @Test
-    void urlsNormalizeAsOnTheDevice() throws Exception {
-        JsonNode vectors = new ObjectMapper().readTree(Files.readString(VECTORS)).get("vectors");
-        assertThat(vectors.size()).isGreaterThan(50);
-        for (JsonNode v : vectors) {
-            String input = v.get(0).asText();
-            // Rejected URLs keep their text; the identifier itself is trimmed.
-            String key = v.get(1).asText().equals(input) ? input.trim() : v.get(1).asText();
-            assertThat(new Identifier(IdentifierType.URL, input).value()).as(input).isEqualTo(key);
+    void urlsCompareByteForByte() {
+        assertThat(Identifier.url("https://issuer.example/a")).isEqualTo(Identifier.url("https://issuer.example/a"));
+        for (String other : new String[]{"https://issuer.example/a/", "https://Issuer.example/a", "https://issuer.example:443/a",
+                "https://issuer.example/x/../a", "https://issuer.example/a#f"}) {
+            assertThat(Identifier.url(other)).as(other).isNotEqualTo(Identifier.url("https://issuer.example/a"));
         }
     }
 
     @Test
-    void punycodeMatchesRfc3492() {
-        assertThat(UrlNormalizer.punycode("bücher")).isEqualTo("bcher-kva");
-        assertThat(UrlNormalizer.punycode("münchen")).isEqualTo("mnchen-3ya");
-        // RFC 3492 §7.1 (A) Arabic (Egyptian)
-        assertThat(UrlNormalizer.punycode("ليهمابتكلموشعربي؟"))
-                .isEqualTo("egbpdaj6bu4bxfgehfvwxn");
+    void dnsNamesIgnoreCaseAndDidsLoseTheirFragment() {
+        assertThat(Identifier.of(IdentifierType.DNS, "Verifier.Example").value()).isEqualTo("verifier.example");
+        assertThat(Identifier.did("did:web:issuer.example#key-1").value()).isEqualTo("did:web:issuer.example");
+    }
+
+    @Test
+    void onlyPlainHttpsUrlsHaveAHost() {
+        assertThat(Identifier.httpsHost("https://verifier.example/post")).isEqualTo("verifier.example");
+        assertThat(Identifier.httpsHost("https://verifier.example:8443")).isEqualTo("verifier.example");
+        assertThat(Identifier.httpsHost("https://verifier.example?x=1")).isEqualTo("verifier.example");
+        for (String refused : new String[]{"http://verifier.example/post", "https://Verifier.example/post", "https://user@verifier.example/",
+                "https://collector_1.example/cb", "https://bücher.example/", "https://verifier.example\\@evil.example/", "https:///x", ""}) {
+            assertThat(Identifier.httpsHost(refused)).as(refused).isNull();
+        }
     }
 }

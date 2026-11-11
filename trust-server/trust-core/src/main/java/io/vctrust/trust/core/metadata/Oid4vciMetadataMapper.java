@@ -17,8 +17,16 @@ public final class Oid4vciMetadataMapper {
     private Oid4vciMetadataMapper() {
     }
 
-    /** Adds role, identifier, display and per-configuration authorizations to the builder. */
-    public static TrustedEntity.Builder enrich(TrustedEntity.Builder b, Map<String, Object> md, boolean addAuthorizations) {
+    /** Entity attribute: the JSON-LD context URLs the party's credentials use (declared in its metadata, or curated). */
+    public static final String CONTEXTS = "jsonLdContexts";
+    /** Entity attribute: context URL to the SHA-256 (base64url) an operator pinned for it. */
+    public static final String CONTEXT_DIGESTS = "jsonLdContextDigests";
+
+    /**
+     * Adds what the issuer's metadata says about the issuer: role, identifier, display (when none is curated) and the
+     * JSON-LD contexts of its credential configurations. Never authorizations: those are not the issuer's to grant.
+     */
+    public static TrustedEntity.Builder describe(TrustedEntity.Builder b, Map<String, Object> md) {
         String issuer = Json.string(md, "credential_issuer");
         b.role(EntityRole.CREDENTIAL_ISSUER);
         if (issuer != null) {
@@ -29,22 +37,36 @@ public final class Oid4vciMetadataMapper {
                 Map<String, Object> dm = Json.object(d);
                 if (dm != null && Json.string(dm, "name") != null) {
                     Map<String, Object> logo = Json.object(dm.get("logo"));
-                    String logoUri = logo == null ? null : Json.string(logo, "uri") != null ? Json.string(logo, "uri") : Json.string(logo, "url");
                     b.display(new LocalizedDisplay(Json.string(dm, "locale"), Json.string(dm, "name"),
-                            Json.string(dm, "description"), logoUri));
+                            Json.string(dm, "description"), logo == null ? null : Json.string(logo, "uri")));
                 }
             }
         }
-        if (addAuthorizations) {
-            for (CredentialAuthorization a : authorizations(md)) {
-                b.authorization(a);
-            }
+        List<String> contexts = contexts(md);
+        if (!contexts.isEmpty()) {
+            b.attribute(CONTEXTS, contexts);
         }
-        b.metadata("openid_credential_issuer", md);
         return b;
     }
 
-    /** One authorization per credential configuration: format plus doctype / vct / most specific VC type. */
+    /** The https JSON-LD context URLs of the issuer's credential configurations (ldp_vc, jwt_vc_json-ld), in first-seen order. */
+    public static List<String> contexts(Map<String, Object> md) {
+        Map<String, Object> configs = Json.object(md.get("credential_configurations_supported"));
+        if (configs == null) {
+            return List.of();
+        }
+        return configs.values().stream().map(Json::object).filter(java.util.Objects::nonNull)
+                .map(c -> Json.object(c.get("credential_definition"))).filter(java.util.Objects::nonNull)
+                .flatMap(def -> def.get("@context") instanceof List<?> l ? l.stream() : java.util.stream.Stream.empty())
+                .filter(String.class::isInstance).map(String.class::cast).filter(u -> u.startsWith("https://") || u.startsWith("http://"))
+                .distinct().toList();
+    }
+
+    /**
+     * One authorization per credential configuration: format plus doctype / vct / most specific VC type. Only for
+     * metadata that an authority vouches for (resolved through an OpenID Federation trust chain), never for metadata
+     * fetched from the issuer alone.
+     */
     public static List<CredentialAuthorization> authorizations(Map<String, Object> md) {
         Map<String, Object> configs = Json.object(md.get("credential_configurations_supported"));
         if (configs == null) {

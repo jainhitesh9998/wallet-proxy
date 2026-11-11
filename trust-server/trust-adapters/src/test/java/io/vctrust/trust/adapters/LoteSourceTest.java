@@ -46,8 +46,11 @@ class LoteSourceTest {
     void parsesUnsignedLote() throws Exception {
         var ca = TestPki.rootCa("CN=PID CA,C=UT");
         var ctx = new TestContext().put("mem:lote", lote(Certificates.toBase64(ca.certificate()), "2099-01-01T00:00:00Z"));
+        // An unsigned list is loaded only when the operator says its transport is trusted.
+        assertThatThrownBy(() -> new LoteSourceFactory().create(new SourceDefinition("l", "etsi-lote", "eudi", null, true,
+                Map.of("location", "mem:lote")), ctx).load()).isInstanceOf(TrustSourceException.class).hasMessageContaining("not signed");
         var r = new LoteSourceFactory().create(new SourceDefinition("l", "etsi-lote", "eudi", null, true,
-                Map.of("location", "mem:lote")), ctx).load();
+                Map.of("location", "mem:lote", "allowUnverified", true)), ctx).load();
         assertThat(r.entities()).hasSize(2);
         assertThat(r.entities().get(0).hasRole(EntityRole.CREDENTIAL_ISSUER)).isTrue();
         assertThat(r.entities().get(1).hasRole(EntityRole.WALLET_PROVIDER)).isTrue();
@@ -61,7 +64,7 @@ class LoteSourceTest {
         var ca = TestPki.rootCa("CN=PID CA,C=UT");
         var ctx = new TestContext().put("mem:lote", lote(Certificates.toBase64(ca.certificate()), "2020-01-01T00:00:00Z"));
         assertThatThrownBy(() -> new LoteSourceFactory().create(new SourceDefinition("l", "etsi-lote", "eudi", null, true,
-                Map.of("location", "mem:lote")), ctx).load()).isInstanceOf(TrustSourceException.class).hasMessageContaining("NextUpdate");
+                Map.of("location", "mem:lote", "allowUnverified", true)), ctx).load()).isInstanceOf(TrustSourceException.class).hasMessageContaining("NextUpdate");
     }
 
     @Test

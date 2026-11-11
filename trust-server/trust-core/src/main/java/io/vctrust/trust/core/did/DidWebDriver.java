@@ -61,7 +61,9 @@ public final class DidWebDriver implements DidMethodDriver {
         try {
             r = http.get(url, "application/did+json, application/did+ld+json, application/json");
         } catch (java.net.UnknownHostException e) {
-            return DidResolutionResult.error(DidResolutionResult.NOT_FOUND, "Host of " + url + " does not resolve");
+            // A name that does not resolve right now is an outage until proven otherwise: only the host itself,
+            // answering 404 or 410, says that the document is gone.
+            return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, "Host of " + url + " does not resolve");
         } catch (HttpFetcher.BlockedException e) {
             return DidResolutionResult.error(DidResolutionResult.INVALID_DID, e.getMessage());
         } catch (IOException e) {

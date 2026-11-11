@@ -38,20 +38,13 @@ public final class X509PathValidator {
     public record Revocation(RevocationChecker checker, boolean required) {
     }
 
-    /**
-     * Options for one validation; {@code revocation} null skips revocation checking. {@code allowRelaxedProfile}: honour
-     * an anchor's {@code relaxProfile} constraint (profile errors become warnings); a strict client turns it off.
-     */
+    /** Options for one validation; {@code revocation} null skips revocation checking. */
     public record Options(Instant time, CertificateProfile profile, CertificateProfile.ProfileContext profileContext,
-                          Revocation revocation, boolean allowRelaxedProfile) {
+                          Revocation revocation) {
         public Options {
             time = time == null ? Instant.now() : time;
             profile = profile == null ? CertificateProfiles.NONE : profile;
             profileContext = profileContext == null ? CertificateProfile.ProfileContext.NONE : profileContext;
-        }
-
-        public Options(Instant time, CertificateProfile profile, CertificateProfile.ProfileContext profileContext, Revocation revocation) {
-            this(time, profile, profileContext, revocation, true);
         }
 
         public static Options at(Instant time, CertificateProfile profile) {
@@ -59,11 +52,7 @@ public final class X509PathValidator {
         }
 
         public Options withRevocation(RevocationChecker checker, boolean required) {
-            return new Options(time, profile, profileContext, checker == null ? null : new Revocation(checker, required), allowRelaxedProfile);
-        }
-
-        public Options withRelaxedProfiles(boolean allow) {
-            return new Options(time, profile, profileContext, revocation, allow);
+            return new Options(time, profile, profileContext, checker == null ? null : new Revocation(checker, required));
         }
     }
 
@@ -120,6 +109,7 @@ public final class X509PathValidator {
                     || time.isBefore(anchor.certificate().getNotBefore().toInstant())) {
                 issues.add(ValidationIssue.error("x509.anchor_expired", "Trust anchor certificate is not valid at " + time));
             }
+            issues.addAll(issuingAnchor(anchor.certificate(), path));
             issues.addAll(pkix(path, anchor.certificate(), options));
             if (issues.stream().noneMatch(ValidationIssue::isError)) {
                 return finish(issues, anchor, path, options, List.of());
@@ -138,14 +128,6 @@ public final class X509PathValidator {
             issues.add(ValidationIssue.error("x509.anchor_unusable", "Trust anchor is not usable at " + options.time()));
         }
         List<ValidationIssue> profileIssues = options.profile().check(path, anchor.certificate(), options.profileContext());
-        if (options.allowRelaxedProfile() && Boolean.TRUE.equals(anchor.constraints().get("relaxProfile")) && !profileIssues.isEmpty()) {
-            // Operator opted this anchor out of strict profile enforcement (e.g. a sandbox issuer): keep findings visible.
-            profileIssues = profileIssues.stream()
-                    .map(i -> i.isError() ? ValidationIssue.warning(i.code(), i.message() + " (profile relaxed for this anchor)") : i)
-                    .toList();
-            issues.add(ValidationIssue.warning("x509.profile_relaxed",
-                    "Certificate profile '" + options.profile().name() + "' is relaxed for this trust anchor"));
-        }
         issues.addAll(profileIssues);
         if (!anchor.docTypes().isEmpty() && options.profileContext().docType() != null
                 && !anchor.docTypes().contains(options.profileContext().docType())) {
@@ -184,6 +166,24 @@ public final class X509PathValidator {
         } catch (CertificateException | NoSuchAlgorithmException | InvalidAlgorithmParameterException e) {
             return List.of(ValidationIssue.error("x509.path.error", "Path validation error: " + e.getMessage()));
         }
+    }
+
+    /**
+     * PKIX takes a trust anchor as a name and a key and ignores the rest of its certificate (RFC 5280 section 6.1.1).
+     * An anchor here is a certificate an operator listed, so its own limits hold: only a CA certificate with
+     * keyCertSign issues others, and no deeper than its path length (an ISO 18013-5 IACA has 0).
+     */
+    private static List<ValidationIssue> issuingAnchor(X509Certificate anchor, List<X509Certificate> path) {
+        int pathLen = anchor.getBasicConstraints();
+        boolean[] usage = anchor.getKeyUsage();
+        if (pathLen < 0 || (usage != null && !usage[5])) {
+            return List.of(ValidationIssue.error("x509.anchor_not_ca", "The trust anchor is not a CA certificate allowed to sign certificates"));
+        }
+        long intermediates = path.stream().skip(1).filter(c -> !c.getSubjectX500Principal().equals(c.getIssuerX500Principal())).count();
+        if (intermediates > pathLen) {
+            return List.of(ValidationIssue.error("x509.anchor_path_length", "The chain is longer than the trust anchor's path length allows"));
+        }
+        return List.of();
     }
 
     private static boolean signedBy(X509Certificate cert, X509Certificate issuer) {

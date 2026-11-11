@@ -9,7 +9,7 @@ import io.vctrust.trust.core.json.Json;
 import io.vctrust.trust.core.testing.TestPki;
 import io.vctrust.trust.core.x509.Certificates;
 import io.vctrust.trust.core.x509.RevocationChecker;
-import io.vctrust.trust.server.config.SourceBootstrap;
+import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.server.service.CrlService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +50,8 @@ class TrustServerIntegrationTest {
     static final String UPSTREAM_BASE;
     static Path dataDir;
 
+    static final String CONTEXT = "{\"@context\":{\"degree\":\"https://vocab.example/degree\"}}";
+
     static {
         try {
             AS_KEY = new com.nimbusds.jose.jwk.gen.ECKeyGenerator(com.nimbusds.jose.jwk.Curve.P_256).keyID("as-key").generate();
@@ -74,6 +76,8 @@ class TrustServerIntegrationTest {
             raw("/crl/iaca.crl", "application/pkix-crl", TestPki.crl(IACA, TestPki.Revoked.of(REVOKED_DS, 1)).getEncoded());
             raw("/status/token", "application/statuslist+jwt", "eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6e319.c2ln".getBytes(StandardCharsets.UTF_8));
             raw("/status/page", "text/html", "<html></html>".getBytes(StandardCharsets.UTF_8));
+            raw("/contexts/degree/v1", "application/ld+json", CONTEXT.getBytes(StandardCharsets.UTF_8));
+            raw("/contexts/pinned/v1", "application/ld+json", CONTEXT.getBytes(StandardCharsets.UTF_8));
             UPSTREAM.start();
         } catch (IOException | java.security.cert.CRLException e) {
             throw new IllegalStateException(e);
@@ -120,6 +124,9 @@ class TrustServerIntegrationTest {
                       - {type: URL, value: "%s/issuer"}
                     authorizations:
                       - {format: mso_mdoc, type: org.iso.18013.5.1.mDL}
+                    contexts:
+                      - "%s/contexts/degree/v1"
+                      - {url: "%s/contexts/pinned/v1", sha256: "not-the-digest-of-what-is-served"}
                     metadataPolicy:
                       oauth_authorization_server:
                         grant_types_supported: {add: ["urn:ietf:params:oauth:grant-type:pre-authorized_code"]}
@@ -141,7 +148,7 @@ class TrustServerIntegrationTest {
                       crlUrls: ["%s/crl/iaca.crl"]
                     certificate: |
                 %s
-                """.formatted(UPSTREAM_BASE, UPSTREAM_BASE, UPSTREAM_BASE, Certificates.toPem(IACA.certificate()).indent(6)));
+                """.formatted(UPSTREAM_BASE, UPSTREAM_BASE, UPSTREAM_BASE, UPSTREAM_BASE, UPSTREAM_BASE, Certificates.toPem(IACA.certificate()).indent(6)));
         r.add("spring.datasource.url", () -> "jdbc:h2:mem:trust-it;DB_CLOSE_DELAY=-1;MODE=PostgreSQL");
         r.add("trust.service.signing-key-file", () -> dataDir.resolve("key.jwk").toString());
         r.add("trust.service.issuer", () -> "https://trust.test");
@@ -162,6 +169,7 @@ class TrustServerIntegrationTest {
         r.add("trust.clients[0].api-key", () -> "key-a");
         r.add("trust.clients[0].frameworks[0]", () -> "fw-a");
         r.add("trust.clients[0].frameworks[1]", () -> "local");
+        r.add("trust.clients[0].allow-unregistered-metadata", () -> "true");
         r.add("trust.clients[1].id", () -> "verifier-strict");
         r.add("trust.clients[1].api-key", () -> "key-strict");
         r.add("trust.clients[1].frameworks[0]", () -> "fw-a");
@@ -177,12 +185,14 @@ class TrustServerIntegrationTest {
         r.add("trust.auth.oauth.issuer", () -> "https://as.trust.test");
         r.add("trust.auth.oauth.jwks-uri", () -> jwks.toUri().toString());
         r.add("trust.service.snapshot-ttl", () -> "PT4S");
+        r.add("trust.service.snapshot-recheck", () -> "PT0.2S");
+        r.add("trust.auth.rate-limit.enabled", () -> "false");
     }
 
     @Autowired
     Environment env;
     @Autowired
-    SourceBootstrap bootstrap;
+    TrustSourceManager sources;
     @Autowired
     CrlService crls;
 
@@ -190,10 +200,10 @@ class TrustServerIntegrationTest {
 
     @BeforeEach
     void awaitReady() throws InterruptedException {
-        for (int i = 0; i < 100 && !bootstrap.isReady(); i++) {
+        for (int i = 0; i < 100 && !sources.ready(); i++) {
             Thread.sleep(50);
         }
-        assertThat(bootstrap.isReady()).isTrue();
+        assertThat(sources.ready()).isTrue();
         // Anchor CRLs load in the background after the registry; wait so snapshots are stable during tests.
         for (int i = 0; i < 100 && crls.heldFor(IACA.certificate()).isEmpty(); i++) {
             Thread.sleep(50);
@@ -231,6 +241,10 @@ class TrustServerIntegrationTest {
                 .header("Content-Type", "application/json").header("Authorization", "Bearer " + key).build(), HttpResponse.BodyHandlers.ofString());
     }
 
+    static Map<String, Object> policy(com.nimbusds.jwt.JWTClaimsSet claims) throws java.text.ParseException {
+        return claims.getJSONObjectClaim("policy");
+    }
+
     static Map<String, Object> json(HttpResponse<String> r) {
         return Json.parseObject(r.body());
     }
@@ -264,22 +278,30 @@ class TrustServerIntegrationTest {
     @Test
     @SuppressWarnings("unchecked")
     void metadataProxyAppliesPolicyAndAttachesDecision() throws Exception {
-        var r = get("/api/v1/issuers/metadata?credential_issuer=" + UPSTREAM_BASE + "/issuer", "key-a");
+        var r = get("/api/v1/proxy/issuer-metadata?issuer=" + UPSTREAM_BASE + "/issuer", "key-a");
         assertThat(r.statusCode()).isEqualTo(200);
-        assertThat(r.headers().firstValue("X-Trust-Decision")).contains("TRUSTED");
         var env = json(r);
+        assertThat(((Map<String, Object>) env.get("trust")).get("decision")).isEqualTo("TRUSTED");
+        assertThat(env.get("credentialIssuer")).isEqualTo(UPSTREAM_BASE + "/issuer");
         assertThat(env.get("policyApplied")).isEqualTo(true);
         var as = (Map<String, Object>) ((Map<String, Object>) env.get("authorizationServers")).get(UPSTREAM_BASE + "/as");
         assertThat(as.get("token_endpoint")).isEqualTo(UPSTREAM_BASE + "/issuer/token");
         assertThat((List<String>) as.get("grant_types_supported")).contains("urn:ietf:params:oauth:grant-type:pre-authorized_code");
         // unregistered issuer: UNKNOWN for permissive client, 403 for strict client
-        var other = json(get("/api/v1/issuers/metadata?credential_issuer=" + UPSTREAM_BASE + "/other", "key-a"));
+        var other = json(get("/api/v1/proxy/issuer-metadata?issuer=" + UPSTREAM_BASE + "/other", "key-a"));
         assertThat(((Map<String, Object>) other.get("trust")).get("decision")).isEqualTo("UNKNOWN");
-        assertThat(get("/api/v1/issuers/metadata?credential_issuer=" + UPSTREAM_BASE + "/other", "key-strict").statusCode()).isEqualTo(403);
-        // credential_issuer mismatch is rejected
-        var liar = get("/api/v1/issuers/metadata?credential_issuer=" + UPSTREAM_BASE + "/liar", "key-a");
+        // By default the proxy fetches only for issuers the client's frameworks list: it is not an open relay.
+        assertThat(get("/api/v1/proxy/issuer-metadata?issuer=" + UPSTREAM_BASE + "/other", "key-strict").statusCode()).isEqualTo(403);
+        // credential_issuer must be identical to the identifier asked for, and the answer is remembered
+        var liar = get("/api/v1/proxy/issuer-metadata?issuer=" + UPSTREAM_BASE + "/liar", "key-a");
         assertThat(liar.statusCode()).isEqualTo(422);
         assertThat(json(liar).get("code")).isEqualTo("issuer_mismatch");
+        assertThat(get("/api/v1/proxy/issuer-metadata?issuer=" + UPSTREAM_BASE + "/issuer/", "key-a").statusCode()).isNotEqualTo(200);
+        // Signed on request, so a client can verify a proxied document as it verifies a snapshot.
+        var signed = get("/api/v1/proxy/issuer-metadata?issuer=" + UPSTREAM_BASE + "/issuer", "key-a", "Accept", "application/jwt");
+        SignedJWT jwt = SignedJWT.parse(signed.body());
+        assertThat(jwt.getHeader().getType().toString()).isEqualTo("trust-metadata+jwt");
+        assertThat(((Map<String, Object>) jwt.getJWTClaimsSet().getClaim("data")).get("credentialIssuer")).isEqualTo(UPSTREAM_BASE + "/issuer");
     }
 
     @Test
@@ -315,35 +337,20 @@ class TrustServerIntegrationTest {
         assertThat(jwt.getJWTClaimsSet().getAudience()).containsExactly("wallet-a");
         assertThat(((Map<String, Object>) jwt.getJWTClaimsSet().getClaim("data")).get("decision")).isEqualTo("NOT_TRUSTED");
 
-        var batch = json(post("/api/v1/evaluate/batch", "key-a", Map.of("queries", List.of(
-                Map.of("role", "issuer", "subject", Map.of("identifier", UPSTREAM_BASE + "/issuer")),
-                Map.of("role", "issuer", "subject", Map.of("identifier", "https://nobody.example"))))));
-        assertThat((List<Map<String, Object>>) batch.get("decisions")).extracting(m -> m.get("decision")).containsExactly("TRUSTED", "UNKNOWN");
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void x509ValidateAndAnchors() throws Exception {
-        var ok = json(post("/api/v1/x509/validate", "key-a", Map.of("chain", List.of(Certificates.toBase64(DS.certificate())),
-                "domain", "mdoc-iaca", "docType", "org.iso.18013.5.1.mDL")));
-        assertThat(((Map<String, Object>) ok.get("result")).get("valid")).isEqualTo(true);
-        assertThat(((Map<String, Object>) ok.get("entity")).get("id")).isEqualTo("test-issuer");
-        var bad = json(post("/api/v1/x509/validate", "key-a", Map.of("chain", List.of(Certificates.toBase64(ROGUE_DS.certificate())), "domain", "mdoc-iaca")));
-        assertThat(((Map<String, Object>) bad.get("result")).get("valid")).isEqualTo(false);
-        var pem = get("/api/v1/x509/anchors?domain=mdoc-iaca&format=pem", "key-a");
-        assertThat(pem.body()).contains("BEGIN CERTIFICATE");
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void didResolutionBindings() throws Exception {
-        var r = json(get("/api/v1/did/did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK", "key-a"));
-        assertThat(((Map<String, Object>) r.get("didDocument")).get("id")).isEqualTo("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK");
-        var docOnly = get("/1.0/identifiers/did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK", "key-a", "Accept", "application/did+ld+json");
-        assertThat(json(docOnly)).containsKey("verificationMethod").doesNotContainKey("didDocument");
-        var unsupported = get("/1.0/identifiers/did:example:123", "key-a");
-        assertThat(unsupported.statusCode()).isEqualTo(501);
-        assertThat(get("/1.0/identifiers/not-a-did", "key-a").statusCode()).isEqualTo(400);
+    void didProxy() throws Exception {
+        String did = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+        var r = json(get("/api/v1/proxy/did/" + did, "key-a"));
+        assertThat(((Map<String, Object>) r.get("didDocument")).get("id")).isEqualTo(did);
+        var signed = SignedJWT.parse(get("/api/v1/proxy/did/" + did, "key-a", "Accept", "application/jwt").body());
+        assertThat(signed.getHeader().getType().toString()).isEqualTo("trust-did-resolution+jwt");
+        assertThat(get("/api/v1/proxy/did/did:example:123", "key-a").statusCode()).isEqualTo(501);
+        assertThat(get("/api/v1/proxy/did/not-a-did", "key-a").statusCode()).isEqualTo(400);
+        // The W3C DID resolver binding of earlier versions is gone; nothing answers there.
+        assertThat(get("/1.0/identifiers/" + did, "key-a").statusCode()).isEqualTo(404);
     }
 
     @Test
@@ -363,8 +370,9 @@ class TrustServerIntegrationTest {
 
         // Everything a client needs to evaluate locally: its policy, anchor provenance, metadata policy.
         var claims = jwt.getJWTClaimsSet();
-        assertThat(claims.getIntegerClaim("format")).isEqualTo(3);
-        Map<String, Object> policy = claims.getJSONObjectClaim("policy");
+        assertThat(claims.getIntegerClaim("format")).isEqualTo(4);
+        assertThat(policy(claims)).doesNotContainKey("allowRelaxedProfiles");
+        Map<String, Object> policy = policy(claims);
         assertThat(policy).containsEntry("strictAuthorization", false);
         assertThat((List<Object>) policy.get("frameworks")).containsExactlyInAnyOrder("fw-a", "local");
         assertThat(((Map<String, Object>) anchors.getFirst()).get("provenance")).isInstanceOf(Map.class);
@@ -375,6 +383,22 @@ class TrustServerIntegrationTest {
         // DID documents of registered DID identifiers are embedded (admin sees every framework, incl. b-issuer).
         Map<String, Object> docs = SignedJWT.parse(get("/api/v1/snapshot", "key-admin").body()).getJWTClaimsSet().getJSONObjectClaim("didDocuments");
         assertThat(docs).containsKey("did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK");
+
+        // JSON-LD contexts of the listed issuers travel with their digests; one that does not match its pin is not
+        // shipped, only the pin is, so a wallet that fetches it elsewhere refuses it.
+        Map<String, Object> contexts = claims.getJSONObjectClaim("contexts");
+        Map<String, Object> degree = (Map<String, Object>) contexts.get(UPSTREAM_BASE + "/contexts/degree/v1");
+        assertThat(degree.get("sha256")).isEqualTo(Base64.getUrlEncoder().withoutPadding().encodeToString(
+                java.security.MessageDigest.getInstance("SHA-256").digest(CONTEXT.getBytes(StandardCharsets.UTF_8))));
+        assertThat((Map<String, Object>) degree.get("document")).containsKey("@context");
+        Map<String, Object> pinned = (Map<String, Object>) contexts.get(UPSTREAM_BASE + "/contexts/pinned/v1");
+        assertThat(pinned).containsEntry("sha256", "not-the-digest-of-what-is-served").doesNotContainKey("document");
+
+        // The ETag names the content: a source reload that changes nothing still answers 304.
+        assertThat(post("/admin/v1/sources/managed/refresh", "key-admin", Map.of()).statusCode()).isEqualTo(200);
+        assertThat(post("/admin/v1/sources/reg/refresh", "key-admin", Map.of()).statusCode()).isEqualTo(200);
+        Thread.sleep(300);
+        assertThat(get("/api/v1/snapshot", "key-a", "If-None-Match", etag).statusCode()).isEqualTo(304);
 
         // Re-signed after half its lifetime: a polling client gets a fresh snapshot, never keeps an expired one.
         Thread.sleep(2_100);
@@ -421,13 +445,6 @@ class TrustServerIntegrationTest {
         var goodX509 = (Map<String, Object>) ((Map<String, Object>) good.get("evidence")).get("x509");
         assertThat((List<Map<String, Object>>) goodX509.get("revocation")).extracting(m -> m.get("status")).containsExactly("GOOD");
 
-        // Operator listing.
-        List<Map<String, Object>> listing = Json.MAPPER.readValue(get("/api/v1/revocation/crls", "key-a").body(), List.class);
-        assertThat(listing).singleElement().satisfies(m -> {
-            assertThat(m.get("url")).isEqualTo(crlUrl);
-            assertThat(m.get("revoked")).isEqualTo(1);
-        });
-
         // A CRL pushed with a managed anchor: verified, held, and never echoed in anchor views.
         String pem = "-----BEGIN X509 CRL-----\n" + Base64.getMimeEncoder().encodeToString(TestPki.crl(PUSHED_IACA).getEncoded())
                 + "\n-----END X509 CRL-----\n";
@@ -437,7 +454,6 @@ class TrustServerIntegrationTest {
             Thread.sleep(50);
         }
         assertThat(crls.heldFor(PUSHED_IACA.certificate())).singleElement().satisfies(c -> assertThat(c.url()).isNull());
-        assertThat(get("/api/v1/x509/anchors?domain=mdoc-iaca", "key-a").body()).contains("Pushed IACA").doesNotContain("X509 CRL");
         var snapAnchors = (List<Map<String, Object>>) SignedJWT.parse(get("/api/v1/snapshot", "key-a").body()).getJWTClaimsSet().getClaim("anchors");
         assertThat(snapAnchors).allSatisfy(a -> assertThat((Map<String, Object>) a.get("constraints")).doesNotContainKey("crl"));
         http.send(HttpRequest.newBuilder(URI.create(base() + "/admin/v1/managed/anchors/pushed-iaca")).DELETE()
@@ -451,40 +467,41 @@ class TrustServerIntegrationTest {
     @Test
     @SuppressWarnings("unchecked")
     void crlAndStatusListRelays() throws Exception {
-        var crl = getBytes("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/crl/iaca.crl", "key-a", "Accept", "application/pkix-crl");
+        var crl = getBytes("/api/v1/proxy/crl?url=" + UPSTREAM_BASE + "/crl/iaca.crl", "key-a", "Accept", "application/pkix-crl");
         assertThat(crl.statusCode()).isEqualTo(200);
         assertThat(crl.headers().firstValue("Content-Type")).contains("application/pkix-crl");
         assertThat(crl.headers().firstValue("Cache-Control").orElse("")).contains("max-age=");
         assertThat(RevocationChecker.Crl.parse(crl.body(), null, Instant.now()).issuedBy(IACA.certificate())).isTrue();
-        assertThat(getBytes("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/status/page", "key-a").statusCode()).isEqualTo(502);
-        var ftp = get("/api/v1/revocation/crl?url=ftp://crl.example/x.crl", "key-a");
+        assertThat(getBytes("/api/v1/proxy/crl?url=" + UPSTREAM_BASE + "/status/page", "key-a").statusCode()).isEqualTo(502);
+        var ftp = get("/api/v1/proxy/crl?url=ftp://crl.example/x.crl", "key-a");
         assertThat(ftp.statusCode()).isEqualTo(400);
         assertThat(json(ftp).get("code")).isEqualTo("invalid_request");
         // CRL distribution points are mostly http: allowed for CRLs (they are signed), still https-only for anything else.
         String plainHttpBase = UPSTREAM_BASE.replace("localhost", "127.0.0.1"); // not in http-allowed-hosts
-        var plainHttp = getBytes("/api/v1/revocation/crl?url=" + plainHttpBase + "/crl/iaca.crl", "key-a");
+        var plainHttp = getBytes("/api/v1/proxy/crl?url=" + plainHttpBase + "/crl/iaca.crl", "key-a");
         assertThat(plainHttp.statusCode()).isEqualTo(200);
         assertThat(RevocationChecker.Crl.parse(plainHttp.body(), null, Instant.now()).issuedBy(IACA.certificate())).isTrue();
-        var httpStatusList = get("/api/v1/revocation/status-list?uri=" + plainHttpBase + "/status/token", "key-a");
+        var httpStatusList = get("/api/v1/proxy/status-list?uri=" + plainHttpBase + "/status/token", "key-a");
         assertThat(httpStatusList.statusCode()).isEqualTo(400);
         assertThat(json(httpStatusList).get("detail").toString()).contains("Only https");
-        assertThat(get("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/crl/iaca.crl", null).statusCode()).isEqualTo(401);
+        assertThat(get("/api/v1/proxy/crl?url=" + UPSTREAM_BASE + "/crl/iaca.crl", null).statusCode()).isEqualTo(401);
 
-        var token = getBytes("/api/v1/revocation/status-list?uri=" + UPSTREAM_BASE + "/status/token", "key-a",
+        var token = getBytes("/api/v1/proxy/status-list?uri=" + UPSTREAM_BASE + "/status/token", "key-a",
                 "Accept", "application/statuslist+jwt");
         assertThat(token.statusCode()).isEqualTo(200);
         assertThat(token.headers().firstValue("Content-Type")).contains("application/statuslist+jwt");
         assertThat(new String(token.body(), StandardCharsets.UTF_8)).isEqualTo("eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6e319.c2ln");
         assertThat(token.headers().firstValue("Cache-Control").orElse("")).contains("private").contains("max-age=");
-        var page = get("/api/v1/revocation/status-list?uri=" + UPSTREAM_BASE + "/status/page", "key-a");
+        var page = get("/api/v1/proxy/status-list?uri=" + UPSTREAM_BASE + "/status/page", "key-a");
         assertThat(page.statusCode()).isEqualTo(502);
         assertThat(json(page).get("code")).isEqualTo("invalid_status_list");
 
         var d = json(get("/.well-known/trust-service", null));
-        assertThat(((Map<?, ?>) d.get("endpoints")).get("status_list_relay")).isEqualTo("https://trust.test/api/v1/revocation/status-list");
-        assertThat((Map<String, Object>) d.get("revocation")).containsEntry("crl", true).containsEntry("ocsp", false)
-                .containsEntry("crl_relay", true).containsEntry("status_list_relay", true);
-        assertThat(d.get("snapshot_format")).isEqualTo(3);
+        assertThat(((Map<?, ?>) d.get("endpoints")).get("proxy_status_list")).isEqualTo("https://trust.test/api/v1/proxy/status-list");
+        assertThat((Map<String, Object>) d.get("revocation")).containsEntry("crl", true)
+                .containsEntry("crl_proxy", true).containsEntry("status_list_proxy", true);
+        assertThat(d.get("snapshot_format")).isEqualTo(4);
+        assertThat(d.get("ready")).isEqualTo(true);
     }
 
     @Test
@@ -530,30 +547,14 @@ class TrustServerIntegrationTest {
 
     @Test
     void errorsAreProblemJsonWhateverTheRequestAccepts() throws Exception {
-        var r = get("/api/v1/revocation/crl?url=" + UPSTREAM_BASE + "/status/page", "key-a", "Accept", "application/pkix-crl");
+        var r = get("/api/v1/proxy/crl?url=" + UPSTREAM_BASE + "/status/page", "key-a", "Accept", "application/pkix-crl");
         assertThat(r.statusCode()).isEqualTo(502);
         assertThat(r.headers().firstValue("Content-Type").orElse("")).startsWith("application/problem+json");
         assertThat(json(r).get("code")).isEqualTo("invalid_crl");
-        var missing = get("/api/v1/revocation/status-list", "key-a", "Accept", "application/statuslist+jwt");
+        var missing = get("/api/v1/proxy/status-list", "key-a", "Accept", "application/statuslist+jwt");
         assertThat(missing.statusCode()).isEqualTo(400);
         assertThat(missing.headers().firstValue("Content-Type").orElse("")).startsWith("application/problem+json");
         assertThat(missing.body()).isNotBlank();
-    }
-
-    @Test
-    void trqpBinding() throws Exception {
-        var ok = json(post("/trqp/authorization", "key-a", Map.of("entity_id", UPSTREAM_BASE + "/issuer", "authority_id", "fw-a",
-                "action", "issue", "resource", "mso_mdoc:org.iso.18013.5.1.mDL", "context", Map.of("time", "2026-10-01T00:00:00Z"))));
-        assertThat(ok.get("authorized")).isEqualTo(true);
-        assertThat(ok.get("time_requested")).isEqualTo("2026-10-01T00:00:00Z");
-        var no = json(post("/trqp/authorization", "key-a", Map.of("entity_id", UPSTREAM_BASE + "/issuer", "authority_id", "fw-a",
-                "action", "issue", "resource", "dc+sd-jwt:urn:eudi:pid:1")));
-        assertThat(no.get("authorized")).isEqualTo(false);
-        assertThat(post("/trqp/authorization", "key-a", Map.of("entity_id", "x", "authority_id", "nope", "action", "issue", "resource", "*"))
-                .statusCode()).isEqualTo(404);
-        assertThat(post("/trqp/authorization", "key-a", Map.of("entity_id", "x")).statusCode()).isEqualTo(400);
-        var rec = json(post("/trqp/recognition", "key-admin", Map.of("entity_id", "fw-a", "authority_id", "fw-b", "action", "recognize", "resource", "listed")));
-        assertThat(rec.get("recognized")).isEqualTo(true);
     }
 
     @Test
@@ -577,7 +578,7 @@ class TrustServerIntegrationTest {
         assertThat(get("/actuator/metrics", "key-admin").statusCode()).isEqualTo(200);
         assertThat(get("/no-such-page", null).statusCode()).isEqualTo(401);
         // Encoded characters that DIDs need still work.
-        assertThat(get("/api/v1/did/did:web:example.com%3A8443", "key-a").statusCode()).isNotIn(400, 401, 403);
+        assertThat(get("/api/v1/proxy/did/did:web:example.com%3A8443", "key-a").statusCode()).isNotIn(400, 401, 403);
     }
 
     @Test

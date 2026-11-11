@@ -7,16 +7,24 @@ import java.util.Objects;
 
 /**
  * Configuration of one trust source instance. {@code properties} is free-form and interpreted by the
- * {@link TrustSourceFactory} for {@code type}.
+ * {@link TrustSourceFactory} for {@code type}. {@code required}: the registry is not ready, and no snapshot is
+ * served, until the source has loaded successfully once; an optional source (a third party's sandbox list) may fail
+ * without holding the service back.
  */
 public record SourceDefinition(String id, String type, String frameworkId, Duration refreshInterval, boolean enabled,
-                               Map<String, Object> properties) {
+                               boolean required, Map<String, Object> properties) {
 
     public SourceDefinition {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(type, "type");
         refreshInterval = refreshInterval == null ? Duration.ofHours(1) : refreshInterval;
         properties = properties == null ? Map.of() : Map.copyOf(properties);
+    }
+
+    /** A required source. */
+    public SourceDefinition(String id, String type, String frameworkId, Duration refreshInterval, boolean enabled,
+                            Map<String, Object> properties) {
+        this(id, type, frameworkId, refreshInterval, enabled, true, properties);
     }
 
     public String string(String key) {

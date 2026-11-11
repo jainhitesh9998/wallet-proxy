@@ -51,7 +51,7 @@ class TrustEvaluatorTest {
 
     TrustRegistry registry = new TrustRegistry();
     TrustEvaluator evaluator;
-    ClientProfile all = ClientProfile.anonymous(Set.of());
+    ClientProfile all = ClientProfile.unrestricted("test");
 
     @BeforeEach
     void setUp() {
@@ -85,13 +85,19 @@ class TrustEvaluatorTest {
 
     @Test
     void trustedIssuerByUrl() {
-        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://issuer.example/utopia/", List.of(), null, null, null, all);
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://issuer.example/utopia", List.of(), null, null, null, all);
         assertThat(d.decision()).isEqualTo(Decision.TRUSTED);
-        // Scheme and host are case-insensitive, the default port is implied.
-        var same = eval(EntityRole.CREDENTIAL_ISSUER, "HTTPS://Issuer.Example:443/utopia", List.of(), null, null, null, all);
-        assertThat(same.entity().id()).isEqualTo("utopia-dmv");
         assertThat(d.entity().id()).isEqualTo("utopia-dmv");
         assertThat(d.framework().id()).isEqualTo("utopia");
+    }
+
+    @Test
+    void issuerIdentifiersAreComparedByteForByte() {
+        // RFC 8414 section 3.3, OpenID4VCI 1.0 section 12.2.1: no normalization; another spelling is another identifier.
+        for (String other : List.of("https://issuer.example/utopia/", "HTTPS://issuer.example/utopia", "https://Issuer.Example/utopia",
+                "https://issuer.example:443/utopia", "https://issuer.example/x/../utopia")) {
+            assertThat(eval(EntityRole.CREDENTIAL_ISSUER, other, List.of(), null, null, null, all).decision()).as(other).isEqualTo(Decision.UNKNOWN);
+        }
     }
 
     @Test
@@ -170,7 +176,7 @@ class TrustEvaluatorTest {
 
     @Test
     void everyAssertedTypeMustBeAuthorized() {
-        var strict = new ClientProfile("v", "Verifier", Set.of(), true, true, false);
+        var strict = new ClientProfile("v", "Verifier", Set.of(ClientProfile.ALL_FRAMEWORKS), true, true, false);
         var q = new TrustQuery(EntityRole.CREDENTIAL_ISSUER, new TrustQuery.Subject("https://issuer.example/utopia", List.of(), null, null),
                 new TrustQuery.Context("oid4vci", "mso_mdoc", "org.iso.18013.5.1.mDL", null, null, List.of(),
                         List.of("org.iso.18013.5.1.mDL", "eu.europa.ec.eudi.pid.1")));
@@ -205,19 +211,52 @@ class TrustEvaluatorTest {
     }
 
     @Test
-    void identifierOnTwoEntitiesIsFineWhenTheKeyIsBoundToOne() {
+    void aSharedAnchorDoesNotLendItsFrameworksIdentitiesToEveryCertificateBelowIt() {
+        // An anchor a whole framework shares (one root for several issuers) proves that a certificate belongs to the
+        // framework, never which of its members signed: a claimed identifier needs the certificate itself, or an
+        // anchor tied to that one entity, to back it.
         Provenance prov = Provenance.of("test", "static", "utopia", null, Instant.now());
-        var here = TrustedEntity.builder("here").framework("utopia").role(EntityRole.CREDENTIAL_ISSUER)
-                .identifier(IdentifierType.URL, "https://shared.example").provenance(prov).build();
-        var elsewhere = TrustedEntity.builder("elsewhere").framework("elsewhere").role(EntityRole.CREDENTIAL_ISSUER)
-                .identifier(IdentifierType.URL, "https://shared.example").provenance(prov).build();
-        var anchors = List.of(new TrustAnchor(null, TrustDomain.MDOC_IACA, iaca.certificate(), "utopia", null, null, null, prov));
-        registry.publish(new RegistrySnapshot(3, Instant.now(), List.of(new TrustFramework("utopia", "Utopia", null, null, null),
-                new TrustFramework("elsewhere", "Elsewhere", null, null, null)), List.of(elsewhere, here), anchors));
-        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://shared.example", List.of(Certificates.toBase64(ds.certificate())), null,
+        var ministry = TrustedEntity.builder("ministry").framework("utopia").role(EntityRole.CREDENTIAL_ISSUER)
+                .identifier(IdentifierType.URL, "https://ministry.example").provenance(prov).build();
+        var frameworks = List.of(new TrustFramework("utopia", "Utopia", null, null, null));
+        registry.publish(new RegistrySnapshot(3, Instant.now(), frameworks, List.of(ministry),
+                List.of(new TrustAnchor(null, TrustDomain.MDOC_IACA, iaca.certificate(), "utopia", null, null, null, prov))));
+        var claimed = eval(EntityRole.CREDENTIAL_ISSUER, "https://ministry.example", List.of(Certificates.toBase64(ds.certificate())), null,
                 "mso_mdoc", "org.iso.18013.5.1.mDL", all);
-        assertThat(d.decision()).as(d.reasons().toString()).isEqualTo(Decision.TRUSTED);
-        assertThat(d.entity().id()).isEqualTo("here");
+        assertThat(claimed.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(claimed.reasons()).extracting(Reason::code).contains("identifier.unbound");
+        // Without the claim the chain stands on the anchor alone: trusted as a certificate of the framework, no entity.
+        var chainOnly = eval(EntityRole.CREDENTIAL_ISSUER, null, List.of(Certificates.toBase64(ds.certificate())), null,
+                "mso_mdoc", "org.iso.18013.5.1.mDL", all);
+        assertThat(chainOnly.decision()).isEqualTo(Decision.TRUSTED);
+        assertThat(chainOnly.entity()).isNull();
+        // An anchor that belongs to one entity names it.
+        registry.publish(new RegistrySnapshot(4, Instant.now(), frameworks, List.of(ministry),
+                List.of(new TrustAnchor(null, TrustDomain.MDOC_IACA, iaca.certificate(), "utopia", "ministry", null, null, prov))));
+        var tied = eval(EntityRole.CREDENTIAL_ISSUER, "https://ministry.example", List.of(Certificates.toBase64(ds.certificate())), null,
+                "mso_mdoc", "org.iso.18013.5.1.mDL", all);
+        assertThat(tied.decision()).as(tied.reasons().toString()).isEqualTo(Decision.TRUSTED);
+        assertThat(tied.entity().id()).isEqualTo("ministry");
+    }
+
+    @Test
+    void aPinnedCertificateIsNotTrustedPastItsValidity() {
+        // A certificate registered on an entity is a pin; no anchor checks it, so its own validity period must.
+        Provenance prov = Provenance.of("test", "static", "utopia", null, Instant.now());
+        TestPki.Issued selfCa = TestPki.rootCa("CN=Self,C=UT");
+        TestPki.Issued expired = TestPki.leaf("CN=Old verifier,C=UT", selfCa, List.of("old.example"), null,
+                Instant.now().minus(Duration.ofDays(800)), Instant.now().minus(Duration.ofDays(400)));
+        TestPki.Issued current = TestPki.leaf("CN=Verifier,C=UT", selfCa, List.of("pinned.example"), null);
+        var entity = TrustedEntity.builder("pinned").framework("utopia").role(EntityRole.VERIFIER)
+                .certificate(expired.certificate()).certificate(current.certificate()).provenance(prov).build();
+        registry.publish(new RegistrySnapshot(5, Instant.now(), List.of(new TrustFramework("utopia", "Utopia", null, null, null)), List.of(entity), List.of()));
+        var old = evaluator.evaluate(new TrustQuery(EntityRole.VERIFIER, new TrustQuery.Subject("x509_hash:" + Certificates.sha256Thumbprint(expired.certificate()),
+                List.of(Certificates.toBase64(expired.certificate())), null, null), TrustQuery.Context.EMPTY), all);
+        assertThat(old.decision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(old.reasons()).extracting(Reason::code).contains("x509.pinned_expired");
+        var ok = evaluator.evaluate(new TrustQuery(EntityRole.VERIFIER, new TrustQuery.Subject("x509_hash:" + Certificates.sha256Thumbprint(current.certificate()),
+                List.of(Certificates.toBase64(current.certificate())), null, null), TrustQuery.Context.EMPTY), all);
+        assertThat(ok.decision()).as(ok.reasons().toString()).isEqualTo(Decision.TRUSTED);
     }
 
     @Test
@@ -349,7 +388,7 @@ class TrustEvaluatorTest {
     @Test
     void asksAboutAnIssuerUrlMissingFromTheSnapshot() {
         var od = onDemand();
-        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://fed.example/issuer/", List.of(), null, null, null, all);
+        var d = eval(EntityRole.CREDENTIAL_ISSUER, "https://fed.example/issuer", List.of(), null, null, null, all);
         assertThat(od.asked.getFirst()).isEqualTo("URL:https://fed.example/issuer");
         assertThat(d.decision()).isEqualTo(Decision.TRUSTED);
         assertThat(d.entity().id()).isEqualTo("fed-issuer");

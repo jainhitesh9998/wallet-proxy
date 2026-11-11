@@ -10,16 +10,18 @@ import org.springframework.stereotype.Component;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** {@code /actuator/health} component "trust": DOWN until the first load, then per-source status. */
+/**
+ * {@code /actuator/health} component "trust": DOWN until every required source has loaded once (no snapshot is served
+ * before that), then UP with each source's state. A required source that keeps failing after its first load shows as
+ * an error while the service goes on serving its last good data.
+ */
 @Component("trust")
 public class TrustHealthIndicator implements HealthIndicator {
 
-    private final SourceBootstrap bootstrap;
     private final TrustSourceManager manager;
     private final TrustRegistry registry;
 
-    public TrustHealthIndicator(SourceBootstrap bootstrap, TrustSourceManager manager, TrustRegistry registry) {
-        this.bootstrap = bootstrap;
+    public TrustHealthIndicator(TrustSourceManager manager, TrustRegistry registry) {
         this.manager = manager;
         this.registry = registry;
     }
@@ -30,7 +32,7 @@ public class TrustHealthIndicator implements HealthIndicator {
         for (SourceState s : manager.states()) {
             sources.put(s.id(), s.healthy() ? "UP" : s.enabled() ? (s.lastError() == null ? "PENDING" : "ERROR: " + s.lastError()) : "DISABLED");
         }
-        Health.Builder b = bootstrap.isReady() ? Health.up() : Health.down().withDetail("reason", "loading trust sources");
+        Health.Builder b = manager.ready() ? Health.up() : Health.down().withDetail("waitingFor", manager.waitingFor());
         return b.withDetail("registryVersion", registry.snapshot().version())
                 .withDetail("entities", registry.snapshot().entities().size())
                 .withDetail("anchors", registry.snapshot().allAnchors().size())

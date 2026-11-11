@@ -9,6 +9,7 @@ import io.vctrust.trust.core.model.LocalizedDisplay;
 import io.vctrust.trust.core.model.Provenance;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.metadata.Oid4vciMetadataMapper;
+import io.vctrust.trust.core.util.ExpiringMap;
 import io.vctrust.trust.core.spi.ListInfo;
 import io.vctrust.trust.core.spi.OnDemandResolver;
 import io.vctrust.trust.core.spi.SourceContext;
@@ -28,7 +29,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@code type: openid-federation} — OpenID Federation 1.0. Properties: {@code trustAnchor} (entity id),
@@ -52,16 +52,16 @@ public final class OpenIdFederationSourceFactory implements TrustSourceFactory {
         private final SourceDefinition def;
         private final SourceContext ctx;
         private final String trustAnchor;
-        private final Map<String, CachedEntity> cache = new ConcurrentHashMap<>();
+        /** On-demand answers, kept until the trust chain expires (a failed resolution for five minutes), and bounded. */
+        private final ExpiringMap<String, Optional<TrustedEntity>> cache;
         private volatile FederationResolver resolver;
 
-        record CachedEntity(TrustedEntity entity, Instant expires) {
-        }
 
         FederationSource(SourceDefinition def, SourceContext ctx) {
             this.def = def;
             this.ctx = ctx;
             this.trustAnchor = def.requireString("trustAnchor");
+            this.cache = new ExpiringMap<>(5_000, ctx.clock());
         }
 
         @Override
@@ -151,18 +151,17 @@ public final class OpenIdFederationSourceFactory implements TrustSourceFactory {
 
         @Override
         public Optional<TrustedEntity> resolve(Identifier identifier) throws TrustSourceException {
-            CachedEntity c = cache.get(identifier.value());
-            Instant now = ctx.clock().instant();
-            if (c != null && c.expires().isAfter(now)) {
-                return Optional.ofNullable(c.entity());
+            Optional<Optional<TrustedEntity>> cached = cache.get(identifier.value());
+            if (cached.isPresent()) {
+                return cached.get();
             }
             try {
                 TrustChain tc = resolver().resolve(identifier.value());
                 TrustedEntity e = toEntity(tc);
-                cache.put(identifier.value(), new CachedEntity(e, tc.expiresAt()));
+                cache.put(identifier.value(), Optional.of(e), tc.expiresAt());
                 return Optional.of(e);
             } catch (FederationException e) {
-                cache.put(identifier.value(), new CachedEntity(null, now.plusSeconds(300)));
+                cache.put(identifier.value(), Optional.empty(), ctx.clock().instant().plusSeconds(300));
                 return Optional.empty();
             }
         }
@@ -181,7 +180,9 @@ public final class OpenIdFederationSourceFactory implements TrustSourceFactory {
                 switch (type) {
                     case "openid_credential_issuer" -> {
                         b.role(EntityRole.CREDENTIAL_ISSUER);
-                        Oid4vciMetadataMapper.enrich(b, tc.metadata().get(type), true);
+                        // Resolved metadata: the trust chain's policies applied, so the federation vouches for these types.
+                        Oid4vciMetadataMapper.describe(b, tc.metadata().get(type));
+                        Oid4vciMetadataMapper.authorizations(tc.metadata().get(type)).forEach(b::authorization);
                     }
                     case "openid_credential_verifier", "openid_relying_party" -> {
                         b.role(EntityRole.VERIFIER);

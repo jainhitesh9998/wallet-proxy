@@ -3,7 +3,8 @@ package io.vctrust.trust.server.service;
 import io.vctrust.trust.core.did.Did;
 import io.vctrust.trust.core.did.DidResolutionResult;
 import io.vctrust.trust.core.did.DidResolver;
-import io.vctrust.trust.server.cache.TtlCache;
+import io.vctrust.trust.core.json.Json;
+import io.vctrust.trust.server.cache.ResourceCache;
 import io.vctrust.trust.server.config.TrustProperties;
 
 import java.time.Clock;
@@ -11,26 +12,33 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Cached DID resolution: honours document max-age, caches negative results briefly, serves stale on outage. */
+/**
+ * Cached DID resolution. A document is fresh for its own max-age (at most {@code did-ttl}); "not found" and other
+ * answers of the method are cached briefly; an outage (the method could not be asked) leaves the last good
+ * document in place, flagged stale, and is itself remembered so that it is not retried on every call.
+ */
 public class DidService {
 
+    /** The method could not be asked: an outage, not an answer about the DID. */
+    private static final class Unavailable extends Exception {
+        final DidResolutionResult result;
+
+        Unavailable(DidResolutionResult result) {
+            super(result.error().orElse("error"));
+            this.result = result;
+        }
+    }
+
     private final DidResolver resolver;
-    private final TtlCache<String, DidResolutionResult> cache;
+    private final ResourceCache<DidResolutionResult> cache;
     private final TrustProperties.Cache cfg;
 
     public DidService(DidResolver resolver, TrustProperties.Cache cfg, Clock clock) {
         this.resolver = resolver;
         this.cfg = cfg;
-        this.cache = new TtlCache<>(cfg.getMaxEntries(), cfg.getStaleIfError(), clock);
-    }
-
-    private static final class TransientFailure extends Exception {
-        final DidResolutionResult result;
-
-        TransientFailure(DidResolutionResult result) {
-            super(result.error().orElse("error"));
-            this.result = result;
-        }
+        // Documents are refreshed in the background: a snapshot build or an evaluation never waits on a slow host
+        // for a DID it already knows.
+        this.cache = new ResourceCache<>(cfg.settings(true), DidService::weight, e -> false, clock);
     }
 
     public DidResolutionResult resolve(String didOrUrl) {
@@ -41,10 +49,13 @@ public class DidService {
             return DidResolutionResult.error(DidResolutionResult.INVALID_DID, e.getMessage());
         }
         try {
-            TtlCache.Hit<DidResolutionResult> hit = cache.get(did, () -> {
+            ResourceCache.Hit<DidResolutionResult> hit = cache.get(did, () -> {
                 DidResolutionResult r = resolver.resolve(did);
                 if (r.error().filter(DidResolutionResult.INTERNAL_ERROR::equals).isPresent()) {
-                    throw new TransientFailure(r);
+                    throw new Unavailable(r);
+                }
+                if (weight(r) > cfg.getMaxDocumentBytes()) {
+                    return DidResolutionResult.error(DidResolutionResult.INVALID_DID_DOCUMENT, "The DID document exceeds " + cfg.getMaxDocumentBytes() + " bytes");
                 }
                 return r;
             }, this::ttl);
@@ -53,7 +64,7 @@ public class DidService {
             cacheInfo.put("expiresAt", hit.expiresAt().toString());
             cacheInfo.put("stale", hit.stale());
             return hit.value().withResolutionMetadata("cache", cacheInfo);
-        } catch (TransientFailure e) {
+        } catch (Unavailable e) {
             return e.result;
         } catch (Exception e) {
             return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, e.getMessage());
@@ -70,6 +81,10 @@ public class DidService {
             return d.compareTo(cfg.getDidTtl()) < 0 ? d : cfg.getDidTtl();
         }
         return cfg.getDidTtl();
+    }
+
+    private static int weight(DidResolutionResult r) {
+        return r.didDocument() == null ? 256 : Json.write(r.didDocument()).length();
     }
 
     public void clear() {

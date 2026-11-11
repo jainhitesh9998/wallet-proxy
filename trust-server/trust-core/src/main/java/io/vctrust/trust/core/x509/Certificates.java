@@ -2,8 +2,13 @@ package io.vctrust.trust.core.x509;
 
 import io.vctrust.trust.core.util.Base64Url;
 import io.vctrust.trust.core.util.Hashes;
+import org.bouncycastle.asn1.ASN1Encodable;
+import org.bouncycastle.asn1.ASN1Encoding;
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Primitive;
+import org.bouncycastle.asn1.ASN1Sequence;
+import org.bouncycastle.asn1.ASN1Set;
 import org.bouncycastle.asn1.x509.AccessDescription;
 import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
 import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
@@ -16,6 +21,9 @@ import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
 
 import java.io.ByteArrayInputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
@@ -25,7 +33,9 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -246,25 +256,121 @@ public final class Certificates {
         return cert.getBasicConstraints() >= 0;
     }
 
-    /** Value of the country (C) RDN of the subject, if present. */
+    /** The attribute types written by keyword in a name; every other type is written as its dotted OID with a hex value. */
+    private static final Map<String, String> NAME_KEYWORDS = Map.of(
+            "2.5.4.3", "CN", "2.5.4.6", "C", "2.5.4.7", "L", "2.5.4.8", "ST", "2.5.4.10", "O", "2.5.4.11", "OU", "2.5.4.9", "STREET",
+            "0.9.2342.19200300.100.1.25", "DC", "0.9.2342.19200300.100.1.1", "UID");
+    private static final String COUNTRY = "2.5.4.6";
+
+    /** The certificate's subject in the one form names are compared in; see {@link #rfc2253(byte[])}. */
+    public static String subjectName(X509Certificate cert) {
+        return rfc2253(cert.getSubjectX500Principal().getEncoded());
+    }
+
+    public static String issuerName(X509Certificate cert) {
+        return rfc2253(cert.getIssuerX500Principal().getEncoded());
+    }
+
+    /**
+     * A distinguished name as text, by rules simple enough to implement identically elsewhere (the client library
+     * renders the same string from the same bytes, and the two are compared as strings):
+     * <ul>
+     *   <li>RFC 2253 order: the last RDN of the encoding first, RDNs joined by ',', the attributes of a multi-valued
+     *       RDN in encoded order joined by '+';</li>
+     *   <li>CN, C, L, ST, O, OU, STREET, DC and UID by keyword; any other attribute type as its dotted OID;</li>
+     *   <li>the value as text when its type is written by keyword, it is a UTF8String, PrintableString or IA5String, and
+     *       its bytes are valid UTF-8; otherwise '#' and the lower-case hex of the value's DER encoding;</li>
+     *   <li>in text, {@code , = + < > # ; " \} are escaped with a backslash wherever they stand, NUL is written
+     *       {@code \00}, and spaces at either end are escaped with a backslash.</li>
+     * </ul>
+     * {@link javax.security.auth.x500.X500Principal#getName()} differs from this for string types it decodes loosely.
+     */
+    public static String rfc2253(byte[] derName) {
+        List<String> rdns = new ArrayList<>();
+        for (ASN1Encodable rdn : ASN1Sequence.getInstance(derName)) {
+            List<String> attributes = new ArrayList<>();
+            for (ASN1Encodable a : ASN1Set.getInstance(rdn)) {
+                ASN1Sequence attribute = ASN1Sequence.getInstance(a);
+                String oid = ASN1ObjectIdentifier.getInstance(attribute.getObjectAt(0)).getId();
+                byte[] value = der(attribute.getObjectAt(1));
+                String keyword = NAME_KEYWORDS.get(oid);
+                String text = keyword == null ? null : text(value);
+                attributes.add(text == null ? (keyword == null ? oid : keyword) + "=#" + HexFormat.of().formatHex(value) : keyword + "=" + escape(text));
+            }
+            rdns.add(String.join("+", attributes));
+        }
+        java.util.Collections.reverse(rdns);
+        return String.join(",", rdns);
+    }
+
+    /** The country of the subject: the first C attribute in encoded order whose value is text. */
     public static Optional<String> subjectCountry(X509Certificate cert) {
-        return rdn(cert.getSubjectX500Principal().getName(), "C");
+        return country(cert.getSubjectX500Principal().getEncoded());
     }
 
     public static Optional<String> issuerCountry(X509Certificate cert) {
-        return rdn(cert.getIssuerX500Principal().getName(), "C");
+        return country(cert.getIssuerX500Principal().getEncoded());
     }
 
-    static Optional<String> rdn(String rfc2253, String attr) {
-        try {
-            var ln = new javax.naming.ldap.LdapName(rfc2253);
-            return ln.getRdns().stream()
-                    .filter(r -> r.getType().equalsIgnoreCase(attr))
-                    .map(r -> String.valueOf(r.getValue()))
-                    .findFirst();
-        } catch (Exception e) {
-            return Optional.empty();
+    static Optional<String> country(byte[] derName) {
+        for (ASN1Encodable rdn : ASN1Sequence.getInstance(derName)) {
+            for (ASN1Encodable a : ASN1Set.getInstance(rdn)) {
+                ASN1Sequence attribute = ASN1Sequence.getInstance(a);
+                if (COUNTRY.equals(ASN1ObjectIdentifier.getInstance(attribute.getObjectAt(0)).getId())) {
+                    String text = text(der(attribute.getObjectAt(1)));
+                    if (text != null) {
+                        return Optional.of(text);
+                    }
+                }
+            }
         }
+        return Optional.empty();
+    }
+
+    private static byte[] der(ASN1Encodable value) {
+        try {
+            return value.toASN1Primitive().getEncoded(ASN1Encoding.DER);
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException(e);
+        }
+    }
+
+    /** The text of a UTF8String, PrintableString or IA5String whose content is valid UTF-8; null for anything else. */
+    private static String text(byte[] tlv) {
+        int tag = tlv[0] & 0xff;
+        if (tag != 0x0c && tag != 0x13 && tag != 0x16) {
+            return null;
+        }
+        int header = (tlv[1] & 0x80) == 0 ? 2 : 2 + (tlv[1] & 0x7f);
+        try {
+            return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(tlv, header, tlv.length - header)).toString();
+        } catch (CharacterCodingException e) {
+            return null;
+        }
+    }
+
+    private static String escape(String text) {
+        int lead = 0;
+        int trail = text.length() - 1;
+        while (lead < text.length() && text.charAt(lead) == ' ') {
+            lead++;
+        }
+        while (trail >= 0 && text.charAt(trail) == ' ') {
+            trail--;
+        }
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == 0) {
+                out.append("\\00");
+            } else if (",=+<>#;\"\\".indexOf(c) >= 0 || i < lead || i > trail) {
+                out.append('\\').append(c);
+            } else {
+                out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     public static List<String> extendedKeyUsage(X509Certificate cert) {

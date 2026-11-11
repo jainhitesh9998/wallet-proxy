@@ -30,8 +30,8 @@ import java.util.regex.Pattern;
 /**
  * Revocation checking for a validated certificate path (RFC 5280 §6.3): every certificate below the trust anchor
  * is looked up in a CRL issued by its issuer — CRLs held for that issuer (trust anchor CRLs) first, then the CRLs
- * at the certificate's own distribution points. OCSP is used only when an {@link OcspSource} is configured
- * (server side; devices never send OCSP requests, which would name the certificate being checked).
+ * at the certificate's own distribution points. OCSP is never used: a request names the certificate being checked,
+ * and the profiles this service serves (ISO 18013-5, HAIP) publish CRLs.
  *
  * <p>Devices apply the same rules to the CRLs in the trust snapshot, so the service and the device agree.
  */
@@ -155,31 +155,16 @@ public final class RevocationChecker {
         Crl fetch(String url) throws IOException;
     }
 
-    /** Server-side OCSP (RFC 6960). */
-    public interface OcspSource {
-        OcspResult check(X509Certificate cert, X509Certificate issuer, String url, Instant time);
-    }
-
-    /** An OCSP answer; {@code reason} is the revocation reason, or why the status is unknown. */
-    public record OcspResult(CertificateRevocation.Status status, String reason, Instant revokedAt,
-                             Instant thisUpdate, Instant nextUpdate) {
-    }
-
     /** Issues to add to the path validation result, and the per-certificate statuses. */
     public record Result(List<ValidationIssue> issues, List<CertificateRevocation> statuses) {
     }
 
     private final CrlSource crls;
-    private final OcspSource ocsp;
     private final String source;
 
-    /**
-     * @param ocsp   null disables OCSP
-     * @param source reported as {@link CertificateRevocation#source()}
-     */
-    public RevocationChecker(CrlSource crls, OcspSource ocsp, String source) {
+    /** @param source reported as {@link CertificateRevocation#source()} */
+    public RevocationChecker(CrlSource crls, String source) {
         this.crls = crls;
-        this.ocsp = ocsp;
         this.source = source;
     }
 
@@ -198,7 +183,7 @@ public final class RevocationChecker {
             String who = "Certificate " + j + " (" + c.getSubjectX500Principal().getName() + ")";
             switch (r.status()) {
                 case GOOD -> issues.add(ValidationIssue.info("x509.not_revoked", who + " is not revoked ("
-                        + ("ocsp".equals(r.method()) ? "OCSP " + r.crlUrl() : "CRL " + (r.crlUrl() == null ? "from the trust list" : r.crlUrl()))
+                        + "CRL " + (r.crlUrl() == null ? "from the trust list" : r.crlUrl())
                         + ", next update " + (r.nextUpdate() == null ? "none" : r.nextUpdate()) + ")"));
                 case REVOKED -> issues.add(ValidationIssue.error("x509.revoked", who + " was revoked on " + r.revokedAt()
                         + " (" + r.reason() + ")"));
@@ -244,18 +229,8 @@ public final class RevocationChecker {
             }
             why = why == null ? v.why() : why;
         }
-        List<String> ocspUrls = Certificates.ocspUrls(c).stream().filter(RevocationChecker::isHttp).toList();
-        if (!ocspUrls.isEmpty()) {
-            if (ocsp != null) {
-                OcspResult r = ocsp.check(c, issuer, ocspUrls.getFirst(), time);
-                if (r.status() != CertificateRevocation.Status.UNKNOWN) {
-                    return status(index, c, r.status(), r.reason(), r.revokedAt(), "ocsp", ocspUrls.getFirst(),
-                            r.thisUpdate(), r.nextUpdate());
-                }
-                why = why == null ? "OCSP: " + r.reason() : why;
-            } else if (why == null) {
-                why = "the issuer publishes only OCSP, which is disabled";
-            }
+        if (why == null && Certificates.ocspUrls(c).stream().anyMatch(RevocationChecker::isHttp)) {
+            why = "the issuer publishes only OCSP, which is not used";
         }
         return status(index, c, CertificateRevocation.Status.UNKNOWN, why == null ? "no CRL is published for it" : why,
                 null, null, null, null, null);
@@ -381,9 +356,4 @@ public final class RevocationChecker {
         };
     }
 
-    /** RFC 5280 CRLReason code → name (for OCSP revocation reasons). */
-    public static String reasonName(int code) {
-        CRLReason[] all = CRLReason.values();
-        return code >= 0 && code < all.length ? reasonName(all[code]) : "unspecified";
-    }
 }

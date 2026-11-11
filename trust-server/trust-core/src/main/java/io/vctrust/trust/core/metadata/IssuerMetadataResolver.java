@@ -63,22 +63,14 @@ public class IssuerMetadataResolver {
         this.signerTrust = signerTrust;
     }
 
+    /** Authorization servers resolved per issuer (the issuer's own list is otherwise an unbounded fan-out). */
+    static final int MAX_AUTHORIZATION_SERVERS = 3;
+
     public IssuerMetadata resolve(String credentialIssuer, Map<String, Map<String, Object>> policy)
             throws MetadataException {
         List<String> warnings = new ArrayList<>();
         URI url = WellKnown.inserted(credentialIssuer, WellKnown.CREDENTIAL_ISSUER);
         HttpFetcher.Response r = fetch(url, requestSigned ? "application/jwt, application/json;q=0.9" : "application/json");
-        if (!r.isSuccess()) {
-            // Some deployments still serve the pre-1.0 appended location; accept it with a warning.
-            URI legacy = WellKnown.appended(credentialIssuer, WellKnown.CREDENTIAL_ISSUER);
-            if (!legacy.equals(url)) {
-                HttpFetcher.Response lr = fetch(legacy, "application/json");
-                if (lr.isSuccess()) {
-                    warnings.add("Metadata served only at the legacy appended location " + legacy);
-                    r = lr;
-                }
-            }
-        }
         if (!r.isSuccess()) {
             throw new MetadataException("metadata_not_found", "HTTP " + r.status() + " fetching " + url);
         }
@@ -108,13 +100,10 @@ public class IssuerMetadataResolver {
         if (declared == null) {
             throw new MetadataException("metadata_invalid", "credential_issuer is missing");
         }
+        // OpenID4VCI 1.0 section 12.2.4: identical to the identifier the well-known URL was built from.
         if (!declared.equals(credentialIssuer)) {
-            if (Identifier.normalizeUrl(declared).equals(Identifier.normalizeUrl(credentialIssuer))) {
-                warnings.add("credential_issuer '" + declared + "' differs from '" + credentialIssuer + "' only by normalization");
-            } else {
-                throw new MetadataException("issuer_mismatch",
-                        "credential_issuer '" + declared + "' does not match the requested issuer '" + credentialIssuer + "'");
-            }
+            throw new MetadataException("issuer_mismatch",
+                    "credential_issuer '" + declared + "' is not identical to the requested issuer '" + credentialIssuer + "'");
         }
         boolean policyApplied = false;
         if (policy != null && policy.get("openid_credential_issuer") != null) {
@@ -138,6 +127,11 @@ public class IssuerMetadataResolver {
         if (servers.isEmpty()) {
             servers = List.of(declared);
         }
+        if (servers.size() > MAX_AUTHORIZATION_SERVERS) {
+            // The issuer chooses this list: without a cap one request could make the proxy fetch from any number of hosts.
+            warnings.add("Only the first " + MAX_AUTHORIZATION_SERVERS + " of " + servers.size() + " authorization servers were resolved");
+            servers = servers.subList(0, MAX_AUTHORIZATION_SERVERS);
+        }
         for (String as : servers) {
             try {
                 Map<String, Object> asMd = resolveAuthorizationServer(as, warnings);
@@ -156,47 +150,25 @@ public class IssuerMetadataResolver {
         return new IssuerMetadata(declared, md, asMetadata, signed, signedVerified, policyApplied, now, now.plus(ttl), warnings);
     }
 
-    /** RFC 8414 metadata with OpenID Connect Discovery as fallback; validates {@code issuer}. */
+    /** RFC 8414 authorization server metadata; {@code issuer} must be identical to the requested one (section 3.3). */
     public Map<String, Object> resolveAuthorizationServer(String issuer, List<String> warnings) throws MetadataException {
-        for (URI url : List.of(WellKnown.inserted(issuer, WellKnown.OAUTH_AUTHORIZATION_SERVER),
-                WellKnown.appended(issuer, WellKnown.OPENID_CONFIGURATION))) {
-            HttpFetcher.Response r = fetch(url, "application/json");
-            if (!r.isSuccess()) {
-                continue;
-            }
-            Map<String, Object> md;
-            try {
-                md = Json.parseObject(r.body());
-            } catch (RuntimeException e) {
-                continue;
-            }
-            String declared = Json.string(md, "issuer");
-            if (declared == null || !Identifier.normalizeUrl(declared).equals(Identifier.normalizeUrl(issuer))) {
-                throw new MetadataException("issuer_mismatch", "AS metadata issuer '" + declared + "' does not match " + issuer);
-            }
-            if (!declared.equals(issuer)) {
-                warnings.add("AS issuer '" + declared + "' differs from '" + issuer + "' only by normalization");
-            }
-            return md;
-        }
-        throw new MetadataException("metadata_not_found", "No authorization server metadata for " + issuer);
-    }
-
-    /** JWT VC Issuer Metadata (SD-JWT VC §5); returns null when absent. */
-    public Map<String, Object> resolveJwtVcIssuer(String issuer) throws MetadataException {
-        HttpFetcher.Response r = fetch(WellKnown.inserted(issuer, WellKnown.JWT_VC_ISSUER), "application/json");
-        if (r.status() == 404) {
-            return null;
-        }
+        HttpFetcher.Response r = fetch(WellKnown.inserted(issuer, WellKnown.OAUTH_AUTHORIZATION_SERVER), "application/json");
         if (!r.isSuccess()) {
-            throw new MetadataException("metadata_not_found", "HTTP " + r.status() + " fetching jwt-vc-issuer metadata");
+            throw new MetadataException("metadata_not_found", "No authorization server metadata for " + issuer + " (HTTP " + r.status() + ")");
         }
-        Map<String, Object> md = Json.parseObject(r.body());
-        if (!issuer.equals(md.get("issuer"))) {
-            throw new MetadataException("issuer_mismatch", "jwt-vc-issuer metadata issuer does not match " + issuer);
+        Map<String, Object> md;
+        try {
+            md = Json.parseObject(r.body());
+        } catch (RuntimeException e) {
+            throw new MetadataException("metadata_invalid", "Authorization server metadata of " + issuer + " is not a JSON object");
+        }
+        String declared = Json.string(md, "issuer");
+        if (!issuer.equals(declared)) {
+            throw new MetadataException("issuer_mismatch", "AS metadata issuer '" + declared + "' is not identical to " + issuer);
         }
         return md;
     }
+
 
     private static Map<String, Object> parseJson(HttpFetcher.Response r) throws MetadataException {
         try {
@@ -222,10 +194,10 @@ public class IssuerMetadataResolver {
                 throw new MetadataException("metadata_invalid", "Signed metadata uses a symmetric algorithm");
             }
             Map<String, Object> claims = new LinkedHashMap<>(jws.getPayload().toJSONObject());
-            if (!(claims.get("sub") instanceof String sub) || !Identifier.normalizeUrl(sub).equals(Identifier.normalizeUrl(credentialIssuer))) {
+            if (!(claims.get("sub") instanceof String sub) || !sub.equals(credentialIssuer)) {
                 throw new MetadataException("issuer_mismatch", "Signed metadata sub does not match the issuer");
             }
-            if (!(claims.get("credential_issuer") instanceof String ci) || !Identifier.normalizeUrl(ci).equals(Identifier.normalizeUrl(credentialIssuer))) {
+            if (!(claims.get("credential_issuer") instanceof String ci) || !ci.equals(credentialIssuer)) {
                 throw new MetadataException("issuer_mismatch", "Signed metadata credential_issuer does not match the issuer");
             }
             if (!(claims.get("iat") instanceof Number)) {
@@ -248,7 +220,7 @@ public class IssuerMetadataResolver {
             }
             String host = URI.create(credentialIssuer).getHost();
             boolean bound = Certificates.dnsNames(leaf).stream().anyMatch(n -> n.equalsIgnoreCase(host))
-                    || Certificates.uriNames(leaf).stream().anyMatch(u -> Identifier.normalizeUrl(u).equals(Identifier.normalizeUrl(credentialIssuer)));
+                    || Certificates.uriNames(leaf).stream().anyMatch(u -> u.equals(credentialIssuer));
             if (!bound) {
                 throw new MetadataException("untrusted_signer", "Signed metadata signer " + leaf.getSubjectX500Principal().getName()
                         + " is not bound to " + credentialIssuer + " (no matching SAN)");

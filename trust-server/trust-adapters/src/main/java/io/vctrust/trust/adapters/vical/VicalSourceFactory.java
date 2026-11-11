@@ -139,7 +139,7 @@ public final class VicalSourceFactory implements TrustSourceFactory {
                     .attribute("issuingCountry", country).attribute("stateOrProvinceName", state)
                     .attribute("vicalProvider", provider).attribute("trustedListUri", location));
             docTypes.forEach(d -> b.authorization(CredentialAuthorization.of(CredentialFormats.MSO_MDOC, d)));
-            b.identifier(IdentifierType.X509_SUBJECT, cert.getSubjectX500Principal().getName());
+            b.identifier(IdentifierType.X509_SUBJECT, Certificates.subjectName(cert));
             Certificates.subjectKeyIdentifier(cert).ifPresent(s -> b.identifier(IdentifierType.X509_SKI, s));
             Map<String, Object> constraints = new LinkedHashMap<>();
             constraints.put("docTypes", docTypes);

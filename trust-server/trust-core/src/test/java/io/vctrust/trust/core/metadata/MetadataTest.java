@@ -31,8 +31,8 @@ class MetadataTest {
                 .isEqualTo("https://issuer.example/.well-known/openid-credential-issuer/tenant/1");
         assertThat(WellKnown.inserted("https://issuer.example/", WellKnown.OAUTH_AUTHORIZATION_SERVER).toString())
                 .isEqualTo("https://issuer.example/.well-known/oauth-authorization-server");
-        assertThat(WellKnown.appended("https://op.example/realm/", WellKnown.OPENID_CONFIGURATION).toString())
-                .isEqualTo("https://op.example/realm/.well-known/openid-configuration");
+        assertThat(WellKnown.appended("https://fed.example/realm/", WellKnown.OPENID_FEDERATION).toString())
+                .isEqualTo("https://fed.example/realm/.well-known/openid-federation");
     }
 
     @Test

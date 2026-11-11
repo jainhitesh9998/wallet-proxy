@@ -99,8 +99,11 @@ class EtsiTrustedListSourceTest {
         var qc = TestPki.rootCa("CN=QC CA,C=UT");
         var ctx = new TestContext().put("https://tl.example/ut.xml",
                 nationalTl(Certificates.toBase64(eaa.certificate()), Certificates.toBase64(qc.certificate())));
+        // Unsigned, or signed by nobody the operator pinned: refused unless the operator accepts the transport alone.
+        assertThatThrownBy(() -> new EtsiTrustedListSourceFactory().create(new SourceDefinition("tl", "etsi-tl", "eu", null, true,
+                Map.of("location", "https://tl.example/ut.xml")), ctx).load()).isInstanceOf(TrustSourceException.class).hasMessageContaining("not signed");
         var r = new EtsiTrustedListSourceFactory().create(new SourceDefinition("tl", "etsi-tl", "eu", null, true,
-                Map.of("location", "https://tl.example/ut.xml")), ctx).load();
+                Map.of("location", "https://tl.example/ut.xml", "allowUnverified", true)), ctx).load();
         assertThat(r.entities()).singleElement().satisfies(e -> {
             assertThat(e.displayName("en")).isEqualTo("Utopia QEAA Provider");
             assertThat(e.hasRole(EntityRole.CREDENTIAL_ISSUER)).isTrue();
@@ -136,7 +139,7 @@ class EtsiTrustedListSourceTest {
     void parsesTheRealEuLotlPointers() throws Exception {
         var ctx = new TestContext();
         var r = new EtsiTrustedListSourceFactory().create(new SourceDefinition("lotl", "etsi-tl", "eu", null, true,
-                Map.of("location", "classpath:etsi/eu-lotl.xml", "followPointers", false)), ctx).load();
+                Map.of("location", "classpath:etsi/eu-lotl.xml", "followPointers", false, "allowUnverified", true)), ctx).load();
         assertThat(r.listInfo().details().get("tslType")).isEqualTo("http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUlistofthelists");
         assertThat((Integer) r.listInfo().details().get("pointers")).isGreaterThan(30);
         assertThat(r.listInfo().sequence()).isNotBlank();
@@ -147,7 +150,7 @@ class EtsiTrustedListSourceTest {
         var ctx = new TestContext();
         // Every national TL is unreachable in the fake HTTP layer: the load must still succeed and report warnings.
         var r = new EtsiTrustedListSourceFactory().create(new SourceDefinition("lotl", "etsi-tl", "eu", null, true,
-                Map.of("location", "classpath:etsi/eu-lotl.xml", "territories", List.of("AT", "BE"))), ctx).load();
+                Map.of("location", "classpath:etsi/eu-lotl.xml", "territories", List.of("AT", "BE"), "allowUnverified", true)), ctx).load();
         assertThat(r.warnings()).filteredOn(w -> w.startsWith("TL ")).hasSize(2)
                 .allMatch(w -> w.startsWith("TL AT") || w.startsWith("TL BE"));
         assertThat(r.warnings()).anyMatch(w -> w.contains("signature not verified"));

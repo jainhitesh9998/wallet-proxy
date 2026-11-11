@@ -62,9 +62,17 @@ public final class TestPki {
         return rootCa(dn, Instant.now().minus(Duration.ofDays(1)), Instant.now().plus(Duration.ofDays(3650)));
     }
 
+    /** A root that may have one CA below it. */
     public static Issued rootCa(String dn, Instant notBefore, Instant notAfter) {
         KeyPair kp = ecKey();
-        return new Issued(build(dn, dn, kp, kp, notBefore, notAfter, true, 0, null, List.of(), null), kp);
+        return new Issued(build(dn, dn, kp, kp, notBefore, notAfter, true, 1, null, List.of(), null), kp);
+    }
+
+    /** A root that signs end-entity certificates only (pathLenConstraint 0), as an ISO 18013-5 IACA is. */
+    public static Issued iaca(String dn) {
+        KeyPair kp = ecKey();
+        return new Issued(build(dn, dn, kp, kp, Instant.now().minus(Duration.ofDays(1)), Instant.now().plus(Duration.ofDays(3650)),
+                true, 0, null, List.of(), null), kp);
     }
 
     /** A root CA whose certificate names its own CRL distribution points. */
