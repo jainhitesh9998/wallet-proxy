@@ -1,6 +1,5 @@
 package io.vctrust.trust.server.api;
 
-import io.vctrust.trust.core.evaluation.EntityView;
 import io.vctrust.trust.core.evaluation.TrustQuery;
 import io.vctrust.trust.core.model.EntityRole;
 
@@ -9,7 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** Request / response bodies of the native API (camelCase JSON). */
+/** Request bodies of the native API (camelCase JSON), and their translation into the core's queries. */
 public final class Dtos {
 
     private Dtos() {
@@ -35,9 +34,6 @@ public final class Dtos {
     }
 
     public record TrustedAuthority(String type, List<String> values) {
-    }
-
-    public record Page<T>(List<T> items, int total, int page, int size, long registryVersion) {
     }
 
     public static EntityRole parseRole(String role) {

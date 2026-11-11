@@ -1,17 +1,12 @@
 package io.vctrust.trust.server.api;
 
 import io.vctrust.trust.core.policy.ClientProfile;
-import io.vctrust.trust.server.config.TrustProperties;
-import io.vctrust.trust.server.signing.ServiceKeyManager;
+import io.vctrust.trust.server.service.DocumentSigner;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.json.JsonMapper;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 /**
  * Content negotiation for signed responses: when the client sends {@code Accept: application/jwt}, the JSON
@@ -23,14 +18,10 @@ public class ResponseSigner {
 
     public static final MediaType JWT = MediaType.parseMediaType("application/jwt");
 
-    private final ServiceKeyManager keys;
-    private final JsonMapper mapper;
-    private final TrustProperties props;
+    private final DocumentSigner signer;
 
-    public ResponseSigner(ServiceKeyManager keys, JsonMapper mapper, TrustProperties props) {
-        this.keys = keys;
-        this.mapper = mapper;
-        this.props = props;
+    public ResponseSigner(DocumentSigner signer) {
+        this.signer = signer;
     }
 
     public static boolean wantsJwt(HttpServletRequest request) {
@@ -43,9 +34,7 @@ public class ResponseSigner {
         if (!wantsJwt(request)) {
             return builder.contentType(MediaType.APPLICATION_JSON).body(body);
         }
-        Map<String, Object> claims = new LinkedHashMap<>();
-        claims.put("data", mapper.convertValue(body, Object.class));
-        String jwt = keys.sign(typ, claims, props.getService().getSignedResponseTtl(), client.clientId());
+        String jwt = signer.sign(typ, body, client);
         return builder.contentType(JWT).body(jwt);
     }
 }

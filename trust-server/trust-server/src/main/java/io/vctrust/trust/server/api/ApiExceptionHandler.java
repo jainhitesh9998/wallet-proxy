@@ -1,6 +1,7 @@
 package io.vctrust.trust.server.api;
 
-import io.vctrust.trust.server.http.SafeHttpFetcher;
+import io.vctrust.trust.core.spi.HttpFetcher.BlockedException;
+import io.vctrust.trust.server.service.ServiceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -17,9 +18,10 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 import java.net.URI;
 
 /**
- * Maps exceptions to RFC 9457 problem details with a {@code code} extension member. Errors are always
- * {@code application/problem+json}, whatever the request accepted (a CRL or status list request accepts only the
- * binary type, which would otherwise leave the error without a body).
+ * Maps exceptions to RFC 9457 problem details with a {@code code} extension member; the one place where a use
+ * case's failure becomes an HTTP status. Errors are always {@code application/problem+json}, whatever the request
+ * accepted (a CRL or status list request accepts only the binary type, which would otherwise leave the error
+ * without a body).
  */
 @RestControllerAdvice
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
@@ -38,13 +40,24 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.status(p.getStatus()).contentType(MediaType.APPLICATION_PROBLEM_JSON).body(p);
     }
 
-    @ExceptionHandler(ApiException.class)
-    ResponseEntity<Object> api(ApiException e) {
-        return respond(problem(e.status(), e.code(), e.getMessage()));
+    static HttpStatus status(ServiceException.Kind kind) {
+        return switch (kind) {
+            case INVALID_REQUEST -> HttpStatus.BAD_REQUEST;
+            case FORBIDDEN -> HttpStatus.FORBIDDEN;
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case UNPROCESSABLE -> HttpStatus.UNPROCESSABLE_CONTENT;
+            case UPSTREAM_FAILED -> HttpStatus.BAD_GATEWAY;
+            case UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+        };
     }
 
-    @ExceptionHandler(SafeHttpFetcher.BlockedRequestException.class)
-    ResponseEntity<Object> blocked(SafeHttpFetcher.BlockedRequestException e) {
+    @ExceptionHandler(ServiceException.class)
+    ResponseEntity<Object> service(ServiceException e) {
+        return respond(problem(status(e.kind()), e.code(), e.getMessage()));
+    }
+
+    @ExceptionHandler(BlockedException.class)
+    ResponseEntity<Object> blocked(BlockedException e) {
         return respond(problem(HttpStatus.BAD_REQUEST, "url_not_allowed", e.getMessage()));
     }
 

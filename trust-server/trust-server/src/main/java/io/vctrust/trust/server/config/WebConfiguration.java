@@ -1,6 +1,5 @@
 package io.vctrust.trust.server.config;
 
-import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.server.api.ReadinessInterceptor;
 import io.vctrust.trust.server.security.AccessTokenVerifier;
 import io.vctrust.trust.server.security.ClientAuthenticationFilter;
@@ -8,6 +7,7 @@ import io.vctrust.trust.server.security.ClientAuthenticator;
 import io.vctrust.trust.server.security.ClientProfileArgumentResolver;
 import io.vctrust.trust.server.security.ClientRegistry;
 import io.vctrust.trust.server.security.RateLimiter;
+import io.vctrust.trust.server.service.RegistryReadiness;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,11 +23,11 @@ import java.util.List;
 public class WebConfiguration implements WebMvcConfigurer {
 
     private final TrustProperties props;
-    private final TrustSourceManager sources;
+    private final RegistryReadiness readiness;
 
-    public WebConfiguration(TrustProperties props, TrustSourceManager sources) {
+    public WebConfiguration(TrustProperties props, RegistryReadiness readiness) {
         this.props = props;
-        this.sources = sources;
+        this.readiness = readiness;
     }
 
     @Bean
@@ -65,6 +65,6 @@ public class WebConfiguration implements WebMvcConfigurer {
     /** Nothing derived from the registry is served before the registry is complete. */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new ReadinessInterceptor(sources)).addPathPatterns("/api/**");
+        registry.addInterceptor(new ReadinessInterceptor(readiness)).addPathPatterns("/api/**");
     }
 }

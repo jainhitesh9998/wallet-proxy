@@ -1,29 +1,30 @@
 package io.vctrust.trust.server.api;
 
-import io.vctrust.trust.core.registry.TrustSourceManager;
+import io.vctrust.trust.server.service.RegistryReadiness;
+import io.vctrust.trust.server.service.ServiceException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * Refuses API calls until every required trust source has loaded. A registry that lacks a source looks, to a
- * client, like that source's parties having been delisted: a snapshot built from it would take trust away from
- * wallets that had it. Clients treat 503 as "service unavailable" and keep what they have.
+ * Refuses API calls until the registry may be served (see {@link RegistryReadiness}). Clients treat 503 as
+ * "service unavailable" and keep what they have.
  */
 public class ReadinessInterceptor implements HandlerInterceptor {
 
-    private final TrustSourceManager sources;
+    private final RegistryReadiness readiness;
 
-    public ReadinessInterceptor(TrustSourceManager sources) {
-        this.sources = sources;
+    public ReadinessInterceptor(RegistryReadiness readiness) {
+        this.readiness = readiness;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        if (!sources.ready()) {
+        try {
+            readiness.requireReady();
+        } catch (ServiceException e) {
             response.setHeader("Retry-After", "5");
-            throw new ApiException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "not_ready",
-                    "Trust sources are still loading: " + String.join(", ", sources.waitingFor()));
+            throw e;
         }
         return true;
     }

@@ -7,8 +7,11 @@ import io.vctrust.trust.core.json.Json;
 import io.vctrust.trust.server.cache.ResourceCache;
 import io.vctrust.trust.server.config.TrustProperties;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -29,13 +32,19 @@ public class DidService {
         }
     }
 
+    /** What a client is told about one DID: the resolution result, and for how long it may be reused. */
+    public record Answer(DidResolutionResult result, Duration maxAge) {
+    }
+
     private final DidResolver resolver;
     private final ResourceCache<DidResolutionResult> cache;
     private final TrustProperties.Cache cfg;
+    private final Clock clock;
 
     public DidService(DidResolver resolver, TrustProperties.Cache cfg, Clock clock) {
         this.resolver = resolver;
         this.cfg = cfg;
+        this.clock = clock;
         // Documents are refreshed in the background: a snapshot build or an evaluation never waits on a slow host
         // for a DID it already knows.
         this.cache = new ResourceCache<>(cfg.settings(true), DidService::weight, e -> false, clock);
@@ -69,6 +78,28 @@ public class DidService {
         } catch (Exception e) {
             return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, e.getMessage());
         }
+    }
+
+    /**
+     * Resolves a DID as a client names it in a URL path: as it stands, or percent-encoded as a whole
+     * ({@code did%3Aweb%3A...}).
+     */
+    public Answer resolveFromPath(String did) {
+        if (did.startsWith("did%3A") || did.startsWith("did%3a")) {
+            did = URLDecoder.decode(did, StandardCharsets.UTF_8);
+        }
+        DidResolutionResult r = resolve(did);
+        return new Answer(r, maxAge(r));
+    }
+
+    private Duration maxAge(DidResolutionResult r) {
+        if (!r.isSuccess()) {
+            return Duration.ofSeconds(30);
+        }
+        if (r.didResolutionMetadata().get("cache") instanceof Map<?, ?> m && m.get("expiresAt") instanceof String exp) {
+            return Freshness.remaining(Instant.parse(exp), clock);
+        }
+        return Duration.ofMinutes(5);
     }
 
     private Duration ttl(DidResolutionResult r) {

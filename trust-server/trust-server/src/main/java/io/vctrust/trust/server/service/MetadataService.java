@@ -12,10 +12,9 @@ import io.vctrust.trust.core.model.Identifier;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.policy.ClientProfile;
 import io.vctrust.trust.core.registry.TrustRegistry;
-import io.vctrust.trust.server.api.ApiException;
+import io.vctrust.trust.core.spi.HttpFetcher;
 import io.vctrust.trust.server.cache.ResourceCache;
 import io.vctrust.trust.server.config.TrustProperties;
-import org.springframework.http.HttpStatus;
 
 import com.nimbusds.jose.JWSObject;
 import io.vctrust.trust.core.x509.Certificates;
@@ -79,14 +78,14 @@ public class MetadataService {
 
     public IssuerMetadataEnvelope issuer(String credentialIssuer, ClientProfile client) {
         if (credentialIssuer == null || !(credentialIssuer.startsWith("https://") || credentialIssuer.startsWith("http://"))) {
-            throw ApiException.badRequest("invalid_request", "credential_issuer must be an https URL");
+            throw ServiceException.invalidRequest("invalid_request", "credential_issuer must be an https URL");
         }
         TrustedEntity entity = registry.snapshot().byIdentifier(Identifier.url(credentialIssuer)).stream()
                 .filter(e -> client.accepts(e.frameworkId()))
                 .filter(e -> e.hasRole(EntityRole.CREDENTIAL_ISSUER))
                 .findFirst().orElse(null);
         if (entity == null && !client.allowUnregisteredMetadata()) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "issuer_not_registered",
+            throw new ServiceException(ServiceException.Kind.FORBIDDEN, "issuer_not_registered",
                     "Issuer is not registered in the frameworks accepted by client " + client.clientId());
         }
         Map<String, Map<String, Object>> policy = entity == null ? null : entity.metadataPolicy();
@@ -102,20 +101,20 @@ public class MetadataService {
                 return md;
             }, md -> Duration.between(clock.instant(), md.expiresAt()));
         } catch (MetadataException e) {
-            HttpStatus status = switch (e.code()) {
-                case "metadata_not_found" -> HttpStatus.NOT_FOUND;
-                case "url_not_allowed" -> HttpStatus.BAD_REQUEST;
-                case "fetch_failed" -> HttpStatus.BAD_GATEWAY;
-                default -> HttpStatus.UNPROCESSABLE_CONTENT;
+            ServiceException.Kind kind = switch (e.code()) {
+                case "metadata_not_found" -> ServiceException.Kind.NOT_FOUND;
+                case "url_not_allowed" -> ServiceException.Kind.INVALID_REQUEST;
+                case "fetch_failed" -> ServiceException.Kind.UPSTREAM_FAILED;
+                default -> ServiceException.Kind.UNPROCESSABLE;
             };
-            throw new ApiException(status, e.code(), e.getMessage());
-        } catch (ApiException e) {
+            throw new ServiceException(kind, e.code(), e.getMessage());
+        } catch (ServiceException e) {
             throw e;
         } catch (Exception e) {
-            if (e instanceof io.vctrust.trust.server.http.SafeHttpFetcher.BlockedRequestException b) {
-                throw ApiException.badRequest("url_not_allowed", b.getMessage());
+            if (e instanceof HttpFetcher.BlockedException b) {
+                throw ServiceException.invalidRequest("url_not_allowed", b.getMessage());
             }
-            throw new ApiException(HttpStatus.BAD_GATEWAY, "fetch_failed", e.getMessage());
+            throw ServiceException.upstreamFailed("fetch_failed", e.getMessage());
         }
         IssuerMetadata md = hit.value();
         // The cached result says the signer chains to some anchor; whether it is trusted is this client's question.
@@ -132,7 +131,7 @@ public class MetadataService {
             }
         }
         if (client.requireSignedIssuerMetadata() && !Boolean.TRUE.equals(verified)) {
-            throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "signed_metadata_required", credentialIssuer
+            throw new ServiceException(ServiceException.Kind.UNPROCESSABLE, "signed_metadata_required", credentialIssuer
                     + (verified == null ? " serves no signed metadata" : " serves signed metadata whose signer is not trusted")
                     + ", which client " + client.clientId() + " requires");
         }
