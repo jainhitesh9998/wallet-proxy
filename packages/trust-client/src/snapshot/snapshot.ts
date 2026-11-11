@@ -1,11 +1,11 @@
 /**
  * The signed trust snapshot ({@code typ: trust-snapshot+jwt}): the frameworks, entities, trust anchors, evaluation
- * policy, DID documents and the anchors' CRLs visible to this client. It is what device-side trust decisions are
- * made from.
+ * policy, DID documents, JSON-LD contexts and anchor CRLs visible to this client. It is what trust decisions are
+ * made from on this device.
  *
  * Integrity: verified against service keys pinned by JWK thumbprint (or trust-on-first-use, when enabled), bound
  * to this client's audience, and never replaced by an older snapshot (rollback protection by {@code iat}).
- * Persisted in the cache store and re-verified on load.
+ * Persisted in the store and re-verified on load.
  */
 import { decodeJws, verifyJws } from '../jose/jws.js';
 import { jwkThumbprint, type Jwk } from '../crypto/keys.js';
@@ -18,12 +18,17 @@ import type { HttpTransport } from '../transport/http.js';
 import { TrustIntegrityError } from '../errors.js';
 import type { DidDocument, EntityView, SnapshotRef, TrustFramework } from '../types.js';
 
+/** The claim layout this client reads; a snapshot in another layout is refused rather than half understood. */
+export const SNAPSHOT_FORMAT = 4;
+/** A snapshot dated further ahead than this is refused: accepted, it would outrank every later, correctly dated one. */
+const MAX_CLOCK_SKEW_MS = 5 * 60_000;
+
 export interface ServiceKeyPolicy {
   /** JWK thumbprints (RFC 7638) of acceptable service signing keys. */
   thumbprints?: string[];
   /** Full public JWKs, alternatively. */
   jwks?: Jwk[];
-  /** Accept and pin the first key seen from /.well-known/jwks.json (convenient, weaker). */
+  /** Development only: accept and pin the first key seen from /.well-known/jwks.json. */
   trustOnFirstUse?: boolean;
 }
 
@@ -35,13 +40,18 @@ export interface SnapshotPolicy {
   requireRevocationStatus: boolean;
   /** issuer metadata must be signed by a trusted signer (HAIP 1.0 §4.1 ecosystems) */
   requireSignedIssuerMetadata: boolean;
-  /** anchors' relaxProfile is honoured (absent in older snapshots: true) */
-  allowRelaxedProfiles: boolean;
+}
+
+/** A JSON-LD context a listed party's credentials use: its digest always, its content when the service shipped it. */
+export interface SnapshotContext {
+  /** SHA-256 of the context document as served, base64url */
+  sha256: string;
+  document?: Record<string, unknown>;
 }
 
 export interface SnapshotData {
-  format: number;
-  version: number;
+  /** identifies the content (the service's ETag digest) */
+  id: string;
   issuedAt: Date;
   expiresAt: Date;
   policy: SnapshotPolicy;
@@ -50,6 +60,8 @@ export interface SnapshotData {
   anchors: LocalAnchor[];
   /** DID documents of registered DID identifiers, resolved by the service. */
   didDocuments: Record<string, DidDocument>;
+  /** JSON-LD contexts of the listed parties, by URL. */
+  contexts: Record<string, SnapshotContext>;
   /**
    * The trust anchors' current CRLs, fetched by the service. Each is signed by its CA and is verified again on
    * this device before use.
@@ -60,7 +72,7 @@ export interface SnapshotData {
 }
 
 export function snapshotRef(s: SnapshotData): SnapshotRef {
-  return { version: s.version, issuedAt: s.issuedAt.toISOString(), expiresAt: s.expiresAt.toISOString(), stale: s.stale };
+  return { id: s.id, issuedAt: s.issuedAt.toISOString(), expiresAt: s.expiresAt.toISOString(), stale: s.stale };
 }
 
 const KEY = 'snapshot';
@@ -89,11 +101,12 @@ export class SnapshotManager {
     });
     if (r.status === 304 && this.parsed) return this.parsed;
     const jwt = String(r.body).trim();
-    const data = await this.verify(jwt);
+    const etag = r.headers.get('ETag') ?? undefined;
+    const data = await this.verify(jwt, etag);
     if (data.expiresAt.getTime() <= this.now()) throw new TrustIntegrityError('The service returned an expired snapshot');
     // Rollback protection: never replace the held snapshot with an older one (a replay, or a lagging replica).
     if (this.parsed && data.issuedAt.getTime() < this.parsed.issuedAt.getTime()) return this.parsed;
-    this.cached = { jwt, etag: r.headers.get('ETag') ?? undefined };
+    this.cached = { jwt, etag };
     this.parsed = data;
     await this.store.set(KEY, JSON.stringify(this.cached));
     return data;
@@ -114,31 +127,43 @@ export class SnapshotManager {
     if (!raw) return;
     try {
       const c = JSON.parse(raw) as { jwt: string; etag?: string };
-      this.parsed = await this.verify(c.jwt, true);
+      this.parsed = await this.verify(c.jwt, c.etag, true);
       this.cached = c;
     } catch {
       await this.store.delete(KEY).catch(() => undefined);
     }
   }
 
+  /** Keys pinned earlier and stored on the device; a store that no longer parses is dropped, not fatal. */
+  private async storedKeys(): Promise<Jwk[]> {
+    const stored = await this.store.get(PINNED).catch(() => null);
+    if (!stored) return [];
+    try {
+      const keys = JSON.parse(stored) as unknown;
+      if (Array.isArray(keys)) return keys as Jwk[];
+    } catch { /* fall through */ }
+    await this.store.delete(PINNED).catch(() => undefined);
+    return [];
+  }
+
   private async serviceKeys(kid: string | undefined, offline: boolean): Promise<Jwk[]> {
     const pinned: Jwk[] = [...(this.keys.jwks ?? [])];
     const thumbs = new Set(this.keys.thumbprints ?? []);
-    const stored = await this.store.get(PINNED).catch(() => null);
     // Keys stored earlier stay trusted only while the configuration still pins them: removing a thumbprint (a
     // compromised key) un-pins it. Without configured thumbprints the stored keys are the trust-on-first-use set.
-    if (stored) pinned.push(...(JSON.parse(stored) as Jwk[]).filter((k) => thumbs.size === 0 || thumbs.has(jwkThumbprint(k))));
+    pinned.push(...(await this.storedKeys()).filter((k) => thumbs.size === 0 || thumbs.has(jwkThumbprint(k))));
     const matching = pinned.filter((k) => !kid || k.kid === kid || jwkThumbprint(k) === kid);
     if (matching.length > 0 || offline || !this.transport) return matching.length > 0 ? matching : pinned;
     // Fetch the JWKS and accept keys whose thumbprint is pinned (or TOFU).
     const r = await this.transport.request<{ keys: Jwk[] }>('GET', '/.well-known/jwks.json', { accept: 'application/jwk-set+json, application/json' });
-    const keys = (typeof r.body === 'string' ? JSON.parse(r.body) : r.body).keys as Jwk[];
+    const body = typeof r.body === 'string' ? JSON.parse(r.body) as { keys?: unknown } : r.body;
+    const keys = Array.isArray(body?.keys) ? body.keys as Jwk[] : [];
     const accepted = keys.filter((k) => thumbs.has(jwkThumbprint(k)) || (this.keys.trustOnFirstUse && thumbs.size === 0 && pinned.length === 0));
     if (accepted.length > 0) await this.store.set(PINNED, JSON.stringify([...pinned, ...accepted]));
     return accepted.filter((k) => !kid || k.kid === kid || jwkThumbprint(k) === kid);
   }
 
-  /** Verifies a signed response from the service (e.g. an on-demand lookup) with the pinned service keys. */
+  /** Verifies a signed response from the service (a proxied document, an on-demand lookup) with the pinned service keys. */
   async verifySigned<T>(jwt: string, typ: string): Promise<T> {
     const jws = decodeJws<Record<string, unknown>>(jwt);
     if (jws.header.typ !== typ) throw new TrustIntegrityError(`Unexpected typ ${String(jws.header.typ)}`);
@@ -146,17 +171,17 @@ export class SnapshotManager {
     if (keys.length === 0 || !keys.some((k) => verifyJws(jws, k))) throw new TrustIntegrityError(`${typ} signature is invalid or the key is not pinned`);
     this.checkAudience(jws.payload.aud);
     const exp = Number(jws.payload.exp);
-    if (Number.isFinite(exp) && exp * 1000 < this.now()) throw new TrustIntegrityError(`${typ} has expired`);
+    if (!Number.isFinite(exp) || exp * 1000 < this.now()) throw new TrustIntegrityError(`${typ} has expired`);
     return jws.payload.data as T;
   }
 
   private checkAudience(aud: unknown): void {
-    if (this.clientId && aud !== this.clientId && !(Array.isArray(aud) && aud.includes(this.clientId))) {
+    if (aud !== this.clientId && !(Array.isArray(aud) && aud.includes(this.clientId))) {
       throw new TrustIntegrityError(`Audience ${String(aud)} is not this client`);
     }
   }
 
-  private async verify(jwt: string, offline = false): Promise<SnapshotData> {
+  private async verify(jwt: string, etag: string | undefined, offline = false): Promise<SnapshotData> {
     const jws = decodeJws<Record<string, unknown>>(jwt);
     if (jws.header.typ !== 'trust-snapshot+jwt') throw new TrustIntegrityError(`Unexpected snapshot typ ${String(jws.header.typ)}`);
     const keys = await this.serviceKeys(jws.header.kid as string | undefined, offline);
@@ -164,6 +189,12 @@ export class SnapshotManager {
     if (!keys.some((k) => verifyJws(jws, k))) throw new TrustIntegrityError('Snapshot signature is invalid');
     const p = jws.payload;
     this.checkAudience(p.aud);
+    if (p.format !== SNAPSHOT_FORMAT) {
+      throw new TrustIntegrityError(`Snapshot format ${String(p.format)} is not the format ${SNAPSHOT_FORMAT} this client reads: update the client or the service`);
+    }
+    const [iat, exp] = [Number(p.iat) * 1000, Number(p.exp) * 1000];
+    if (!Number.isFinite(iat) || !Number.isFinite(exp) || exp <= iat) throw new TrustIntegrityError('Snapshot has no valid iat and exp');
+    if (iat > this.now() + MAX_CLOCK_SKEW_MS) throw new TrustIntegrityError('Snapshot is dated in the future: check the clock of this device');
     const anchors: LocalAnchor[] = [];
     for (const a of (p.anchors as Record<string, unknown>[] | undefined) ?? []) {
       try {
@@ -181,13 +212,13 @@ export class SnapshotManager {
     }
     const policy = (p.policy ?? {}) as Partial<SnapshotPolicy>;
     return {
-      format: Number(p.format ?? 1), version: Number(p.version),
-      issuedAt: new Date(Number(p.iat) * 1000), expiresAt: new Date(Number(p.exp) * 1000),
+      id: etag?.replace(/^(W\/)?"|"$/g, '').split('.')[0] || jwt.slice(jwt.lastIndexOf('.') + 1, jwt.lastIndexOf('.') + 23),
+      issuedAt: new Date(iat), expiresAt: new Date(exp),
       policy: { frameworks: policy.frameworks ?? [], strictAuthorization: policy.strictAuthorization === true,
-        requireRevocationStatus: policy.requireRevocationStatus === true, requireSignedIssuerMetadata: policy.requireSignedIssuerMetadata === true,
-        allowRelaxedProfiles: policy.allowRelaxedProfiles !== false },
+        requireRevocationStatus: policy.requireRevocationStatus === true, requireSignedIssuerMetadata: policy.requireSignedIssuerMetadata === true },
       frameworks: (p.frameworks as TrustFramework[]) ?? [], entities: (p.entities as EntityView[]) ?? [], anchors,
-      didDocuments: (p.didDocuments as Record<string, DidDocument>) ?? {}, crls, stale: false,
+      didDocuments: (p.didDocuments as Record<string, DidDocument>) ?? {},
+      contexts: (p.contexts as Record<string, SnapshotContext>) ?? {}, crls, stale: false,
     };
   }
 }

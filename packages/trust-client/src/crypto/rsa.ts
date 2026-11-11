@@ -7,6 +7,33 @@ export interface RsaPublicKey {
   e: bigint;
 }
 
+/** Smallest RSA modulus a signature is verified with. */
+export const MIN_RSA_MODULUS_BITS = 2048;
+/** Largest modulus and public exponent accepted: both are the signer's choice and set the cost of a verification. */
+export const MAX_RSA_MODULUS_BITS = 8192;
+export const MAX_RSA_EXPONENT_BITS = 256;
+
+/**
+ * Why an RSA public key is not acceptable for verifying anything, or null. With e = 1 a "signature" is the padded
+ * hash itself; an even e or n is not an RSA key; a short modulus can be factored.
+ */
+export function rsaKeyProblem(key: RsaPublicKey): string | null {
+  if (key.n <= 0n || key.e <= 0n) return 'the key is not a positive modulus and exponent';
+  const bits = bitLength(key.n);
+  if (bits < MIN_RSA_MODULUS_BITS) return `the modulus has ${bits} bits, fewer than ${MIN_RSA_MODULUS_BITS}`;
+  if (bits > MAX_RSA_MODULUS_BITS) return `the modulus has ${bits} bits, more than ${MAX_RSA_MODULUS_BITS}`;
+  if ((key.n & 1n) === 0n) return 'the modulus is even';
+  if (key.e === 1n) return 'the public exponent is 1';
+  if ((key.e & 1n) === 0n) return 'the public exponent is even';
+  if (bitLength(key.e) > MAX_RSA_EXPONENT_BITS) return `the public exponent has more than ${MAX_RSA_EXPONENT_BITS} bits`;
+  return null;
+}
+
+function bitLength(n: bigint): number {
+  const hex = n.toString(16);
+  return (hex.length - 1) * 4 + (32 - Math.clz32(parseInt(hex[0]!, 16)));
+}
+
 function modPow(base: bigint, exp: bigint, mod: bigint): bigint {
   let result = 1n;
   base %= mod;
@@ -29,6 +56,7 @@ const DIGEST_INFO: Record<HashName, Uint8Array> = {
 };
 
 function rsavp1(key: RsaPublicKey, sig: Uint8Array): Uint8Array | null {
+  if (rsaKeyProblem(key)) return null;
   const k = byteLength(key.n);
   if (sig.length !== k) return null;
   const s = bytesToBigInt(sig);

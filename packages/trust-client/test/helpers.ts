@@ -4,8 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-export const fixture = (name: string) => readFileSync(join(here, 'fixtures', name));
-export const pem = (name: string) => readFileSync(join(here, 'fixtures', 'pki', `${name}.pem`), 'utf8');
+/** The shared test PKI (conformance/pki): certificates, keys and a CRL used by the client's, the wallet's and the service's tests. */
+const PKI = join(here, '..', '..', '..', 'conformance', 'pki');
+/** Credentials and certificates of public sandbox issuers, as they issued them (conformance/real-world). */
+const REAL_WORLD = join(here, '..', '..', '..', 'conformance', 'real-world');
+export const fixture = (name: string) => readFileSync(name.startsWith('pki/') ? join(PKI, name.slice(4)) : join(REAL_WORLD, name));
+export const pem = (name: string) => readFileSync(join(PKI, `${name}.pem`), 'utf8');
 export const b64 = (pemText: string) => pemText.replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
 
 export function b64u(data: Uint8Array | string): string {

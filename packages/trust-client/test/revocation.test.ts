@@ -1,6 +1,6 @@
 /** CRL parsing and revocation checks (device side; the service's RevocationChecker applies the same rules). */
 import { describe, expect, it } from 'vitest';
-import { checkRevocation, parseCertificate, parseCrl, validateCertificateChain, type HeldCrl } from '../src/index.js';
+import { checkRevocation, parseCertificate, parseCrl, validateCertificateChain, type HeldCrl } from '../src/primitives.js';
 import { fixture, pem } from './helpers.js';
 
 const crlDer = () => new Uint8Array(fixture('pki/iaca.crl'));

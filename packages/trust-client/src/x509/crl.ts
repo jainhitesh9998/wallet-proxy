@@ -1,7 +1,11 @@
-/** X.509 CRL (RFC 5280 §5) parsing with the same small DER reader as certificates. */
-import { children, readTlv, slice, type Tlv } from '../encoding/der.js';
-import { base64Decode, base64UrlEncode, bytesToBigInt, toHex } from '../util/bytes.js';
-import { decodeOid, distributionPointUris, OID, parseName, parseTime } from './certificate.js';
+/**
+ * X.509 CRL (RFC 5280 §5) parsing with the same strict DER reader as certificates: one encoding, nothing after the
+ * CertificateList, the same signature algorithm inside and outside the signed part, no extension twice.
+ */
+import { booleanValue, children, expectTag, integerBytes, octetAlignedBitString, readSingle, sequence, slice, smallInteger, TAG,
+  unsignedInteger, value, type Tlv } from '../encoding/der.js';
+import { base64Decode, base64UrlEncode, bytesEqual, toHex } from '../util/bytes.js';
+import { distributionPointName, OID, parseAlgorithm, parseName, parseTime, readExtensions } from './certificate.js';
 
 export interface CrlEntry {
   revokedAt: Date;
@@ -12,7 +16,13 @@ export interface CrlEntry {
 }
 
 export interface IssuingDistributionPoint {
+  /** uniformResourceIdentifier names of the distribution point */
   uris: string[];
+  /**
+   * The distribution point is named in a way that is not compared here (a directoryName or another GeneralName form,
+   * or a name relative to the CRL issuer). Such a CRL covers only certificates that one of {@link uris} places in it.
+   */
+  unsupportedName?: boolean;
   onlyContainsUserCerts: boolean;
   onlyContainsCACerts: boolean;
   onlySomeReasons: boolean;
@@ -30,20 +40,26 @@ export interface Crl {
   issuerRaw: Uint8Array;
   thisUpdate: Date;
   nextUpdate?: Date;
-  /** revoked serial numbers (lowercase hex, no leading zeros) */
+  /**
+   * Revoked serial numbers (lowercase hex, no leading zeros). A serial listed more than once keeps its gravest entry:
+   * a revocation over a hold, either over removeFromCRL.
+   */
   entries: Map<string, CrlEntry>;
+  /** a serial number is listed more than once: what the CRL says about the certificates it does not list is then not relied on */
+  duplicateSerials?: boolean;
   crlNumber?: string;
   authorityKeyIdentifier?: string;
   issuingDistributionPoint?: IssuingDistributionPoint;
   /** deltaCRLIndicator present */
   delta: boolean;
-  /** critical CRL extensions this parser does not understand */
+  /** critical CRL extensions and critical CRL entry extensions this parser does not understand */
   unsupportedCritical: string[];
 }
 
 export const CRL_OID = {
   crlNumber: '2.5.29.20',
   reasonCode: '2.5.29.21',
+  invalidityDate: '2.5.29.24',
   deltaCrlIndicator: '2.5.29.27',
   issuingDistributionPoint: '2.5.29.28',
   certificateIssuer: '2.5.29.29',
@@ -52,86 +68,120 @@ export const CRL_OID = {
 
 const KNOWN_CRL_EXTENSIONS = new Set<string>([CRL_OID.crlNumber, OID.authorityKeyIdentifier, CRL_OID.issuingDistributionPoint,
   CRL_OID.freshestCrl, CRL_OID.deltaCrlIndicator]);
+const KNOWN_ENTRY_EXTENSIONS = new Set<string>([CRL_OID.reasonCode, CRL_OID.invalidityDate, CRL_OID.certificateIssuer]);
 
 /** RFC 5280 CRLReason names, as used in revocation evidence. */
 export const CRL_REASONS: Record<number, string> = {
   0: 'unspecified', 1: 'keyCompromise', 2: 'cACompromise', 3: 'affiliationChanged', 4: 'superseded', 5: 'cessationOfOperation',
   6: 'certificateHold', 8: 'removeFromCRL', 9: 'privilegeWithdrawn', 10: 'aACompromise',
 };
+export const REASON_CERTIFICATE_HOLD = 6;
+export const REASON_REMOVE_FROM_CRL = 8;
 
 /** Serial numbers as compared across certificates and CRLs: lowercase hex without leading zeros. */
 export function normalizeSerial(hex: string): string {
   return BigInt(`0x${hex || '0'}`).toString(16);
 }
 
-const value = (d: Uint8Array, t: Tlv) => d.subarray(t.valueStart, t.end);
-const isTime = (t?: Tlv) => t?.tag === 0x17 || t?.tag === 0x18;
+const isTime = (t?: Tlv) => t?.tag === TAG.utcTime || t?.tag === TAG.generalizedTime;
+/** removeFromCRL < certificateHold < any revocation */
+const gravity = (e: CrlEntry) => (e.reason === REASON_REMOVE_FROM_CRL ? 0 : e.reason === REASON_CERTIFICATE_HOLD ? 1 : 2);
 
 /** Accepts DER, PEM ("X509 CRL") or base64. */
 export function parseCrl(input: Uint8Array | string): Crl {
   const der = typeof input === 'string' ? decodeCrlText(input)
     : input[0] === 0x2d ? decodeCrlText(new TextDecoder().decode(input)) : input; // '-': PEM bytes
-  const root = readTlv(der, 0);
-  const [tbsT, sigAlgT, sigT] = children(der, root) as [Tlv, Tlv, Tlv];
-  const parts = children(der, tbsT);
+  const outer = sequence(der, readSingle(der, 'CRL'), 'CertificateList');
+  if (outer.length !== 3) throw new Error('DER: a CRL is exactly tbsCertList, signatureAlgorithm and signatureValue');
+  const [tbsT, sigAlgT, sigT] = outer as [Tlv, Tlv, Tlv];
+  const parts = sequence(der, tbsT, 'tbsCertList');
   let i = 0;
-  if (parts[0]?.tag === 0x02) i++; // version
-  i++; // inner signature algorithm
-  const issuerT = parts[i++]!;
+  let version = 1;
+  if (parts[0]?.tag === TAG.integer) {
+    version = smallInteger(der, parts[i++], 'CRL version') + 1;
+    if (version !== 2) throw new Error(`Unsupported CRL version ${version}`);
+  }
+  const innerAlgT = expectTag(parts[i++], TAG.sequence, 'tbsCertList signature');
+  const issuerT = expectTag(parts[i++], TAG.sequence, 'CRL issuer');
+  if (!isTime(parts[i])) throw new Error('DER: CRL thisUpdate is missing');
   const thisUpdate = parseTime(der, parts[i++]!);
   const nextUpdate = isTime(parts[i]) ? parseTime(der, parts[i++]!) : undefined;
-  const sigAlgParts = children(der, sigAlgT);
+  const sigAlg = parseAlgorithm(der, sigAlgT, 'signatureAlgorithm');
+  if (!bytesEqual(slice(der, innerAlgT), slice(der, sigAlgT))) {
+    throw new Error('CRL signature algorithm inside tbsCertList differs from the outer signatureAlgorithm');
+  }
   const crl: Crl = {
     der, tbs: slice(der, tbsT),
-    signatureAlgorithm: decodeOid(value(der, sigAlgParts[0]!)),
-    signatureParams: sigAlgParts[1] && sigAlgParts[1].tag !== 0x05 ? slice(der, sigAlgParts[1]) : undefined,
-    signature: value(der, sigT).subarray(1),
+    signatureAlgorithm: sigAlg.oid,
+    signatureParams: sigAlg.params,
+    signature: octetAlignedBitString(der, sigT, 'signatureValue'),
     issuer: parseName(der, issuerT), issuerRaw: slice(der, issuerT),
     thisUpdate, nextUpdate, entries: new Map(), delta: false, unsupportedCritical: [],
   };
-  if (parts[i]?.tag === 0x30) {
+  if (parts[i]?.tag === TAG.sequence) {
     for (const entry of children(der, parts[i++]!)) {
-      const [serialT, dateT, extsT] = children(der, entry) as [Tlv, Tlv, Tlv | undefined];
-      const e: CrlEntry = { revokedAt: parseTime(der, dateT), certificateIssuer: false };
-      for (const [oid, , octets] of extensions(der, extsT)) {
-        if (oid === CRL_OID.reasonCode) e.reason = value(octets, readTlv(octets, 0))[0];
-        if (oid === CRL_OID.certificateIssuer) e.certificateIssuer = true;
+      const fields = sequence(der, entry, 'revoked certificate');
+      if (fields.length < 2 || fields.length > 3) throw new Error('DER: malformed revoked certificate entry');
+      const serial = normalizeSerial(toHex(integerBytes(der, fields[0], 'revoked serial number')));
+      const e: CrlEntry = { revokedAt: parseTime(der, fields[1]!), certificateIssuer: false };
+      if (fields[2]) {
+        if (version < 2) throw new Error('A version 1 CRL cannot have entry extensions');
+        for (const ext of readExtensions(der, fields[2], 'CRL entry')) {
+          if (ext.oid === CRL_OID.reasonCode) e.reason = smallInteger(ext.value, readSingle(ext.value, 'reasonCode'), 'reasonCode', TAG.enumerated);
+          if (ext.oid === CRL_OID.certificateIssuer) e.certificateIssuer = true;
+          if (ext.critical && !KNOWN_ENTRY_EXTENSIONS.has(ext.oid) && !crl.unsupportedCritical.includes(ext.oid)) crl.unsupportedCritical.push(ext.oid);
+        }
       }
-      crl.entries.set(normalizeSerial(toHex(value(der, serialT))), e);
+      const listed = crl.entries.get(serial);
+      if (listed) crl.duplicateSerials = true;
+      if (!listed || gravity(e) > gravity(listed)) crl.entries.set(serial, e);
     }
   }
-  const extWrapper = parts.slice(i).find((t) => t.tag === 0xa0);
-  for (const [oid, critical, octets] of extensions(der, extWrapper ? children(der, extWrapper)[0] : undefined)) {
-    const t = readTlv(octets, 0);
-    if (oid === CRL_OID.crlNumber) crl.crlNumber = bytesToBigInt(value(octets, t)).toString();
-    else if (oid === OID.authorityKeyIdentifier) {
-      const kid = children(octets, t).find((p) => p.tag === 0x80);
-      if (kid) crl.authorityKeyIdentifier = base64UrlEncode(value(octets, kid));
-    } else if (oid === CRL_OID.issuingDistributionPoint) crl.issuingDistributionPoint = parseIdp(octets, t);
-    else if (oid === CRL_OID.deltaCrlIndicator) crl.delta = true;
-    if (critical && !KNOWN_CRL_EXTENSIONS.has(oid)) crl.unsupportedCritical.push(oid);
+  if (parts[i]?.tag === 0xa0) {
+    if (version < 2) throw new Error('A version 1 CRL cannot have extensions');
+    const wrapper = children(der, parts[i++]!);
+    if (wrapper.length !== 1) throw new Error('DER: malformed CRL extensions');
+    for (const ext of readExtensions(der, wrapper[0]!, 'CRL')) {
+      const d = ext.value;
+      if (ext.oid === CRL_OID.crlNumber) crl.crlNumber = unsignedInteger(d, readSingle(d, 'cRLNumber'), 'cRLNumber').toString();
+      else if (ext.oid === OID.authorityKeyIdentifier) {
+        const kid = sequence(d, readSingle(d, 'authorityKeyIdentifier'), 'authorityKeyIdentifier').find((p) => p.tag === 0x80);
+        if (kid) crl.authorityKeyIdentifier = base64UrlEncode(value(d, kid));
+      } else if (ext.oid === CRL_OID.issuingDistributionPoint) crl.issuingDistributionPoint = parseIdp(d, readSingle(d, 'issuingDistributionPoint'));
+      else if (ext.oid === CRL_OID.deltaCrlIndicator) crl.delta = true;
+      if (ext.critical && !KNOWN_CRL_EXTENSIONS.has(ext.oid) && !crl.unsupportedCritical.includes(ext.oid)) crl.unsupportedCritical.push(ext.oid);
+    }
   }
+  if (i !== parts.length) throw new Error('DER: unexpected element in tbsCertList');
   return crl;
 }
 
-/** [oid, critical, extnValue octets] for each extension of an Extensions SEQUENCE. */
-function extensions(der: Uint8Array, seq?: Tlv): Array<[string, boolean, Uint8Array]> {
-  if (!seq) return [];
-  return children(der, seq).map((ext) => {
-    const p = children(der, ext);
-    const critical = p.length === 3 && p[1]!.tag === 0x01 && value(der, p[1]!)[0] !== 0;
-    return [decodeOid(value(der, p[0]!)), critical, value(der, p[p.length - 1]!)];
-  });
-}
-
+/**
+ * IssuingDistributionPoint (RFC 5280 §5.2.5): distributionPoint [0], onlyContainsUserCerts [1], onlyContainsCACerts
+ * [2], onlySomeReasons [3], indirectCRL [4], onlyContainsAttributeCerts [5], each at most once and in this order.
+ */
 function parseIdp(d: Uint8Array, seq: Tlv): IssuingDistributionPoint {
-  const flag = (tag: number) => { const f = children(d, seq).find((p) => p.tag === tag); return !!f && value(d, f)[0] !== 0; };
-  return {
-    uris: distributionPointUris(d, seq),
-    onlyContainsUserCerts: flag(0x81), onlyContainsCACerts: flag(0x82),
-    onlySomeReasons: children(d, seq).some((p) => p.tag === 0x83),
-    indirectCRL: flag(0x84), onlyContainsAttributeCerts: flag(0x85),
-  };
+  const idp: IssuingDistributionPoint = { uris: [], onlyContainsUserCerts: false, onlyContainsCACerts: false, onlySomeReasons: false,
+    indirectCRL: false, onlyContainsAttributeCerts: false };
+  let last = -1;
+  for (const p of sequence(d, seq, 'issuingDistributionPoint')) {
+    const n = p.tag === 0xa0 ? 0 : p.tag >= 0x81 && p.tag <= 0x85 ? p.tag - 0x80 : -1;
+    if (n <= last) throw new Error('DER: unexpected element in issuingDistributionPoint');
+    last = n;
+    if (n === 0) {
+      const name = distributionPointName(d, p);
+      idp.uris = name.uris;
+      if (name.otherNames) idp.unsupportedName = true;
+    } else if (n === 3) idp.onlySomeReasons = true;
+    else {
+      const flag = booleanValue(d, p, 'issuingDistributionPoint flag', p.tag);
+      if (n === 1) idp.onlyContainsUserCerts = flag;
+      else if (n === 2) idp.onlyContainsCACerts = flag;
+      else if (n === 4) idp.indirectCRL = flag;
+      else idp.onlyContainsAttributeCerts = flag;
+    }
+  }
+  return idp;
 }
 
 export function decodeCrlText(text: string): Uint8Array {

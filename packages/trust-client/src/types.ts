@@ -1,18 +1,19 @@
-/** Wire types of the VC Trust Service API (camelCase JSON) plus client-side provenance. */
+/** Wire types of the trust service API (camelCase JSON) plus client-side provenance. */
 import type { Jwk } from './crypto/keys.js';
 
 export type Decision = 'TRUSTED' | 'NOT_TRUSTED' | 'UNKNOWN';
 export type Severity = 'ERROR' | 'WARNING' | 'INFO';
 /**
- * Who made a trust decision: the trust service ('service' mode), or this device from the verified trust snapshot
- * ('snapshot'), or this device with only app-bundled anchors because no usable snapshot exists ('fallback').
+ * What a trust decision rests on. Decisions are always made on this device: from the verified trust snapshot
+ * ('snapshot'), or from the trust pinned in the app because no usable snapshot exists ('pinned').
  */
-export type DecisionSource = 'trust-service' | 'snapshot' | 'fallback';
+export type DecisionSource = 'snapshot' | 'pinned';
 /**
- * Where data (metadata, DID documents) came from: the service, the local cache, the trust snapshot, the party
- * itself by standard means as the normal path ('direct'), or by standard means because the service was down ('fallback').
+ * Where a document (metadata, DID document, CRL, status list, JSON-LD context) came from: the trust snapshot, the
+ * service's proxy, the party itself by the standard mechanism as the configured path ('direct') or because the
+ * proxy could not serve it ('fallback'), or this device's cache.
  */
-export type DataSource = 'trust-service' | 'cache' | 'snapshot' | 'direct' | 'fallback';
+export type DataSource = 'snapshot' | 'proxy' | 'direct' | 'fallback' | 'cache';
 export type Role = 'issuer' | 'verifier' | 'wallet_provider' | 'authorization_server' | 'status_list_provider';
 
 export interface ValidationIssue {
@@ -153,7 +154,8 @@ export interface TrustDecision {
 }
 
 export interface SnapshotRef {
-  version: number;
+  /** identifies the snapshot's content (the service's ETag digest) */
+  id: string;
   issuedAt: string;
   expiresAt: string;
   /** past its expiry, within the allowed grace period */
@@ -235,7 +237,6 @@ export interface Page<T> {
   total: number;
   page: number;
   size: number;
-  registryVersion: number;
 }
 
 export interface ServiceDiscovery {
@@ -263,4 +264,5 @@ export interface ServiceStatusEvent {
   reason?: string;
 }
 
-export type ServiceStatus = 'unknown' | 'online' | 'offline';
+/** 'unconfigured': no trust service; 'unknown': not contacted yet. */
+export type ServiceStatus = 'unconfigured' | 'unknown' | 'online' | 'offline';

@@ -64,18 +64,13 @@ export function findVerificationMethod(doc: DidDocument, didUrl: string): Verifi
   return allMethods(doc).find((vm) => absolute(doc.id, vm.id) === target);
 }
 
-/**
- * Whether the method is listed in a verification relationship. {@code lenient} additionally accepts
- * relationships that list the bare DID (seen in the wild, e.g. MOSIP Inji Certify).
- */
-export function hasRelationship(doc: DidDocument, relationship: string, didUrl: string, lenient = false): 'yes' | 'lenient' | 'no' {
+/** Whether the verification method is listed in a verification relationship, by reference or embedded (DID Core §5.3). */
+export function hasRelationship(doc: DidDocument, relationship: string, didUrl: string): boolean {
   const target = absolute(doc.id, didUrl);
   const rel = doc[relationship];
-  if (!Array.isArray(rel)) return 'no';
-  for (const e of rel) {
+  if (!Array.isArray(rel)) return false;
+  return rel.some((e) => {
     const ref = typeof e === 'string' ? e : (e as VerificationMethod)?.id;
-    if (ref && absolute(doc.id, ref) === target) return 'yes';
-  }
-  if (lenient && rel.some((e) => e === doc.id)) return 'lenient';
-  return 'no';
+    return !!ref && absolute(doc.id, ref) === target;
+  });
 }

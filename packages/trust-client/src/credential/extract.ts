@@ -104,15 +104,16 @@ function mostSpecific(types: string[]): string | undefined {
 }
 
 /**
- * Builds the issuer trust query for a credential. The identifier inside the credential ({@code issuer} /
- * {@code iss}) takes precedence so that a credential cannot borrow trust from the endpoint that delivered it;
- * {@code credentialIssuer} (the OpenID4VCI issuer) is used when the credential names no issuer (mdoc).
+ * The issuer trust query for a credential: the key its signature is verified with, and the issuer the credential
+ * itself names ({@code issuer} / {@code iss}), which the evaluator accepts only when that key is bound to it. Where
+ * the credential came from (the OpenID4VCI issuer that delivered it) is not part of the query: a credential is
+ * trusted for its own signer, and never borrows trust from the endpoint it was fetched from.
  */
-export function issuerTrustQuery(info: IssuerInfo, credentialIssuer?: string, protocol = 'oid4vci'): TrustQuery {
+export function issuerTrustQuery(info: IssuerInfo, protocol = 'oid4vci'): TrustQuery {
   return {
     role: 'issuer',
     // Only the key the signature is verified with: the x5c leaf when there is one (SD-JWT VC, JWT VC), else the DID key.
-    subject: { identifier: info.issuer ?? credentialIssuer, x5c: info.x5c,
+    subject: { identifier: info.issuer, x5c: info.x5c,
       kid: !info.x5c?.length && info.kid?.startsWith('did:') ? info.kid : undefined },
     // A W3C VC asserts all its types: each specific one must be authorized, not only the first.
     context: { protocol, credentialFormat: info.format, credentialType: info.credentialType,

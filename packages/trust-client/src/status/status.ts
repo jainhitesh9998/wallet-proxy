@@ -81,7 +81,17 @@ export type ListCredentialVerifier = (vc: Record<string, unknown>) => Promise<{ 
 const MAX_TTL_MS = 3600_000;
 /** reuse of a list that states no ttl */
 const DEFAULT_TTL_MS = 5 * 60_000;
-const via = (l: FetchedStatusList) => (l.source === 'trust-service' ? ' (via the trust service relay)' : l.source === 'cache' ? ' (cached)' : '');
+/**
+ * How long a status list that states no end of validity (a Token Status List without {@code exp}, a Bitstring Status
+ * List credential without {@code validUntil}) is accepted after its {@code iat} / {@code validFrom}. Without a limit
+ * an old list, from before a revocation, could be replayed forever.
+ */
+export const MAX_STATUS_LIST_AGE_MS = 7 * 24 * 3600_000;
+/** W3C Bitstring Status List v1.0, section 3.2 (Validate Algorithm): the minimum number of entries of a list. */
+export const MIN_BITSTRING_ENTRIES = 131_072;
+const CLOCK_SKEW_MS = 300_000;
+const days = (ms: number) => ms / (24 * 3600_000);
+const via = (l: FetchedStatusList) => (l.source === 'proxy' ? ' (via the trust service relay)' : l.source === 'cache' ? ' (cached)' : '');
 const unknown = (detail: string): StatusResult => ({ status: 'unknown', detail });
 
 // ---- IETF Token Status List ----------------------------------------------------------------------------------
@@ -100,7 +110,7 @@ interface ParsedTokenList {
 
 /** Values: 0 VALID, 1 INVALID, 2 SUSPENDED, others application-specific; {@code bits} per entry, LSB first. */
 export async function checkTokenStatus(ref: TokenStatusReference, ctx: StatusContext, form: 'jwt' | 'cwt' = 'jwt'): Promise<StatusResult> {
-  if (!ref?.uri || !Number.isInteger(ref.idx) || ref.idx < 0) return unknown('Malformed status_list reference');
+  if (!ref?.uri || !Number.isSafeInteger(ref.idx) || ref.idx < 0) return unknown('Malformed status_list reference');
   let fetched: FetchedStatusList;
   try {
     fetched = await ctx.fetchList(ref.uri, form === 'cwt' ? 'application/statuslist+cwt, application/statuslist+jwt;q=0.5'
@@ -127,15 +137,29 @@ export async function checkTokenStatus(ref: TokenStatusReference, ctx: StatusCon
     if (!signer.ok) return unknown(`Status list signer not trusted: ${signer.detail}`);
     if (list.sub !== ref.uri) return unknown('Status list sub does not match uri');
     const now = Math.floor((ctx.now ?? new Date()).getTime() / 1000);
+    for (const [name, v] of [['exp', list.exp], ['iat', list.iat], ['ttl', list.ttl]] as const) {
+      if (v !== undefined && !Number.isFinite(v)) return unknown(`Status list token has an invalid ${name}`);
+    }
     if (list.exp !== undefined && list.exp < now) return unknown(`Status list token expired at ${new Date(list.exp * 1000).toISOString()}`);
-    if (list.iat !== undefined && list.iat > now + 300) return unknown('Status list token is issued in the future');
+    if (list.iat !== undefined && list.iat > now + CLOCK_SKEW_MS / 1000) return unknown('Status list token is issued in the future');
+    // No exp: the list is accepted for a limited time after it was issued, and not at all when it does not say when.
+    let remainingMs = list.exp !== undefined ? (list.exp - now) * 1000 : MAX_TTL_MS;
+    if (list.exp === undefined) {
+      if (list.iat === undefined) return unknown('Status list token states neither exp nor iat, so its age cannot be established');
+      remainingMs = list.iat * 1000 + MAX_STATUS_LIST_AGE_MS - now * 1000;
+      if (remainingMs < 0) {
+        return unknown(`Status list token has no exp and was issued more than ${days(MAX_STATUS_LIST_AGE_MS)} days ago (${new Date(list.iat * 1000).toISOString()})`);
+      }
+    }
     if (![1, 2, 4, 8].includes(list.bits)) return unknown(`Status list has an invalid bits value ${list.bits}`);
     const data = inflateCapped(list.lst, 'zlib');
-    const pos = ref.idx * list.bits;
-    if ((pos >> 3) >= data.length) return unknown('Status index out of bounds');
-    const value = (data[pos >> 3]! >> (pos & 7)) & ((1 << list.bits) - 1);
-    const ttlMs = Math.min(MAX_TTL_MS, list.ttl !== undefined ? list.ttl * 1000 : DEFAULT_TTL_MS,
-      list.exp !== undefined ? (list.exp - now) * 1000 : MAX_TTL_MS);
+    // Plain arithmetic on safe integers, bounds first: shifts and multiplications would wrap at 32 bits, and an
+    // index beyond the list would then read some other entry.
+    const perByte = 8 / list.bits;
+    const byteIndex = Math.floor(ref.idx / perByte);
+    if (byteIndex >= data.length) return unknown('Status index out of bounds');
+    const value = (data[byteIndex]! >> ((ref.idx % perByte) * list.bits)) & ((1 << list.bits) - 1);
+    const ttlMs = Math.min(MAX_TTL_MS, list.ttl !== undefined ? list.ttl * 1000 : DEFAULT_TTL_MS, remainingMs);
     const how = `statuslist+${list.form}, signer ${signer.detail}${via(fetched)}`;
     if (value === 0) return { status: 'valid', detail: `Index ${ref.idx}: VALID (${how})`, value, ttlMs };
     if (value === 1) return { status: 'revoked', detail: `Index ${ref.idx}: INVALID (${how})`, value, ttlMs };
@@ -206,17 +230,44 @@ function anchorCertificate(d?: TrustDecision | null): string | undefined {
 
 // ---- W3C Bitstring Status List -------------------------------------------------------------------------------
 
+/** A non-negative integer given as a number or, as the W3C data model writes indexes, as a base-10 string. */
+function nonNegativeInteger(v: unknown): number | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && /^(0|[1-9][0-9]*)$/.test(v) ? Number(v) : NaN;
+  return Number.isSafeInteger(n) && n >= 0 ? n : undefined;
+}
+
+const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
+
+/** A date-time string of a credential as epoch milliseconds: undefined when absent, NaN when it is not a date. */
+function dateTime(v: unknown): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  return typeof v === 'string' ? Date.parse(v) : NaN;
+}
+
 /**
- * A {@code BitstringStatusListEntry} (or the older {@code StatusList2021Entry}). The list credential must verify
- * ({@code verifyListCredential}), come from the credential's issuer, carry the entry's purpose and be within its
- * validity period. {@code statusSize} > 1 entries ({@code statusPurpose: 'message'}) report the value as unknown.
+ * A {@code BitstringStatusListEntry} (W3C Bitstring Status List v1.0) or the older {@code StatusList2021Entry}.
+ *
+ * The list is a credential anyone can serve, so it counts only when it is verified: {@code verifyListCredential}
+ * (its proof) and {@code issuer} (who must have issued it: the credential's issuer) are both required, and without
+ * them the answer is {@code unknown}. The list must then be a status list of the entry's kind, carry the entry's
+ * {@code statusPurpose}, be within its validity period (or, when it states no end, not older than
+ * {@link MAX_STATUS_LIST_AGE_MS}), and hold at least {@link MIN_BITSTRING_ENTRIES} entries.
+ * {@code statusSize} > 1 entries ({@code statusPurpose: 'message'}) report the value as unknown.
  */
 export async function checkBitstringStatus(entry: Record<string, unknown>, ctx: StatusContext & { verifyListCredential?: ListCredentialVerifier }): Promise<StatusResult> {
-  const url = String(entry.statusListCredential ?? '');
-  const index = Number(entry.statusListIndex);
-  const purpose = String(entry.statusPurpose ?? 'revocation');
-  const size = Number(entry.statusSize ?? 1);
-  if (!url || !Number.isInteger(index) || index < 0 || !Number.isInteger(size) || size < 1) return unknown('Malformed status entry');
+  const url = typeof entry?.statusListCredential === 'string' ? entry.statusListCredential : '';
+  const index = nonNegativeInteger(entry?.statusListIndex);
+  const size = entry?.statusSize === undefined ? 1 : nonNegativeInteger(entry.statusSize);
+  const entryTypes = asList(entry?.type);
+  const kind = entryTypes.includes('BitstringStatusListEntry') ? 'BitstringStatusList' : entryTypes.includes('StatusList2021Entry') ? 'StatusList2021' : undefined;
+  if (!url || index === undefined || size === undefined || size < 1 || size > 32) return unknown('Malformed status entry');
+  if (!kind) return unknown('Malformed status entry: its type is not BitstringStatusListEntry');
+  const purpose = entry.statusPurpose;
+  if (typeof purpose !== 'string' || purpose === '') return unknown('Malformed status entry: it has no statusPurpose');
+  if (!ctx?.verifyListCredential || !ctx.issuer) {
+    const missing = [!ctx?.verifyListCredential ? 'a verifier for the list credential\'s proof' : '', !ctx?.issuer ? 'the issuer the list must come from' : ''].filter(Boolean).join(' and ');
+    return unknown(`Status list ${url} could not be verified: ${missing} was not supplied`);
+  }
   let fetched: FetchedStatusList;
   try {
     fetched = await ctx.fetchList(url, 'application/vc+ld+json, application/vc, application/ld+json, application/json');
@@ -225,32 +276,42 @@ export async function checkBitstringStatus(entry: Record<string, unknown>, ctx: 
   }
   try {
     const list = JSON.parse(utf8Decode(fetched.body)) as Record<string, unknown> & { credentialSubject?: Record<string, unknown> };
-    if (ctx.verifyListCredential) {
-      const v = await ctx.verifyListCredential(list);
-      if (!v.ok) return unknown(`Status list credential ${url} does not verify: ${v.detail}`);
-    }
+    if (list === null || typeof list !== 'object' || Array.isArray(list)) return unknown(`Status list ${url} is not a credential`);
+    const v = await ctx.verifyListCredential(list);
+    if (!v.ok) return unknown(`Status list credential ${url} does not verify: ${v.detail}`);
     const listIssuer = typeof list.issuer === 'string' ? list.issuer : (list.issuer as { id?: string } | undefined)?.id;
-    if (ctx.issuer && listIssuer !== ctx.issuer) return unknown(`Status list is issued by ${listIssuer}, not by the credential issuer`);
-    const subject = list.credentialSubject ?? {};
-    const purposes = [subject.statusPurpose].flat().map(String);
-    if (subject.statusPurpose !== undefined && !purposes.includes(purpose)) {
-      return unknown(`Status list purpose ${purposes.join(',')} does not match ${purpose}`);
+    if (listIssuer !== ctx.issuer) return unknown(`Status list is issued by ${listIssuer}, not by the credential issuer`);
+    if (!asList(list.type).includes(`${kind}Credential`)) return unknown(`Status list ${url} is not a ${kind}Credential`);
+    const subject = list.credentialSubject;
+    if (subject === null || typeof subject !== 'object' || Array.isArray(subject)) return unknown(`Status list ${url} has no credentialSubject`);
+    if (!asList(subject.type).includes(kind)) return unknown(`Status list credentialSubject type is ${asList(subject.type).join(',') || 'missing'}, not ${kind}`);
+    const purposes = asList(subject.statusPurpose).filter((x): x is string => typeof x === 'string');
+    if (!purposes.includes(purpose)) return unknown(`Status list purpose ${purposes.join(',') || '(none)'} does not match ${purpose}`);
+    const now = (ctx.now ?? new Date()).getTime();
+    const until = dateTime(list.validUntil ?? list.expirationDate);
+    const from = dateTime(list.validFrom ?? list.issuanceDate);
+    if (Number.isNaN(until) || Number.isNaN(from)) return unknown('Status list has an invalid validity period');
+    if (until !== undefined && until < now) return unknown(`Status list expired ${String(list.validUntil ?? list.expirationDate)}`);
+    if (from !== undefined && from > now + CLOCK_SKEW_MS) return unknown('Status list is not yet valid');
+    // No end of validity: the list is accepted for a limited time after validFrom, and not at all when it has neither.
+    let remainingMs = until !== undefined ? until - now : MAX_TTL_MS;
+    if (until === undefined) {
+      if (from === undefined) return unknown('Status list states neither validUntil nor validFrom, so its age cannot be established');
+      remainingMs = from + MAX_STATUS_LIST_AGE_MS - now;
+      if (remainingMs < 0) return unknown(`Status list has no validUntil and is valid from more than ${days(MAX_STATUS_LIST_AGE_MS)} days ago (${new Date(from).toISOString()})`);
     }
-    const now = ctx.now ?? new Date();
-    const until = list.validUntil ?? list.expirationDate;
-    if (until && new Date(String(until)) < now) return unknown(`Status list expired ${String(until)}`);
-    const from = list.validFrom ?? list.issuanceDate;
-    if (from && new Date(String(from)).getTime() > now.getTime() + 300_000) return unknown('Status list is not yet valid');
     const encoded = subject.encodedList;
     if (typeof encoded !== 'string') return unknown('Status list has no encodedList');
     const raw = inflateCapped(base64UrlDecode(encoded.startsWith('u') ? encoded.slice(1) : encoded), 'gzip');
+    const entries = Math.floor((raw.length * 8) / size);
+    if (entries < MIN_BITSTRING_ENTRIES) return unknown(`Status list has ${entries} entries, fewer than the minimum of ${MIN_BITSTRING_ENTRIES}`);
+    // Bounds before any arithmetic on the index: index * size must not leave the safe integer range.
+    if (index >= entries) return unknown('Status index out of bounds');
     const bitPos = index * size;
-    if (((bitPos + size - 1) >> 3) >= raw.length) return unknown('Status index out of bounds');
     let value = 0;
-    for (let i = 0; i < size; i++) value = (value << 1) | ((raw[(bitPos + i) >> 3]! >> (7 - ((bitPos + i) & 7))) & 1);
-    const ttlMs = Math.min(MAX_TTL_MS, typeof subject.ttl === 'number' ? subject.ttl : DEFAULT_TTL_MS,
-      until ? new Date(String(until)).getTime() - now.getTime() : MAX_TTL_MS);
-    const checked = ctx.verifyListCredential ? ', list proof verified' : '';
+    for (let i = 0; i < size; i++) value = value * 2 + ((raw[Math.floor((bitPos + i) / 8)]! >> (7 - ((bitPos + i) % 8))) & 1);
+    const ttlMs = Math.min(MAX_TTL_MS, typeof subject.ttl === 'number' && subject.ttl >= 0 ? subject.ttl : DEFAULT_TTL_MS, remainingMs);
+    const checked = ', list proof verified';
     if (size > 1 || purpose === 'message') return { status: 'unknown', detail: `Status message ${value} at ${index} in ${url}${via(fetched)}`, value, ttlMs };
     if (value) return { status: purpose === 'suspension' ? 'suspended' : 'revoked', detail: `Bit ${index} set in ${url} (${purpose}${checked})${via(fetched)}`, value, ttlMs };
     return { status: 'valid', detail: `Bit ${index} clear in ${url} (${purpose}${checked})${via(fetched)}`, value, ttlMs };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCertificate, validateCertificateChain, extractIssuerInfo, type LocalAnchor } from '../src/index.js';
+import { parseCertificate, validateCertificateChain, extractIssuerInfo, type LocalAnchor } from '../src/primitives.js';
 import { b64, fixture, pem } from './helpers.js';
 
 const anchor = (name: string, domain: string, constraints: Record<string, unknown> = {}): LocalAnchor =>
@@ -23,7 +23,7 @@ describe('certificate parsing', () => {
   });
 
   it('parses the real Animo playground IACA', () => {
-    const c = parseCertificate(new Uint8Array(fixture('animo-root.der')));
+    const c = parseCertificate(new Uint8Array(fixture('animo-root-2024.der')));
     // RFC 4514 renders RDNs in reverse DER order; this certificate encodes CN before C.
     expect(c.subject).toBe('C=NL,CN=Animo');
     expect(c.basicConstraints).toEqual({ ca: true, pathLen: 0 });
@@ -76,17 +76,22 @@ describe('local path validation', () => {
     expect(r.valid).toBe(false);
   });
 
-  it('validates the real MOSIP collab mDL signer (RSA root) only with the relaxed profile', () => {
-    const sample = JSON.parse(fixture('MockMdl-DrivingLicenseCredential.json').toString());
+  it('finds the anchor of the real MOSIP collab mDL signer (RSA root) and reports its profile violations as errors', () => {
+    const sample = JSON.parse(fixture('mosip-mock-mdl.json').toString());
     const info = extractIssuerInfo(sample.credentials?.[0]?.credential ?? sample.credential, 'mso_mdoc');
-    const root = fixture('MockMdl-issuer-root-ca.pem').toString();
+    const root = fixture('mosip-mock-mdl-root.pem').toString();
     const strict = validateCertificateChain(info.x5c!, [{ certificate: parseCertificate(root), domain: 'mdoc-iaca' }], { domain: 'mdoc-iaca' });
     expect(strict.anchorFound).toBe(true);
     expect(strict.valid).toBe(false);
     expect(strict.issues.map((i) => i.code)).toEqual(expect.arrayContaining(['mdoc.ds.eku', 'mdoc.ds.is_ca']));
-    const relaxed = validateCertificateChain(info.x5c!, [{ certificate: parseCertificate(root), domain: 'mdoc-iaca', constraints: { relaxProfile: true } }], { domain: 'mdoc-iaca' });
-    expect(relaxed.valid, JSON.stringify(relaxed.issues)).toBe(true);
-    expect(relaxed.issues.map((i) => i.code)).toContain('x509.profile_relaxed');
+    // There is no relaxed profile any more: an anchor constraint cannot turn profile errors into warnings.
+    const once = validateCertificateChain(info.x5c!, [{ certificate: parseCertificate(root), domain: 'mdoc-iaca', constraints: { relaxProfile: true } }], { domain: 'mdoc-iaca' });
+    expect(once.valid).toBe(false);
+    expect(once.issues.filter((i) => i.code.startsWith('mdoc.ds.')).every((i) => i.severity === 'ERROR')).toBe(true);
+    expect(once.issues.map((i) => i.code)).not.toContain('x509.profile_relaxed');
+    // Without a profile the path itself is sound.
+    const plain = validateCertificateChain(info.x5c!, [{ certificate: parseCertificate(root), domain: 'mdoc-iaca' }]);
+    expect(plain.valid, JSON.stringify(plain.issues)).toBe(true);
   });
 
   it('accepts base64 DER input', () => {

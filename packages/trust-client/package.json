@@ -1,7 +1,26 @@
 {
   "name": "@vctrust/trust-client",
   "version": "0.1.0",
-  "description": "Client for the VC Trust Service: issuer/verifier trust, metadata proxy, X.509 and DID resolution, with standards-based offline fallback",
+  "description": "The client library for the wallet proxy (trust service): trust decisions on the device from a signed snapshot, lookups through the proxy with standard mechanisms as fallback",
+  "license": "MIT",
+  "keywords": [
+    "openid4vci",
+    "openid4vp",
+    "verifiable-credentials",
+    "trust",
+    "mdoc",
+    "x509",
+    "wallet"
+  ],
+  "homepage": "https://github.com/jainhitesh9998/wallet-proxy/tree/main/packages/trust-client#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jainhitesh9998/wallet-proxy.git",
+    "directory": "packages/trust-client"
+  },
+  "bugs": {
+    "url": "https://github.com/jainhitesh9998/wallet-proxy/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,9 +30,15 @@
       "types": "./dist/index.d.ts",
       "react-native": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./primitives": {
+      "types": "./dist/primitives.d.ts",
+      "react-native": "./src/primitives.ts",
+      "import": "./dist/primitives.js"
     }
   },
   "files": [
+    "LICENSE",
     "dist",
     "src"
   ],
@@ -22,7 +47,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:live": "LIVE=1 vitest run"
+    "test:live": "LIVE=1 vitest run",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",
@@ -32,7 +58,6 @@
   "devDependencies": {
     "@types/node": "^22.20.5",
     "typescript": "~5.9.3",
-    "vitest": "^4.0.0",
-    "whatwg-url-minimum": "^0.2.0"
+    "vitest": "^4.0.0"
   }
 }

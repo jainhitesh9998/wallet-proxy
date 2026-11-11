@@ -2,9 +2,10 @@
 import { describe, expect, it } from 'vitest';
 import { createPrivateKey, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { bytes, createTrustClient } from '../src/index.js';
+import { createTrustClient } from '../src/index.js';
+import { bytes } from '../src/primitives.js';
 
-const PKI = new URL('./fixtures/pki/', import.meta.url);
+const PKI = new URL('../../../conformance/pki/', import.meta.url);
 const pem = (n: string) => readFileSync(new URL(`${n}.pem`, PKI), 'utf8');
 const b64 = (n: string) => pem(n).replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
 const enc = (o: unknown) => bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify(o)));
@@ -36,7 +37,7 @@ function client(serve: { jwt?: string }, signed: 'off' | 'verify' | 'require') {
     if (u === `${ISSUER}/.well-known/oauth-authorization-server`) return Response.json({ issuer: ISSUER, token_endpoint: `${ISSUER}/token` });
     return new Response('not found', { status: 404 });
   }) as typeof fetch;
-  const trust = createTrustClient({ fetch: f, issuerMetadata: { signed }, fallback: { localAnchors: [{ domain: 'credential-issuer', certificate: pem('rp-ca') }] } });
+  const trust = createTrustClient({ http: { fetch: f }, issuerMetadata: { signed }, pinned: { anchors: [{ domain: 'credential-issuer', certificate: pem('rp-ca') }] } });
   return { trust, accepts };
 }
 

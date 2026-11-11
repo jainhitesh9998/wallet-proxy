@@ -1,13 +1,14 @@
 /**
- * Parity between the two evaluators: the service's TrustEvaluator (POST /api/v1/evaluate) and the client's
- * device-side LocalEvaluator over the signed snapshot must reach the same decision, for the same reasons, about the
- * same entity, and the same revocation status for every certificate. Runs against the local trust service
- * (scripts/start-trust-server.sh) with test PKI registered through the admin API in the 'local' framework — the test
- * IACA with its CRL pushed — under a lenient (demo-wallet) and a strict (demo-verifier: strict authorization, revocation
- * status required, relaxed anchors not honoured) client profile.
+ * Parity between the two evaluators over a live service: the service's TrustEvaluator (POST /api/v1/evaluate) and
+ * this library's device-side evaluator over the signed snapshot must reach the same decision, for the same reasons,
+ * about the same entity, with the same revocation status for every certificate. Runs against the local trust service
+ * (scripts/start-trust-server.sh) with test PKI registered through the admin API in the 'local' framework (the test
+ * IACA with its CRL pushed), under a lenient (demo-wallet) and a strict (demo-verifier: strict authorization,
+ * revocation status required) client profile. The offline counterpart is vectors.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createTrustClient, parseCertificate, type TrustDecision, type TrustQuery } from '../src/index.js';
+import { createTrustClient, type TrustClient, type TrustDecision, type TrustQuery } from '../src/index.js';
+import { parseCertificate } from '../src/primitives.js';
 import { b64, fixture, pem } from './helpers.js';
 
 const BASE = process.env.TRUST_URL ?? 'http://localhost:8090';
@@ -16,7 +17,6 @@ const DID = 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK';
 const MDL = 'org.iso.18013.5.1.mDL';
 const ANIMO = 'https://playground.animo.id/oid4vci/b39e71cf-9cf1-4723-a9cd-66f42a510b36';
 const OTHER_DID = 'did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9';
-const FARMER_KID = 'did:web:inji.github.io:inji-config:collab:farmer#zZivrLb-k3GP7I1RFH1ZrAAMjggK8ohTpjr-q8GT3Sc';
 
 const managed = {
   anchors: {
@@ -24,8 +24,6 @@ const managed = {
       constraints: { docTypes: [MDL], crl: fixture('pki/iaca.crl').toString('base64') } },
     'parity-rp-ca': { domain: 'verifier-access', certificate: pem('rp-ca') },
     'parity-rsa-root': { domain: 'credential-issuer', entity: 'parity-rsa', certificate: pem('rsa-root') },
-    // A sandbox IACA the operator relaxed (like MOSIP's mock mDL): its non-ISO Document Signers pass only where relaxations are honoured.
-    'parity-sandbox-iaca': { domain: 'mdoc-iaca', entity: 'parity-sandbox', certificate: pem('rsa-root'), constraints: { relaxProfile: true } },
   },
   entities: {
     'parity-dmv': { roles: ['CREDENTIAL_ISSUER'], name: 'Parity DMV', identifiers: [{ type: 'URL', value: 'https://dmv.parity.example' }],
@@ -35,8 +33,7 @@ const managed = {
     'parity-open': { roles: ['CREDENTIAL_ISSUER'], name: 'No authorizations', identifiers: [{ type: 'URL', value: 'https://open.parity.example' }] },
     'parity-did': { roles: ['CREDENTIAL_ISSUER'], name: 'DID issuer', identifiers: [DID] },
     'parity-rsa': { roles: ['CREDENTIAL_ISSUER'], name: 'RSA issuer', identifiers: [{ type: 'URL', value: 'https://rsa.parity.example' }] },
-    'parity-sandbox': { roles: ['CREDENTIAL_ISSUER'], name: 'Sandbox issuer', identifiers: [{ type: 'URL', value: 'https://sandbox.parity.example' }],
-      authorizations: [{ format: 'mso_mdoc', type: MDL }] },
+    'parity-pinned': { roles: ['CREDENTIAL_ISSUER'], name: 'Pinned certificate', certificates: [pem('selfsigned-issuer')] },
   },
 };
 
@@ -58,20 +55,24 @@ const CASES: Array<[string, TrustQuery]> = [
   ['DS with a CRL distribution point, not revoked', issuer({ x5c: [b64(pem('ds-crldp'))] }, 'mso_mdoc', MDL)],
   ['DS with only an OCSP responder, covered by the IACA CRL', issuer({ x5c: [b64(pem('ds-ocsp'))] }, 'mso_mdoc', MDL)],
   ['issuer URL, authorized type', issuer({ identifier: 'https://dmv.parity.example' }, 'mso_mdoc', MDL)],
-  ['issuer URL written differently (case, default port, dot segment)', issuer({ identifier: 'HTTPS://DMV.Parity.Example:443/./' }, 'mso_mdoc', MDL)],
+  ['issuer URL written differently is another identifier', issuer({ identifier: 'https://dmv.parity.example/' }, 'mso_mdoc', MDL)],
   ['issuer URL, unauthorized type', issuer({ identifier: 'https://dmv.parity.example' }, 'dc+sd-jwt', 'urn:eudi:pid:1')],
   ['revoked issuer', issuer({ identifier: 'https://revoked.parity.example' })],
   ['issuer without authorizations (strict differs)', issuer({ identifier: 'https://open.parity.example' }, 'dc+sd-jwt', 'urn:eudi:pid:1')],
   ['DID issuer with key reference', issuer({ identifier: DID, kid: `${DID}#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK` }, 'ldp_vc')],
   ['DID issuer, key not in document', issuer({ identifier: DID, kid: `${DID}#missing` }, 'ldp_vc')],
   ['RSA x5c issuer', issuer({ x5c: [b64(pem('rsa-leaf'))] }, 'dc+sd-jwt')],
-  ['non-ISO DS under a relaxProfile anchor (strict refuses)', issuer({ x5c: [b64(pem('rsa-leaf'))] }, 'mso_mdoc', MDL)],
+  ['a certificate that is not a Document Signer, presented as one', issuer({ x5c: [b64(pem('rsa-leaf'))] }, 'mso_mdoc', MDL)],
+  ['pinned self-signed certificate', issuer({ x5c: [b64(pem('selfsigned-issuer'))] }, 'dc+sd-jwt')],
+  ['pinned certificate after its validity', issuer({ x5c: [b64(pem('selfsigned-issuer'))] }, 'dc+sd-jwt', undefined, { time: '2099-01-01T00:00:00Z' })],
   ['trusted_authorities aki', issuer({ x5c: [b64(pem('ds'))] }, 'mso_mdoc', MDL,
     { trustedAuthorities: [{ type: 'aki', values: [iaca.subjectKeyIdentifier!] }, { type: 'aki', values: ['bm9wZQ'] }] })],
   ['unknown issuer', issuer({ identifier: 'https://nobody.parity.example' })],
   ['verifier x509_hash', verifier(`x509_hash:${rp.sha256}`, [b64(pem('rp'))], 'https://verifier.example/post')],
   ['verifier x509_hash mismatch', verifier('x509_hash:AAAA', [b64(pem('rp'))], 'https://verifier.example/post')],
+  ['verifier x509_san_dns', verifier('x509_san_dns:verifier.example', [b64(pem('rp'))], 'https://verifier.example/post')],
   ['verifier x509_san_dns, other response_uri host', verifier('x509_san_dns:verifier.example', [b64(pem('rp'))], 'https://evil.example/post')],
+  ['verifier x509_san_dns, response_uri that is not a plain https URL', verifier('x509_san_dns:verifier.example', [b64(pem('rp'))], 'https://Verifier.example@evil.example/post')],
   ['verifier x509_san_dns, SAN mismatch', verifier('x509_san_dns:other.example', [b64(pem('rp'))], 'https://other.example/post')],
   ['verifier x509_hash without x5c', verifier(`x509_hash:${rp.sha256}`)],
   ['verifier redirect_uri', verifier('redirect_uri:https://rp.parity.example/cb')],
@@ -85,8 +86,6 @@ const CASES: Array<[string, TrustQuery]> = [
   ['certificate chain and a DID key together', { role: 'verifier', subject: { identifier: `x509_hash:${rp.sha256}`, x5c: [b64(pem('rp'))], kid: `${OTHER_DID}#0` },
     context: { protocol: 'oid4vp', responseUri: 'https://verifier.example/post' } }],
   ['live: Animo issuer metadata URL', issuer({ identifier: ANIMO }, 'mso_mdoc', MDL)],
-  ['live: MOSIP did:web issuer key', issuer({ identifier: 'https://injicertify-farmer.collab.mosip.net', kid: FARMER_KID }, 'ldp_vc', 'FarmerCredential')],
-  ['live: MOSIP did:web, unknown key', issuer({ identifier: 'https://injicertify-farmer.collab.mosip.net', kid: `${FARMER_KID.split('#')[0]}#rotated` }, 'ldp_vc')],
 ];
 
 async function admin(method: string, path: string, body?: unknown) {
@@ -107,6 +106,23 @@ function essence(d: TrustDecision) {
   };
 }
 
+const thumbprint = async () => ((await (await fetch(`${BASE}/.well-known/trust-service`)).json()) as { signing_key_thumbprint: string }).signing_key_thumbprint;
+const PROFILES = { 'demo-wallet': 'demo-wallet-key', 'demo-verifier': 'demo-verifier-key' } as const;
+
+async function device(clientId: keyof typeof PROFILES, unknownParties = false): Promise<TrustClient> {
+  const url = new URL(BASE);
+  return createTrustClient({ service: { url: BASE, clientId, apiKey: PROFILES[clientId], keys: { thumbprints: [await thumbprint()] } },
+    lookups: { unknownParties }, http: { insecureHosts: url.protocol === 'http:' ? [url.hostname] : [] } });
+}
+
+/** The service's own evaluation: the reference the device must agree with. */
+async function service(clientId: keyof typeof PROFILES, q: TrustQuery): Promise<TrustDecision> {
+  const r = await fetch(`${BASE}/api/v1/evaluate`, { method: 'POST', body: JSON.stringify(q),
+    headers: { Authorization: `Bearer ${PROFILES[clientId]}`, 'Content-Type': 'application/json' } });
+  if (!r.ok) throw new Error(`evaluate: ${r.status} ${await r.text()}`);
+  return await r.json() as TrustDecision;
+}
+
 describe('evaluator parity: service vs device', () => {
   beforeAll(async () => {
     for (const [id, e] of Object.entries(managed.entities)) await admin('PUT', `/admin/v1/managed/entities/${id}`, e);
@@ -118,17 +134,15 @@ describe('evaluator parity: service vs device', () => {
     for (const id of Object.keys(managed.entities)) await admin('DELETE', `/admin/v1/managed/entities/${id}`);
   });
 
-  for (const [clientId, apiKey] of [['demo-wallet', 'demo-wallet-key'], ['demo-verifier', 'demo-verifier-key']] as const) {
+  for (const clientId of ['demo-wallet', 'demo-verifier'] as const) {
     it(`${clientId}: same decisions on the device as in the service`, async () => {
-      const thumbprint = ((await (await fetch(`${BASE}/.well-known/trust-service`)).json()) as { signing_key_thumbprint: string }).signing_key_thumbprint;
       // The device also asks the service about parties missing from the snapshot, where the service's evaluator would.
-      const device = createTrustClient({ baseUrl: BASE, apiKey, clientId, serviceKeys: { thumbprints: [thumbprint] }, lookups: { unknownParties: true } });
-      const service = createTrustClient({ baseUrl: BASE, apiKey, clientId, decisions: 'service', serviceKeys: { thumbprints: [thumbprint] } });
-      await device.syncSnapshot();
+      const d = await device(clientId, true);
+      await d.sync();
       const rows: string[] = [];
       const mismatches: string[] = [];
       for (const [name, q] of CASES) {
-        const [s, l] = [essence(await service.evaluate(q)), essence(await device.evaluate(q))];
+        const [s, l] = [essence(await service(clientId, q)), essence(await d.evaluate(q))];
         const same = JSON.stringify(s) === JSON.stringify(l);
         rows.push(`${same ? '=' : '≠'} ${s.decision.padEnd(11)} ${name}${s.errors.length ? `  [${s.errors.join(', ')}]` : ''}`);
         if (!same) mismatches.push(`${name}\n  service: ${JSON.stringify(s)}\n  device:  ${JSON.stringify(l)}`);
@@ -139,11 +153,9 @@ describe('evaluator parity: service vs device', () => {
   }
 
   it('revocation: the IACA CRL ships in the snapshot; the strict profile requires a status', async () => {
-    const thumbprint = ((await (await fetch(`${BASE}/.well-known/trust-service`)).json()) as { signing_key_thumbprint: string }).signing_key_thumbprint;
-    const wallet = createTrustClient({ baseUrl: BASE, apiKey: 'demo-wallet-key', clientId: 'demo-wallet', serviceKeys: { thumbprints: [thumbprint] } });
-    const strict = createTrustClient({ baseUrl: BASE, apiKey: 'demo-verifier-key', clientId: 'demo-verifier', serviceKeys: { thumbprints: [thumbprint] } });
-    expect((await wallet.syncSnapshot()).crls.some((c) => c.crl.issuer === parseCertificate(pem('iaca')).subject)).toBe(true);
-    expect((await strict.syncSnapshot()).policy.requireRevocationStatus).toBe(true);
+    const [wallet, strict] = [await device('demo-wallet'), await device('demo-verifier')];
+    expect((await wallet.sync()).crls).toBeGreaterThan(0);
+    expect((await strict.sync()).requireRevocationStatus).toBe(true);
     const revoked = await wallet.evaluate(CASES.find(([n]) => n === 'DS revoked in the IACA CRL')![1]);
     expect(revoked.evidence?.x509?.revocation?.[0]).toMatchObject({ status: 'REVOKED', reason: 'keyCompromise', source: 'snapshot' });
     const rsa = CASES.find(([n]) => n === 'RSA x5c issuer')![1];
@@ -152,17 +164,8 @@ describe('evaluator parity: service vs device', () => {
   });
 
   it('the strict profile is enforced on the device too', async () => {
-    const thumbprint = ((await (await fetch(`${BASE}/.well-known/trust-service`)).json()) as { signing_key_thumbprint: string }).signing_key_thumbprint;
     const q = CASES.find(([n]) => n.startsWith('issuer without authorizations'))![1];
-    const wallet = createTrustClient({ baseUrl: BASE, apiKey: 'demo-wallet-key', clientId: 'demo-wallet', serviceKeys: { thumbprints: [thumbprint] } });
-    const strict = createTrustClient({ baseUrl: BASE, apiKey: 'demo-verifier-key', clientId: 'demo-verifier', serviceKeys: { thumbprints: [thumbprint] } });
-    expect((await wallet.evaluate(q)).decision).toBe('TRUSTED');
-    expect((await strict.evaluate(q)).decision).toBe('NOT_TRUSTED');
-    const relaxed = CASES.find(([n]) => n.startsWith('non-ISO DS under a relaxProfile anchor'))![1];
-    const lenient = await wallet.evaluate(relaxed);
-    expect(lenient.decision).toBe('TRUSTED');
-    expect(lenient.evidence?.x509?.issues.map((i) => i.code)).toContain('x509.profile_relaxed');
-    expect((await strict.evaluate(relaxed)).decision).not.toBe('TRUSTED');
-    expect((await strict.syncSnapshot()).policy.allowRelaxedProfiles).toBe(false);
+    expect((await (await device('demo-wallet')).evaluate(q)).decision).toBe('TRUSTED');
+    expect((await (await device('demo-verifier')).evaluate(q)).decision).toBe('NOT_TRUSTED');
   });
 });

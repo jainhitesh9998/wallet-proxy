@@ -1,8 +1,8 @@
 /**
- * Device-side trust evaluation with the service's semantics (TrustEvaluator), over the verified trust snapshot plus
- * app-provided anchors and entities. Used for every decision in 'local' mode, and when the service is unreachable
- * in 'service' mode. A decision can only be TRUSTED when backed by a verified snapshot or a pinned anchor;
- * otherwise it is UNKNOWN — missing data never upgrades an unknown party.
+ * Trust evaluation on the device, with the service's semantics (TrustEvaluator.java): the same rules over the same
+ * data give the same decision. The data is the verified trust snapshot, or, when no snapshot is usable, the trust
+ * pinned in the app. A decision can only be TRUSTED when the data vouches for the party; missing data yields
+ * UNKNOWN, never trust.
  */
 import { parseCertificate, type Certificate } from '../x509/certificate.js';
 import { validateCertificateChain, type LocalAnchor, type ValidateOptions } from '../x509/validate.js';
@@ -20,11 +20,9 @@ export interface LocalTrustData {
   /** CRLs held for revocation checks (the snapshot's anchor CRLs) */
   crls?: HeldCrl[];
   frameworks: TrustFramework[];
-  /** 'snapshot' when a verified snapshot backs the data; 'fallback' when only app-bundled anchors/entities exist */
-  source: 'snapshot' | 'fallback';
-  /** 'local': device-side decisions are the normal path; 'outage': the service (normally deciding) is unreachable */
-  mode: 'local' | 'outage';
-  policy?: { strictAuthorization?: boolean; requireRevocationStatus?: boolean; allowRelaxedProfiles?: boolean };
+  /** 'snapshot' when a verified snapshot backs the data; 'pinned' when only the trust bundled with the app does */
+  source: 'snapshot' | 'pinned';
+  policy?: { strictAuthorization?: boolean; requireRevocationStatus?: boolean };
   snapshot?: SnapshotRef | null;
   stale?: boolean;
   /**
@@ -36,25 +34,27 @@ export interface LocalTrustData {
 }
 
 /**
- * The key an identifier is matched by, as the service indexes it (Identifier.normalize): http(s) URLs as the WHATWG URL
- * parser reads them, one trailing slash stripped, no fragment or empty query. Shared vectors:
- * test-ecosystem/vectors/url-identifiers.json.
+ * The key an identifier is matched by. Identifiers are compared as the specifications compare them: URLs (credential
+ * issuer identifiers, client identifiers, federation entity identifiers) byte for byte, with no normalization
+ * (RFC 8414 section 3.3, OpenID4VCI 1.0 section 12.2.1); DNS names without regard to case; DIDs without a fragment.
+ * The service applies the same rule (Identifier.java), so a port in any language matches with a string comparison.
  */
-export function normalizeIdentifier(type: string, value: string): string {
-  value = value.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, ''); // as Java's String.trim()
-  if (type === 'URL' || type === 'FEDERATION_ENTITY') {
-    try {
-      const u = new URL(value);
-      if (u.protocol !== 'https:' && u.protocol !== 'http:') return value;
-      // '^' joined the path percent-encode set in 2024 (Expo's parser has it); older parsers, Node's among them, keep it.
-      return `${u.protocol}//${u.host}${u.pathname.replace(/\^/g, '%5E').replace(/\/$/, '')}${u.search}`;
-    } catch {
-      return value;
-    }
-  }
+export function identifierKey(type: string, value: string): string {
   if (type === 'DID') return value.split('#')[0]!;
   if (type === 'DNS') return value.toLowerCase();
   return value;
+}
+
+/** A plain https URL: lower-case host of letters, digits, '-' and '.', optional port, then path, query or nothing. */
+const PLAIN_HTTPS = /^https:\/\/([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::[0-9]{1,5})?(?:[/?#].*)?$/;
+
+/**
+ * The host of a plain https URL, or undefined for anything else (another scheme, upper-case or non-ASCII host,
+ * userinfo). Used where a host is compared with a certificate's dNSName; a URL this rule does not read is refused
+ * there, so every implementation reads the same host without a URL parser (Identifier.httpsHost on the service).
+ */
+export function httpsHost(url: string): string | undefined {
+  return PLAIN_HTTPS.exec(url)?.[1];
 }
 
 /**
@@ -63,7 +63,7 @@ export function normalizeIdentifier(type: string, value: string): string {
  */
 function onDemandIdentifier(i: { type: string; value: string }): boolean {
   if (i.type === 'DID') return !/^did:(key|jwk|peer):/.test(i.value);
-  return (i.type === 'URL' || i.type === 'FEDERATION_ENTITY') && /^https:\/\//i.test(i.value.trim());
+  return (i.type === 'URL' || i.type === 'FEDERATION_ENTITY') && i.value.startsWith('https://');
 }
 
 export function domainFor(role: TrustQuery['role'], format?: string): string {
@@ -105,7 +105,6 @@ export type CrlFetcher = (urls: string[], accept?: (url: string, crl: Crl) => bo
 export async function validateChainOnDevice(chain: Certificate[], anchors: LocalAnchor[], opts: ValidateOptions,
                                             data: Pick<LocalTrustData, 'crls' | 'policy'>, fetchCrls?: CrlFetcher) {
   const revocation = { crls: data.crls ?? [], require: data.policy?.requireRevocationStatus === true };
-  opts = { ...opts, allowRelaxedProfile: data.policy?.allowRelaxedProfiles !== false };
   const r = validateCertificateChain(chain, anchors, { ...opts, revocation });
   const urls = fetchCrls && r.anchorFound ? crlUrlsToFetch(chain, r.revocation) : [];
   if (urls.length === 0) return r;
@@ -117,44 +116,25 @@ export async function validateChainOnDevice(chain: Certificate[], anchors: Local
   return validateCertificateChain(chain, anchors, { ...opts, revocation: { ...revocation, crls: [...revocation.crls, ...got.crls], failures: got.failures } });
 }
 
-/** The URL class that passed the check (the global can be replaced, as Expo does at startup). */
-let checkedUrl: unknown;
-
-/**
- * Identifier matching and the response_uri check rely on a WHATWG URL parser. React Native's own URL class is a set of
- * regular expressions (no default-port, dot-segment or IDN handling, and "https://a\@b" reads as host b); Expo replaces
- * it with a WHATWG one, bare React Native needs a polyfill such as react-native-url-polyfill.
- */
-export function assertWhatwgUrl(): void {
-  if (checkedUrl === URL) return;
-  let ok = false;
-  try {
-    const u = new URL('HTTPS://A.Example:443/x/../y?');
-    ok = u.protocol === 'https:' && u.host === 'a.example' && u.pathname === '/y' && u.search === ''
-      && new URL('https://a.example\\@b.example/').host === 'a.example';
-  } catch { /* not a WHATWG parser */ }
-  if (ok) checkedUrl = URL;
-  else throw new Error('This runtime\'s URL class is not a WHATWG URL parser; install a URL polyfill (e.g. react-native-url-polyfill) before using the trust client');
-}
-
 export class LocalEvaluator {
   constructor(private readonly resolveDid: (did: string) => Promise<DidResolutionResult>, private readonly now: () => Date = () => new Date(),
-              private readonly fetchCrls?: CrlFetcher) {
-    assertWhatwgUrl();
-  }
+              private readonly fetchCrls?: CrlFetcher) {}
 
   async evaluate(q: TrustQuery, data: LocalTrustData): Promise<TrustDecision> {
-    assertWhatwgUrl();
     const time = q.context?.time ? new Date(q.context.time) : this.now();
     const reasons: Reason[] = [];
     // ids: proven by the presented key material; identIds: only claimed by the identifier (see the matching rules below)
     const ids: Array<{ type: string; value: string }> = [];
     const identIds: Array<{ type: string; value: string }> = [];
     const role = q.role;
-    const format = canonicalFormat(q.context?.credentialFormat) ?? undefined;
-    const type = q.context?.credentialType;
+    // An empty format or type is no format or type: the two evaluators must not read "" differently.
+    const format = canonicalFormat(q.context?.credentialFormat || undefined) ?? undefined;
+    const type = q.context?.credentialType || undefined;
+    // Every type the credential asserts must be authorized (a W3C VC may carry several).
+    const types = [...new Set([type, ...(q.context?.credentialTypes ?? [])].filter((t): t is string => typeof t === 'string' && t.trim() !== ''))];
     let expectedDns: string | undefined;
     let expectedHash: string | undefined;
+    let clientId: { prefix: string; value: string } | undefined;
     const ident = q.subject.identifier;
     if (ident) {
       if (role === 'verifier') {
@@ -163,6 +143,7 @@ export class LocalEvaluator {
         const prefix = known ? ident.slice(0, i) : 'pre-registered';
         const val = known ? ident.slice(i + 1) : ident;
         identIds.push({ type: 'CLIENT_ID', value: ident });
+        clientId = { prefix, value: val };
         if (prefix === 'x509_san_dns') { expectedDns = val; identIds.push({ type: 'DNS', value: val }); }
         else if (prefix === 'x509_hash') { expectedHash = val; identIds.push({ type: 'X509_SHA256', value: val }); }
         else if (prefix === 'decentralized_identifier') identIds.push({ type: 'DID', value: val });
@@ -174,7 +155,7 @@ export class LocalEvaluator {
           reasons.push({ code: 'client_id.x5c_required', message: `Client identifier prefix ${prefix} requires the request object's x5c chain`, severity: 'ERROR' });
         }
       } else if (ident.startsWith('did:')) identIds.push({ type: 'DID', value: ident });
-      else if (/^https?:\/\//i.test(ident)) identIds.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
+      else if (ident.startsWith('https://') || ident.startsWith('http://')) identIds.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
       else identIds.push({ type: 'CLIENT_ID', value: ident }, { type: 'OTHER', value: ident });
     }
     // A query names one key: the certificate's or the DID's. With both, the evaluator cannot tell which one the caller
@@ -232,17 +213,30 @@ export class LocalEvaluator {
       }
     }
 
-    // Matching. With key material (x5c, DID kid, JWK) the entity must be bound to that key: by the key's own identifiers,
-    // a pinned leaf certificate or the anchor's entity. The identifier alone is only a claim then; it counts when the
-    // validated anchor is not tied to one entity and belongs to the identified entity's framework. Without key material
-    // the identifier is a registry lookup (issuer metadata, or a key the caller fetched from that identifier).
+    // A client identifier the presented key itself proves is one of the key's identifiers, so a verifier registered by
+    // its client_id is found: x509_hash of the leaf certificate, x509_san_dns naming a dNSName of a validated leaf,
+    // decentralized_identifier of the key's DID.
+    if (clientId && ident) {
+      const leaf = chain[0];
+      const proven = clientId.prefix === 'x509_hash' ? !!leaf && leaf.sha256 === clientId.value
+        : clientId.prefix === 'x509_san_dns' ? !!leaf && x509?.valid === true && leaf.dnsNames.some((d) => d.toLowerCase() === clientId!.value.toLowerCase())
+          : clientId.prefix === 'decentralized_identifier' ? !!q.subject.kid?.startsWith('did:') && did === identifierKey('DID', clientId.value) : false;
+      if (proven) ids.push({ type: 'CLIENT_ID', value: ident });
+    }
+
+    // Matching. With key material (x5c, DID kid, JWK) an entity is found only through what that key proves: the key's
+    // own identifiers (a validated certificate's names, the DID of a DID key, a JWK thumbprint), a pinned leaf
+    // certificate, or the entity the validated anchor belongs to. The identifier in the query is then only a claim.
+    // Without key material the identifier is a registry lookup (issuer metadata, or a key the caller fetched from it).
     const matched: string[] = [];
+    // In the order of the identifiers asked about, as the service does: what is reported as matched is then the same.
     const lookup = (list: Array<{ type: string; value: string }>) => {
-      const keys = new Set(list.map((i) => `${i.type}|${normalizeIdentifier(i.type, i.value)}`));
       const hits: Array<{ e: EntityView; how: string }> = [];
-      for (const e of data.entities) {
-        const i = e.identifiers.find((x) => keys.has(`${x.type}|${normalizeIdentifier(x.type, x.value)}`));
-        if (i) hits.push({ e, how: `${i.type}:${i.value}` });
+      for (const id of list) {
+        const key = identifierKey(id.type, id.value);
+        for (const e of data.entities) {
+          if (e.identifiers.some((x) => x.type === id.type && identifierKey(x.type, x.value) === key)) hits.push({ e, how: `${id.type}:${key}` });
+        }
       }
       return hits;
     };
@@ -260,9 +254,10 @@ export class LocalEvaluator {
       if (anchor?.entityId) {
         const e = data.entities.find((x) => x.id === anchor!.entityId);
         if (e) take(e, `ANCHOR:${e.id}`, candidates);
-      } else if (anchor?.frameworkId && !candidates.some(hasRole)) {
-        // Only when the key's own names bind no entity in this role: a key bound to one entity is never another's.
-        byIdentifier.filter((h) => h.e.frameworkId === anchor!.frameworkId).forEach((h) => take(h.e, `${h.how} (anchor framework)`, candidates));
+      }
+      if (leaf && !anchor && candidates.length > 0 && (time < leaf.notBefore || time > leaf.notAfter)) {
+        // No anchor vouches for this certificate: it stands only as a registered pin, and then only while valid.
+        reasons.push({ code: 'x509.pinned_expired', message: `The pinned certificate is not valid at ${time.toISOString()}`, severity: 'ERROR' });
       }
     }
     if (keyMaterial) {
@@ -277,7 +272,7 @@ export class LocalEvaluator {
       // On-demand discovery follows the same rule: the key's identifiers, or the identifier without key material.
       const found = await data.onDemand((keyMaterial ? ids : identIds).filter(onDemandIdentifier));
       if (found) {
-        take(found.entity, `${found.identifier.type}:${normalizeIdentifier(found.identifier.type, found.identifier.value)} (on-demand)`, candidates);
+        take(found.entity, `${found.identifier.type}:${identifierKey(found.identifier.type, found.identifier.value)} (on-demand)`, candidates);
         reasons.push({ code: 'lookup.on_demand', message: 'Not in the trust snapshot; registry entry obtained by an on-demand lookup at the trust service', severity: 'INFO' });
       }
     }
@@ -286,13 +281,28 @@ export class LocalEvaluator {
       if (candidates.length > 0 && withRole.length === 0) reasons.push({ code: 'entity.role_mismatch', message: `Matching entity is registered, but not as ${wantRole}`, severity: 'WARNING' });
       candidates = withRole;
     }
-    const entity = (anchor?.entityId ? candidates.find((e) => e.id === anchor!.entityId) : undefined)
-      ?? candidates.find((e) => e.status === 'ACTIVE') ?? candidates[0];
+    // The entity the decision is about. When the key is bound to several registered parties, which one is meant must not
+    // depend on the order a snapshot lists them in: the entity the anchor belongs to; else, in order of entity id, the
+    // first in good standing that is authorized for what is asked; else the first in good standing; else the first.
+    const strict = data.policy?.strictAuthorization === true;
+    const goodStanding = (e: EntityView) => e.status === 'ACTIVE' && !(e.validUntil && time > new Date(e.validUntil)) && !(e.validFrom && time < new Date(e.validFrom));
+    /** the type the entity is not authorized for ('' when no type is asked and the format is refused); undefined when it is authorized */
+    const denied = (e: EntityView): string | undefined => {
+      if (!format && types.length === 0) return undefined;
+      if (e.authorizations.length === 0) return strict ? (types[0] ?? '') : undefined;
+      const allowed = (t?: string) => e.authorizations.some((a) => (!a.format || !format || canonicalFormat(a.format) === format) && (!a.type || !t || a.type === t));
+      return types.length ? types.find((t) => !allowed(t)) : (allowed() ? undefined : '');
+    };
+    const ordered = [...candidates].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const entity = (anchor?.entityId ? ordered.find((e) => e.id === anchor!.entityId) : undefined)
+      ?? ordered.find((e) => goodStanding(e) && denied(e) === undefined) ?? ordered.find(goodStanding) ?? ordered[0];
 
     let didEv: DidEvidence | null = null;
     if (did && q.subject.kid) {
       // The DID URL lets the resolver skip a snapshot document that lacks this (e.g. rotated) key.
-      const res = await this.resolveDid(q.subject.kid.includes('#') ? q.subject.kid : did);
+      // A relative reference ("#key-1") names a key of the DID.
+      const kid = q.subject.kid.startsWith('#') ? `${did}${q.subject.kid}` : q.subject.kid;
+      const res = await this.resolveDid(kid.includes('#') ? kid : did);
       const err = didError(res);
       if (err || !res.didDocument) {
         reasons.push({ code: 'did.unresolved', message: `DID ${did} could not be resolved: ${err ?? 'no document'}`, severity: 'WARNING' });
@@ -304,10 +314,10 @@ export class LocalEvaluator {
           didEv = { did, resolved: true, verificationMethod: q.subject.kid, verificationMethodFound: false };
         } else {
           const relationship = role === 'verifier' || role === 'wallet_provider' ? 'authentication' : 'assertionMethod';
-          const rel = hasRelationship(res.didDocument, relationship, q.subject.kid, true);
-          if (rel === 'lenient') reasons.push({ code: 'did.relationship_lenient', message: `${relationship} lists the DID itself rather than the verification method; accepted leniently`, severity: 'WARNING' });
-          if (rel === 'no') reasons.push({ code: 'did.relationship', message: `Verification method is not authorized for ${relationship}`, severity: 'ERROR' });
-          didEv = { did, resolved: true, verificationMethod: q.subject.kid, verificationMethodFound: true, relationship, relationshipValid: rel !== 'no' };
+          // DID Core: a relationship lists verification methods (by reference or embedded), never the DID itself.
+          const rel = hasRelationship(res.didDocument, relationship, q.subject.kid);
+          if (!rel) reasons.push({ code: 'did.relationship', message: `Verification method ${q.subject.kid} is not authorized for ${relationship}`, severity: 'ERROR' });
+          didEv = { did, resolved: true, verificationMethod: q.subject.kid, verificationMethodFound: true, relationship, relationshipValid: rel };
         }
       } else {
         didEv = { did, resolved: true };
@@ -315,36 +325,31 @@ export class LocalEvaluator {
     }
 
     let authorization: { format?: string | null; type?: string | null; authorized: boolean; rule?: string } | null = null;
-    const strict = data.policy?.strictAuthorization === true;
     if (entity) {
-      const from = entity.validFrom ? new Date(entity.validFrom) : undefined;
-      const until = entity.validUntil ? new Date(entity.validUntil) : undefined;
-      if (entity.status !== 'ACTIVE' || (until && time > until) || (from && time < from)) {
-        reasons.push({ code: 'entity.status', message: `Entity '${entity.id}' is ${entity.status}${until && time > until ? ' (expired)' : ''}`, severity: 'ERROR' });
+      if (!goodStanding(entity)) {
+        const expired = !!entity.validUntil && time > new Date(entity.validUntil);
+        reasons.push({ code: 'entity.status', message: `Entity '${entity.id}' is ${entity.status}${expired ? ' (expired)' : ''}`, severity: 'ERROR' });
       }
       if (format || type) {
-        // Every type the credential asserts must be authorized (a W3C VC may carry several).
-        const types = [...new Set([type, ...(q.context?.credentialTypes ?? [])].filter((t): t is string => !!t))];
-        const allowed = (t?: string) => entity.authorizations.some((a) =>
-          (!a.format || !format || canonicalFormat(a.format) === format) && (!a.type || !t || a.type === t));
-        const denied = entity.authorizations.length === 0 ? undefined : (types.length ? types.find((t) => !allowed(t)) : (allowed() ? undefined : ''));
-        const ok = entity.authorizations.length === 0 ? !strict : denied === undefined;
-        authorization = { format, type, authorized: ok, rule: entity.authorizations.length === 0
+        const refused = denied(entity);
+        authorization = { format, type, authorized: refused === undefined, rule: entity.authorizations.length === 0
           ? (strict ? 'strict: no authorizations registered' : 'unconstrained') : 'registered authorizations' };
-        if (!ok) reasons.push({ code: 'entity.not_authorized', message: `Entity '${entity.id}' is not authorized for ${format ?? ''} ${denied || type || ''}`.trim(), severity: 'ERROR' });
+        if (refused !== undefined) reasons.push({ code: 'entity.not_authorized', message: `Entity '${entity.id}' is not authorized for ${format ?? ''} ${refused || type || ''}`.trim(), severity: 'ERROR' });
       }
     }
     if (anchor?.frameworkId && entity && anchor.frameworkId !== entity.frameworkId) {
       reasons.push({ code: 'framework.mixed', message: `Chain anchor framework '${anchor.frameworkId}' differs from entity framework '${entity.frameworkId}'`, severity: 'INFO' });
     }
     if (expectedDns && q.context?.responseUri) {
-      try {
-        const host = new URL(q.context.responseUri).hostname;
-        if (host.toLowerCase() !== expectedDns.toLowerCase()) {
-          reasons.push({ code: 'client_id.response_uri_host', message: `response_uri host '${host}' does not match x509_san_dns '${expectedDns}'`,
-            severity: entity ? 'WARNING' : 'ERROR' });
-        }
-      } catch { /* ignore */ }
+      // A response_uri that is not a plain https URL has no host to compare, and is refused like a mismatch.
+      const host = httpsHost(q.context.responseUri);
+      if (host === undefined) {
+        reasons.push({ code: 'client_id.response_uri_host', message: 'response_uri is not a plain https URL', severity: 'ERROR' });
+      } else if (host !== expectedDns.toLowerCase()) {
+        reasons.push(entity
+          ? { code: 'client_id.response_uri_host', message: 'response_uri host differs from x509_san_dns; accepted because the verifier is registered', severity: 'WARNING' }
+          : { code: 'client_id.response_uri_host', message: `response_uri host '${host}' does not match x509_san_dns '${expectedDns}'`, severity: 'ERROR' });
+      }
     }
     const taMatches: TrustedAuthorityMatch[] = (q.context?.trustedAuthorities ?? []).map((ta) => {
       if (ta.type === 'aki') {
@@ -363,12 +368,9 @@ export class LocalEvaluator {
 
     const errors = reasons.filter((r) => r.severity === 'ERROR');
     const snap = data.snapshot;
-    const basis = data.source === 'snapshot' ? `trust snapshot v${snap?.version ?? '?'}` : 'app-bundled trust anchors only (no trust snapshot)';
-    if (data.mode === 'outage') {
-      reasons.push({ code: `fallback.${data.source}`, message: `Trust service unavailable; evaluated on this device from ${basis}`, severity: 'WARNING' });
-    } else {
-      reasons.push({ code: `local.${data.source}`, message: `Evaluated on this device from ${basis}`, severity: data.source === 'snapshot' ? 'INFO' : 'WARNING' });
-    }
+    reasons.push(data.source === 'snapshot'
+      ? { code: 'local.snapshot', message: `Evaluated on this device from the trust snapshot issued ${snap?.issuedAt ?? '?'}`, severity: 'INFO' }
+      : { code: 'local.pinned', message: 'No trust snapshot is available: evaluated on this device from the trust pinned in the app', severity: 'WARNING' });
     if (data.stale) reasons.push({ code: 'snapshot.stale', message: `Trust snapshot expired at ${snap?.expiresAt ?? '?'} and could not be refreshed`, severity: 'WARNING' });
     let decision: TrustDecision['decision'];
     let summary: string;

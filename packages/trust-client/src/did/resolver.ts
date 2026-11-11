@@ -3,6 +3,7 @@ import { base64UrlDecode, concatBytes, utf8Decode } from '../util/bytes.js';
 import { DID_ERRORS, didErrorResult, parseDid } from './did.js';
 import { decodeMultibase, publicKeyFromMulticodec } from './keys.js';
 import { readVarint, MULTICODEC } from './multibase.js';
+import { redirectAllowed } from '../util/url.js';
 import type { DidDocument, DidResolutionResult, VerificationMethod } from '../types.js';
 
 export interface LocalDidResolverOptions {
@@ -54,12 +55,17 @@ export function resolveDidJwk(did: string): DidResolutionResult {
   }
 }
 
+/** did:web to the URL of its document (did:web §"Read"): a host with an optional port, then path segments. */
 export function didWebUrl(did: string, httpHosts: string[] = []): string {
   const parts = parseDid(did).id.split(':');
   const hostPort = decodeURIComponent(parts[0]!);
+  // Only a host and a port: nothing that a URL parser could read as userinfo, a path or another host.
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?$/.test(hostPort)) throw new Error(`did:web host ${hostPort} is not a host name`);
+  const segments = parts.slice(1).map(decodeURIComponent);
+  if (segments.some((s) => s === '' || s === '.' || s === '..' || /[/?#\\\s]/.test(s))) throw new Error('did:web path segment is not a plain segment');
   const host = hostPort.split(':')[0]!;
   const scheme = httpHosts.includes(host) ? 'http' : 'https';
-  const path = parts.length === 1 ? '/.well-known/did.json' : `/${parts.slice(1).map(decodeURIComponent).join('/')}/did.json`;
+  const path = segments.length === 0 ? '/.well-known/did.json' : `/${segments.map(encodeURIComponent).join('/')}/did.json`;
   return `${scheme}://${hostPort}${path}`;
 }
 
@@ -119,6 +125,10 @@ export async function fetchWithTimeout(f: typeof fetch, url: string, init: Reque
   const timer = setTimeout(() => ctrl?.abort(), timeoutMs);
   try {
     const res = await f(url, { ...init, signal: ctrl?.signal });
+    if (!redirectAllowed(url, res.url || undefined)) {
+      ctrl?.abort();
+      throw new Error(`${new URL(url).host} redirected to a location that is not https`);
+    }
     const tooBig = () => new Error(`Response from ${new URL(url).host} is larger than ${maxBytes} bytes`);
     const declared = Number(res.headers.get('Content-Length') ?? NaN);
     if (declared > maxBytes) {

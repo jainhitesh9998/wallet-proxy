@@ -1,13 +1,18 @@
 /**
  * Local RFC 5280-style path validation for device-side trust decisions. Mirrors the server's
  * semantics: chains may include or omit the anchor, a pinned end-entity certificate is accepted directly,
- * profile checks per trust domain, {@code relaxProfile} and {@code docTypes} anchor constraints, and — when CRLs are
- * supplied — revocation of every certificate below the anchor.
+ * profile checks per trust domain, the {@code docTypes} anchor constraint, and — when CRLs are supplied —
+ * revocation of every certificate below the anchor.
+ *
+ * What it does not implement it refuses rather than ignores: a certificate with name constraints or policy
+ * constraints (critical or not), or with a critical extension it does not know, fails validation. A trust anchor
+ * is a certificate an operator listed, so its own limits hold too: it issues only as a CA, within its path length.
  */
-import { OID, parseCertificate, subjectCountry, type Certificate } from './certificate.js';
+import { OID, parseCertificate, type Certificate } from './certificate.js';
 import { verifyX509Signature } from './signature.js';
 import { checkRevocation, type RevocationOptions } from './revocation.js';
 import { base64Encode, bytesEqual } from '../util/bytes.js';
+import { rsaKeyProblem } from '../crypto/rsa.js';
 import type { CertificateRevocation, CertificateSummary, PathValidationResult, ValidationIssue } from '../types.js';
 
 export interface LocalAnchor {
@@ -30,11 +35,13 @@ export interface ValidateOptions {
   docType?: string;
   /** check revocation against these CRLs (a directly pinned certificate is not checked: it is an anchor) */
   revocation?: RevocationOptions;
-  /** honour an anchor's relaxProfile constraint (default true); a strict client profile turns it off */
-  allowRelaxedProfile?: boolean;
 }
 
-const KNOWN_CRITICAL = new Set([OID.basicConstraints, OID.keyUsage, OID.extKeyUsage, OID.subjectAltName, '2.5.29.32', OID.issuerAltName]);
+const KNOWN_CRITICAL = new Set<string>([OID.basicConstraints, OID.keyUsage, OID.extKeyUsage, OID.subjectAltName, OID.certificatePolicies, OID.issuerAltName]);
+/** Constraints on the certificates below a CA that this validator does not evaluate: their presence fails the path. */
+const UNSUPPORTED_CONSTRAINTS: Record<string, string> = { [OID.nameConstraints]: 'name constraints', [OID.policyConstraints]: 'policy constraints' };
+/** An empty Name: SEQUENCE of nothing. */
+const emptyName = (raw: Uint8Array) => raw.length === 2;
 
 export function summarize(c: Certificate): CertificateSummary {
   return {
@@ -53,6 +60,9 @@ function issuedBy(cert: Certificate, issuer: Certificate): boolean {
   return bytesEqual(cert.issuerRaw, issuer.subjectRaw) || cert.issuer === issuer.subject;
 }
 
+/** The doctype ISO/IEC 18013-5 defines, and whose signer certificates its Annex B profiles. */
+const MDL_DOCTYPE = 'org.iso.18013.5.1.mDL';
+
 function profileName(domain?: string): string {
   switch (domain) {
     case 'mdoc-iaca': return 'iso18013-5-document-signer';
@@ -67,12 +77,15 @@ function profileIssues(domain: string | undefined, path: Certificate[], anchor: 
   const leaf = path[0]!;
   const err = (code: string, message: string) => issues.push({ code, message, severity: 'ERROR' });
   if (domain === 'mdoc-iaca') {
+    // ISO 18013-5 Annex B profiles the signer of an mDL (its EKU, its country); other doctypes, an EUDI PID as mdoc
+    // say, are issued under other certificate profiles. Applied to an mDL, and when the doctype is not known.
+    const mdl = opts.docType === undefined || opts.docType === null || opts.docType === MDL_DOCTYPE;
     if (leaf.basicConstraints?.ca) err('mdoc.ds.is_ca', 'Document Signer certificate must not be a CA');
-    if (!leaf.extendedKeyUsage.includes(OID.mdlDocumentSigner)) err('mdoc.ds.eku', `Document Signer certificate lacks extended key usage ${OID.mdlDocumentSigner}`);
+    if (mdl && !leaf.extendedKeyUsage.includes(OID.mdlDocumentSigner)) err('mdoc.ds.eku', `Document Signer certificate lacks extended key usage ${OID.mdlDocumentSigner}`);
     if (leaf.keyUsage && !leaf.keyUsage.digitalSignature) err('mdoc.ds.key_usage', 'Document Signer key usage must include digitalSignature');
-    const c1 = subjectCountry(leaf.subject);
-    const c2 = subjectCountry(anchor.subject);
-    if (c1 && c2 && c1.toUpperCase() !== c2.toUpperCase()) err('mdoc.ds.country', `Document Signer country ${c1} differs from IACA country ${c2}`);
+    const c1 = leaf.subjectCountry;
+    const c2 = anchor.subjectCountry;
+    if (mdl && c1 && c2 && c1.toUpperCase() !== c2.toUpperCase()) err('mdoc.ds.country', `Document Signer country ${c1} differs from IACA country ${c2}`);
   } else if (domain === 'credential-issuer') {
     if (leaf.keyUsage && !leaf.keyUsage.digitalSignature) err('issuer.key_usage', 'Signing certificate key usage must include digitalSignature');
   } else if (domain === 'verifier-access') {
@@ -118,39 +131,82 @@ export function validateCertificateChain(chainIn: (Certificate | Uint8Array | st
   return { ...base, valid: false, anchorFound: true, anchor: anchorSummary(last!.anchor), anchorRef: last!.anchor, path: summaries, issues: last!.issues };
 }
 
+/** Issuer and subject are the same name (RFC 5280 section 6.1): such a certificate does not count against a path length. */
+function selfIssued(c: Certificate): boolean {
+  return bytesEqual(c.issuerRaw, c.subjectRaw) || c.issuer === c.subject;
+}
+
+/** Non-self-issued intermediate certificates between the leaf and position {@code j} (the leaf itself never counts). */
+function intermediatesBelow(path: Certificate[], j: number): number {
+  let n = 0;
+  for (let k = 1; k < j; k++) if (!selfIssued(path[k]!)) n++;
+  return n;
+}
+
+/**
+ * What a certificate says about itself that makes it unusable in a path, whoever issued it: critical extensions and
+ * constraints this validator cannot honour, contradictory CA fields, names RFC 5280 does not allow, a weak key.
+ */
+function certificateIssues(c: Certificate, label: string, issues: ValidationIssue[]): void {
+  const err = (code: string, message: string) => issues.push({ code, message, severity: 'ERROR' });
+  for (const oid of c.extensions) {
+    const constraint = UNSUPPORTED_CONSTRAINTS[oid];
+    if (constraint) {
+      err('x509.path.unsupported_constraints', `${label} carries ${constraint} (${oid}), which this validator does not evaluate: the chain is refused rather than the constraint ignored`);
+    } else if (c.criticalExtensions.includes(oid) && !KNOWN_CRITICAL.has(oid)) {
+      err('x509.path.unrecognized_critical_extension', `${label} has unsupported critical extension ${oid}`);
+    }
+  }
+  const ca = c.basicConstraints?.ca === true;
+  if (c.keyUsage?.keyCertSign && !ca) err('x509.path.inconsistent_ca', `${label} asserts keyCertSign without being a CA`);
+  if (c.basicConstraints?.pathLen !== undefined && (!ca || (c.keyUsage && !c.keyUsage.keyCertSign))) {
+    err('x509.path.inconsistent_ca', `${label} has a path length constraint without being a CA that signs certificates`);
+  }
+  if (emptyName(c.issuerRaw)) err('x509.path.invalid_name', `${label} has an empty issuer name`);
+  if (emptyName(c.subjectRaw)) {
+    if (ca) err('x509.path.invalid_name', `${label} is a CA with an empty subject name`);
+    else if (!c.criticalExtensions.includes(OID.subjectAltName)) err('x509.path.invalid_name', `${label} has an empty subject and no critical subjectAltName`);
+  }
+  const weak = c.publicKey?.kty === 'RSA' ? rsaKeyProblem(c.publicKey) : null;
+  if (weak) err('x509.path.weak_key', `${label} has an unacceptable RSA key: ${weak}`);
+}
+
 function checkPath(path: Certificate[], anchor: LocalAnchor, time: Date): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const err = (code: string, message: string) => issues.push({ code, message, severity: 'ERROR' });
+  const a = anchor.certificate;
   if (anchor.status && anchor.status !== 'ACTIVE') err('x509.anchor_status', `Trust anchor status is ${anchor.status}`);
-  if (time < anchor.certificate.notBefore || time > anchor.certificate.notAfter) err('x509.anchor_expired', `Trust anchor certificate is not valid at ${time.toISOString()}`);
+  if (time < a.notBefore || time > a.notAfter) err('x509.anchor_expired', `Trust anchor certificate is not valid at ${time.toISOString()}`);
+  // RFC 5280 section 6.1.1 takes a trust anchor as a name and a key. An anchor here is a certificate an operator
+  // listed, so its own limits hold (as on the server): only a CA certificate with keyCertSign issues others, and no
+  // deeper than its path length (an ISO 18013-5 IACA has 0).
+  if (!a.basicConstraints?.ca || (a.keyUsage && !a.keyUsage.keyCertSign)) {
+    err('x509.anchor_not_ca', 'The trust anchor is not a CA certificate allowed to sign certificates');
+  } else if (a.basicConstraints.pathLen !== undefined && intermediatesBelow(path, path.length) > a.basicConstraints.pathLen) {
+    err('x509.anchor_path_length', "The chain is longer than the trust anchor's path length allows");
+  }
+  certificateIssues(a, 'Trust anchor', issues);
   for (let j = 0; j < path.length; j++) {
     const c = path[j]!;
-    const issuer = j + 1 < path.length ? path[j + 1]! : anchor.certificate;
+    const issuer = j + 1 < path.length ? path[j + 1]! : a;
     if (!issuedBy(c, issuer)) err('x509.path.name_chaining', `Issuer of certificate ${j} does not match subject of its issuer`);
     if (!isSignedBy(c, issuer)) err('x509.path.invalid_signature', `Signature of certificate ${j} does not verify`);
     if (time < c.notBefore || time > c.notAfter) err('x509.path.expired', `Certificate ${j} (${c.subject}) is not valid at ${time.toISOString()}`);
-    for (const crit of c.criticalExtensions) if (!KNOWN_CRITICAL.has(crit as never)) err('x509.path.unrecognized_critical_extension', `Certificate ${j} has unsupported critical extension ${crit}`);
+    certificateIssues(c, `Certificate ${j}`, issues);
     if (j >= 1) {
       if (!c.basicConstraints?.ca) err('x509.path.not_ca', `Intermediate certificate ${j} is not a CA`);
       if (c.keyUsage && !c.keyUsage.keyCertSign) err('x509.path.key_usage', `Intermediate certificate ${j} cannot sign certificates`);
       const pl = c.basicConstraints?.pathLen;
-      if (pl !== undefined && j - 1 > pl) err('x509.path.path_length', `Path length constraint of certificate ${j} exceeded`);
+      if (pl !== undefined && intermediatesBelow(path, j) > pl) err('x509.path.path_length', `Path length constraint of certificate ${j} exceeded`);
     }
   }
-  const apl = anchor.certificate.basicConstraints?.pathLen;
-  if (apl !== undefined && path.length - 1 > apl) err('x509.path.path_length', 'Trust anchor path length constraint exceeded');
   return issues;
 }
 
 function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certificate[], opts: ValidateOptions, time: Date,
                 base: { profile: string; validationTime: string }, revocable: boolean): PathValidationResult & { anchorRef?: LocalAnchor } {
   const issues = [...pathIssues];
-  let prof = profileIssues(opts.domain, path, anchor.certificate, opts);
-  if (anchor.constraints?.relaxProfile === true && opts.allowRelaxedProfile !== false && prof.length > 0) {
-    prof = prof.map((i) => (i.severity === 'ERROR' ? { ...i, severity: 'WARNING' as const, message: `${i.message} (profile relaxed for this anchor)` } : i));
-    issues.push({ code: 'x509.profile_relaxed', message: `Certificate profile '${base.profile}' is relaxed for this trust anchor`, severity: 'WARNING' });
-  }
-  issues.push(...prof);
+  issues.push(...profileIssues(opts.domain, path, anchor.certificate, opts));
   const docTypes = Array.isArray(anchor.constraints?.docTypes) ? (anchor.constraints!.docTypes as string[]) : [];
   if (docTypes.length > 0 && opts.docType && !docTypes.includes(opts.docType)) {
     issues.push({ code: 'x509.anchor_doctype', message: `Trust anchor is not authorized for doctype ${opts.docType}`, severity: 'ERROR' });

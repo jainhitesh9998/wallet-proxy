@@ -16,6 +16,7 @@ export function decodeJws<P = Record<string, unknown>>(compact: string): Decoded
   if (parts.length !== 3) throw new Error('Not a compact JWS');
   const [h, p, s] = parts as [string, string, string];
   const header = JSON.parse(utf8Decode(base64UrlDecode(h))) as Record<string, unknown>;
+  if (header === null || typeof header !== 'object' || Array.isArray(header)) throw new Error('JWS header is not a JSON object');
   let payload: P;
   try {
     payload = JSON.parse(utf8Decode(base64UrlDecode(p))) as P;
@@ -25,11 +26,47 @@ export function decodeJws<P = Record<string, unknown>>(compact: string): Decoded
   return { header, payload, signingInput: utf8Encode(`${h}.${p}`), signature: base64UrlDecode(s), compact: compact.trim() };
 }
 
-/** Verifies a decoded JWS with a public key. {@code alg: none} and unknown algorithms are rejected. */
-export function verifyJws(jws: DecodedJws<unknown>, key: PublicKey | Jwk): boolean {
-  const alg = String(jws.header.alg ?? '');
-  if (!isSupportedJoseAlg(alg)) return false;
-  return verifySignature(alg, toPublicKey(key), jws.signingInput, jws.signature, 'raw');
+export interface VerifyJwsOptions {
+  /**
+   * Extension header parameters the caller itself processes, and which the JWS may therefore list in {@code crit}.
+   * This library implements none (not RFC 7797 {@code b64} either), so by default any {@code crit} is refused.
+   */
+  understoodCritical?: readonly string[];
+}
+
+/**
+ * Why the {@code crit} header parameter makes a JWS unacceptable, or null (RFC 7515 section 4.1.11): every name it
+ * lists must be an extension the recipient understands and processes, and must be present in the header.
+ */
+export function criticalHeaderProblem(header: Record<string, unknown>, understood: readonly string[] = []): string | null {
+  if (!Object.prototype.hasOwnProperty.call(header, 'crit')) return null;
+  const crit = header.crit;
+  if (!Array.isArray(crit) || crit.length === 0 || crit.some((n) => typeof n !== 'string' || n === '')) {
+    return 'crit must be a non-empty array of header parameter names';
+  }
+  for (const name of crit as string[]) {
+    if (!understood.includes(name)) return `critical header parameter ${name} is not understood`;
+    if (!Object.prototype.hasOwnProperty.call(header, name)) return `critical header parameter ${name} is not in the header`;
+  }
+  return new Set(crit).size === crit.length ? null : 'crit lists a header parameter twice';
+}
+
+/**
+ * Verifies a decoded JWS with a public key. Rejected: {@code alg: none} and unknown algorithms, an algorithm that
+ * does not fit the key's type and curve (ES256 needs a P-256 key, and so on), and a {@code crit} header that lists
+ * anything the caller did not declare as understood.
+ */
+export function verifyJws(jws: DecodedJws<unknown>, key: PublicKey | Jwk, opts: VerifyJwsOptions = {}): boolean {
+  const alg = jws.header.alg;
+  if (typeof alg !== 'string' || !isSupportedJoseAlg(alg)) return false;
+  if (criticalHeaderProblem(jws.header, opts.understoodCritical) !== null) return false;
+  let publicKey: PublicKey;
+  try {
+    publicKey = toPublicKey(key);
+  } catch {
+    return false;
+  }
+  return verifySignature(alg, publicKey, jws.signingInput, jws.signature, 'raw');
 }
 
 /** Accepts either a parsed {@link PublicKey} or a JWK. */

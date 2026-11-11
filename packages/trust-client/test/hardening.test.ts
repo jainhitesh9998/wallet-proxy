@@ -1,12 +1,12 @@
 /**
  * Regressions from an independent review of the client library: input that must not hang, inflate, linger in a
- * cache or keep a revoked key trusted; and policies that must hold in every decision mode.
+ * cache or keep a revoked key trusted; and policies that must hold on every route.
  */
 import { describe, expect, it } from 'vitest';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
-import { checkTokenStatus, extractIssuerInfo, fetchIssuerMetadata, issuerTrustQuery, jwkThumbprint, MemoryCacheStore, publicKeyFromJwk,
-  TrustClient, type Jwk } from '../src/index.js';
+import { MemoryCacheStore, TrustClient } from '../src/index.js';
+import { checkTokenStatus, extractIssuerInfo, fetchIssuerMetadata, issuerTrustQuery, jwkThumbprint, publicKeyFromJwk, type Jwk } from '../src/primitives.js';
 import { LocalEvaluator } from '../src/evaluation/local.js';
 import { SnapshotManager } from '../src/snapshot/snapshot.js';
 import { fetchWithTimeout } from '../src/did/resolver.js';
@@ -21,7 +21,7 @@ const serviceKey = (kid: string) => {
   return { privateKey, jwk: { ...(publicKey.export({ format: 'jwk' }) as Record<string, string>), kid } as unknown as Jwk & { kid: string } };
 };
 const snapshotJwt = (k: ReturnType<typeof serviceKey>, iat: number, policy: Record<string, unknown> = {}) =>
-  es256({ alg: 'ES256', typ: 'trust-snapshot+jwt', kid: k.jwk.kid }, { iat, exp: iat + 86400, aud: 'w', version: iat, policy, entities: [], anchors: [] }, k.privateKey);
+  es256({ alg: 'ES256', typ: 'trust-snapshot+jwt', kid: k.jwk.kid }, { iat, exp: iat + 86400, aud: 'w', format: 4, policy, entities: [], anchors: [] }, k.privateKey);
 
 describe('client hardening', () => {
   it('stops asking for metadata when an issuer answers every request with an invalid JWT', async () => {
@@ -55,12 +55,12 @@ describe('client hardening', () => {
     const d = await new LocalEvaluator(async () => ({ didDocument: doc, didResolutionMetadata: {}, didDocumentMetadata: {} } as never)).evaluate(q, {
       entities: [{ id: 'land', frameworkId: 'fw', roles: ['CREDENTIAL_ISSUER'], status: 'ACTIVE', display: [{ name: 'Land' }],
         identifiers: [{ type: 'DID', value: 'did:web:land.example' }], authorizations: [{ format: 'ldp_vc', type: 'LandStatementCredential' }] } as never],
-      anchors: [], frameworks: [], source: 'snapshot', mode: 'local', policy: { strictAuthorization: true } });
+      anchors: [], frameworks: [], source: 'snapshot', policy: { strictAuthorization: true } });
     expect(d.decision).toBe('NOT_TRUSTED');
     expect(d.reasons.find((r) => r.code === 'entity.not_authorized')?.message).toMatch(/EUPidCredential/);
   });
 
-  it('keeps requiring signed issuer metadata while service decisions fall back during an outage', async () => {
+  it('keeps requiring signed issuer metadata when the proxy is down and the issuer is asked directly', async () => {
     const k = serviceKey('s1');
     const snapshot = snapshotJwt(k, Math.floor(Date.now() / 1000), { frameworks: ['f'], requireSignedIssuerMetadata: true });
     let up = true;
@@ -75,9 +75,9 @@ describe('client hardening', () => {
       if (url === 'https://issuer.example/.well-known/openid-credential-issuer') return Response.json(md);
       return new Response('nf', { status: 404 });
     }) as typeof fetch;
-    const c = new TrustClient({ baseUrl: 'https://trust.example', clientId: 'w', decisions: 'service', fetch: f, retries: 0,
-      serviceKeys: { thumbprints: [jwkThumbprint(k.jwk)] } });
-    await c.syncSnapshot();
+    const c = new TrustClient({ service: { url: 'https://trust.example', clientId: 'w', keys: { thumbprints: [jwkThumbprint(k.jwk)] } },
+      http: { fetch: f, retries: 0 } });
+    await c.sync();
     up = false;
     await expect(c.getIssuerMetadata('https://issuer.example')).rejects.toThrow(/signed metadata/);
   });
@@ -85,7 +85,7 @@ describe('client hardening', () => {
   it('refuses a status list that inflates past the limit instead of inflating it', async () => {
     const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const lst = deflateSync(Buffer.alloc(64 * 1024 * 1024), { level: 9 });
-    const jwt = es256({ alg: 'ES256', typ: 'statuslist+jwt' }, { sub: 'https://evil.example/sl', iat: 1, status_list: { bits: 1, lst: b64u(lst) } }, privateKey);
+    const jwt = es256({ alg: 'ES256', typ: 'statuslist+jwt' }, { sub: 'https://evil.example/sl', iat: Math.floor(Date.now() / 1000), status_list: { bits: 1, lst: b64u(lst) } }, privateKey);
     const r = await checkTokenStatus({ idx: 0, uri: 'https://evil.example/sl' }, {
       fetchList: async () => ({ body: new TextEncoder().encode(jwt), contentType: 'application/statuslist+jwt', source: 'direct' }),
       signerKey: publicKeyFromJwk(publicKey.export({ format: 'jwk' }) as never) });
@@ -116,10 +116,10 @@ describe('client hardening', () => {
     };
     const gone = (async () => new Response('gone', { status: 410 })) as typeof fetch;
     const down = (async () => new Response('busy', { status: 503 })) as typeof fetch;
-    expect((await new TrustClient({ fetch: gone, cache: await seed(3600_000) }).resolveDid(did)).didDocument).toBeNull();
-    const recent = await new TrustClient({ fetch: down, cache: await seed(3600_000) }).resolveDid(did);
+    expect((await new TrustClient({ http: { fetch: gone }, storage: await seed(3600_000) }).resolveDid(did)).didDocument).toBeNull();
+    const recent = await new TrustClient({ http: { fetch: down }, storage: await seed(3600_000) }).resolveDid(did);
     expect(recent.didDocument?.id).toBe(did);
     expect(recent.didResolutionMetadata).toMatchObject({ stale: true });
-    expect((await new TrustClient({ fetch: down, cache: await seed(180 * 24 * 3600_000) }).resolveDid(did)).didDocument).toBeNull();
+    expect((await new TrustClient({ http: { fetch: down }, storage: await seed(180 * 24 * 3600_000) }).resolveDid(did)).didDocument).toBeNull();
   });
 });

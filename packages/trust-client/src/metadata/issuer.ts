@@ -1,5 +1,6 @@
 /** Standards-based OpenID4VCI 1.0 metadata discovery (§12.2): the direct path, and the fallback when the trust service is down. */
 import { fetchWithTimeout } from '../did/resolver.js';
+import { requireSecureUrl } from '../util/url.js';
 import { decodeJws, verifyJws } from '../jose/jws.js';
 import { parseCertificate } from '../x509/certificate.js';
 import { applyMetadataPolicy, MetadataPolicyError } from './policy.js';
@@ -8,19 +9,6 @@ export function wellKnownInserted(identifier: string, suffix: string): string {
   const u = new URL(identifier);
   const path = u.pathname === '/' ? '' : u.pathname.replace(/\/$/, '');
   return `${u.protocol}//${u.host}/.well-known/${suffix}${path}`;
-}
-
-export function wellKnownAppended(identifier: string, suffix: string): string {
-  return `${identifier.replace(/\/$/, '')}/.well-known/${suffix}`;
-}
-
-function normalize(url: string): string {
-  try {
-    const u = new URL(url);
-    return `${u.protocol}//${u.host.toLowerCase()}${u.pathname.replace(/\/$/, '')}${u.search}`;
-  } catch {
-    return url;
-  }
 }
 
 export interface FetchedIssuerMetadata {
@@ -65,16 +53,14 @@ export async function verifySignedMetadata(jwt: string, credentialIssuer: string
   const leaf = parseCertificate(x5c[0]!);
   if (leaf.subject === leaf.issuer) throw new Error('Signed metadata is signed with a self-signed certificate');
   const host = new URL(credentialIssuer).hostname.toLowerCase();
-  if (!leaf.dnsNames.some((n) => n.toLowerCase() === host) && !leaf.uriNames.some((u) => normalize(u) === normalize(credentialIssuer))) {
+  if (!leaf.dnsNames.some((n) => n.toLowerCase() === host) && !leaf.uriNames.includes(credentialIssuer)) {
     throw new Error(`Signed metadata signer ${leaf.subject} is not bound to ${credentialIssuer} (no matching SAN)`);
   }
   if (!leaf.publicKey || !verifyJws(jws, leaf.publicKey)) throw new Error('Signed metadata signature does not verify');
   const p = jws.payload;
-  if (typeof p.sub !== 'string' || normalize(p.sub) !== normalize(credentialIssuer)) throw new Error(`Signed metadata sub ${String(p.sub)} is not ${credentialIssuer}`);
+  if (p.sub !== credentialIssuer) throw new Error(`Signed metadata sub ${String(p.sub)} is not ${credentialIssuer}`);
   if (typeof p.iat !== 'number') throw new Error('Signed metadata has no iat');
-  if (typeof p.credential_issuer !== 'string' || normalize(p.credential_issuer) !== normalize(credentialIssuer)) {
-    throw new Error(`Signed metadata credential_issuer ${String(p.credential_issuer)} is not ${credentialIssuer}`);
-  }
+  if (p.credential_issuer !== credentialIssuer) throw new Error(`Signed metadata credential_issuer ${String(p.credential_issuer)} is not ${credentialIssuer}`);
   const now = Math.floor((check.now ?? new Date()).getTime() / 1000);
   if (typeof p.exp === 'number' && p.exp < now) throw new Error(`Signed metadata expired at ${new Date(p.exp * 1000).toISOString()}`);
   const trusted = await check.trustSigner(x5c);
@@ -86,12 +72,16 @@ export async function verifySignedMetadata(jwt: string, credentialIssuer: string
 /** Registry metadata policy keyed by metadata type ({@code openid_credential_issuer}, {@code oauth_authorization_server}). */
 export type RegistryMetadataPolicy = Record<string, Record<string, unknown>>;
 
+/** Authorization servers resolved per issuer: the issuer chooses the list, so it is capped (as on the service). */
+const MAX_AUTHORIZATION_SERVERS = 3;
+
 /**
- * Standard OpenID4VCI discovery (well-known insertion, then the legacy appended location) with the same checks
- * as the service's proxy; the registry's metadata policy, when given, is applied as the service would.
+ * Standard OpenID4VCI 1.0 discovery (section 12.2.2) with the same checks as the service's proxy; the registry's
+ * metadata policy, when given, is applied as the service would.
  */
 export async function fetchIssuerMetadata(credentialIssuer: string, f: typeof fetch, timeoutMs = 8000,
-                                          policy?: RegistryMetadataPolicy, signed?: SignedMetadataCheck): Promise<FetchedIssuerMetadata> {
+                                          policy?: RegistryMetadataPolicy, signed?: SignedMetadataCheck, insecureHosts: readonly string[] = []): Promise<FetchedIssuerMetadata> {
+  requireSecureUrl(credentialIssuer, 'A credential issuer', insecureHosts);
   const warnings: string[] = [];
   let signedMetadata: string | undefined;
   let signedBy: string | undefined;
@@ -118,18 +108,10 @@ export async function fetchIssuerMetadata(credentialIssuer: string, f: typeof fe
   };
   let md = await get(wellKnownInserted(credentialIssuer, 'openid-credential-issuer'), !!signed);
   if (signed?.mode === 'require' && md && !signedMetadata) throw new Error(`${credentialIssuer} serves no signed metadata, which this ecosystem requires`);
-  if (!md && signed?.mode !== 'require') {
-    const legacy = wellKnownAppended(credentialIssuer, 'openid-credential-issuer');
-    md = await get(legacy);
-    if (md) warnings.push(`Metadata served only at the legacy appended location ${legacy}`);
-  }
   if (!md) throw new Error(`No OpenID4VCI metadata for ${credentialIssuer}`);
   const declared = md.credential_issuer;
-  if (typeof declared !== 'string') throw new Error('credential_issuer missing in metadata');
-  if (declared !== credentialIssuer) {
-    if (normalize(declared) !== normalize(credentialIssuer)) throw new Error(`credential_issuer ${declared} does not match ${credentialIssuer}`);
-    warnings.push(`credential_issuer '${declared}' differs from '${credentialIssuer}' only by normalization`);
-  }
+  // Section 12.2.4: identical to the identifier the well-known URL was built from.
+  if (declared !== credentialIssuer) throw new Error(`credential_issuer ${String(declared)} is not identical to ${credentialIssuer}`);
   let policyApplied = false;
   if (policy?.openid_credential_issuer) {
     try {
@@ -143,12 +125,16 @@ export async function fetchIssuerMetadata(credentialIssuer: string, f: typeof fe
   if (!md.credential_configurations_supported || typeof md.credential_configurations_supported !== 'object') {
     throw new Error('credential_configurations_supported missing in metadata');
   }
-  const servers = Array.isArray(md.authorization_servers) && md.authorization_servers.length > 0
+  let servers = Array.isArray(md.authorization_servers) && md.authorization_servers.length > 0
     ? (md.authorization_servers as string[]) : [declared];
+  if (servers.length > MAX_AUTHORIZATION_SERVERS) {
+    warnings.push(`Only the first ${MAX_AUTHORIZATION_SERVERS} of ${servers.length} authorization servers were resolved`);
+    servers = servers.slice(0, MAX_AUTHORIZATION_SERVERS);
+  }
   const authorizationServers: Record<string, Record<string, unknown>> = {};
   for (const as of servers) {
     try {
-      let asMd = await fetchAuthorizationServerMetadata(as, f, timeoutMs);
+      let asMd = await fetchAuthorizationServerMetadata(as, f, timeoutMs, insecureHosts);
       if (policy?.oauth_authorization_server) {
         asMd = applyMetadataPolicy(asMd, policy.oauth_authorization_server);
         policyApplied = true;
@@ -162,15 +148,14 @@ export async function fetchIssuerMetadata(credentialIssuer: string, f: typeof fe
   return { credentialIssuer: declared, credentialIssuerMetadata: md, authorizationServers, warnings, policyApplied, signedMetadata, signedBy };
 }
 
-export async function fetchAuthorizationServerMetadata(issuer: string, f: typeof fetch, timeoutMs = 8000): Promise<Record<string, unknown>> {
-  for (const url of [wellKnownInserted(issuer, 'oauth-authorization-server'), wellKnownAppended(issuer, 'openid-configuration')]) {
-    const r = await fetchWithTimeout(f, url, { headers: { Accept: 'application/json' } }, timeoutMs).catch(() => null);
-    if (!r?.ok) continue;
-    const md = (await r.json()) as Record<string, unknown>;
-    if (typeof md.issuer !== 'string' || normalize(md.issuer) !== normalize(issuer)) {
-      throw new Error(`AS metadata issuer ${String(md.issuer)} does not match ${issuer}`);
-    }
-    return md;
-  }
-  throw new Error(`No authorization server metadata for ${issuer}`);
+/** RFC 8414 authorization server metadata; {@code issuer} must be identical to the requested one (section 3.3). */
+export async function fetchAuthorizationServerMetadata(issuer: string, f: typeof fetch, timeoutMs = 8000,
+                                                       insecureHosts: readonly string[] = []): Promise<Record<string, unknown>> {
+  // The issuer's metadata names its authorization servers: each is a counterparty-chosen URL like any other.
+  requireSecureUrl(issuer, 'An authorization server', insecureHosts);
+  const r = await fetchWithTimeout(f, wellKnownInserted(issuer, 'oauth-authorization-server'), { headers: { Accept: 'application/json' } }, timeoutMs);
+  if (!r.ok) throw new Error(`No authorization server metadata for ${issuer} (HTTP ${r.status})`);
+  const md = (await r.json()) as Record<string, unknown>;
+  if (md.issuer !== issuer) throw new Error(`AS metadata issuer ${String(md.issuer)} is not identical to ${issuer}`);
+  return md;
 }
