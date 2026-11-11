@@ -17,22 +17,26 @@ jobs:
     name: Trust service (Java)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
       # Unit and integration tests; EvaluationVectorsTest fails when conformance/evaluation/vectors.json is stale.
-      - run: mvn --batch-mode --no-transfer-progress verify
+      - run: mvn --batch-mode --no-transfer-progress verify 2>&1 | tee "$RUNNER_TEMP/build.log"
+        shell: bash
         working-directory: trust-server
+      - name: Report what failed
+        if: failure()
+        run: scripts/ci-report-failures.sh trust-server "$RUNNER_TEMP/build.log"
 
   packages:
     name: Client library, reference ecosystem, wallet core (Node)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm

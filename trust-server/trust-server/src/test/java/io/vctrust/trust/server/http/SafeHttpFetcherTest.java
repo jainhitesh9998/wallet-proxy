@@ -24,6 +24,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SafeHttpFetcherTest {
 
+    /** A fetch that is cut off returns in well under this, on any machine; one that reads on takes the 40 s the body lasts. */
+    static final java.time.Duration LONG_BEFORE_THE_BODY_ENDS = java.time.Duration.ofSeconds(15);
+
     static HttpServer server;
     static int port;
     static final AtomicInteger hits = new AtomicInteger();
@@ -71,7 +74,7 @@ class SafeHttpFetcherTest {
             ex.getResponseBody().write(new byte[4096]);
             ex.close();
         });
-        // A body that never ends: a chunk every 50 ms until the client goes away (or, as a backstop, for 20 s).
+        // A body that never ends: a chunk every 50 ms until the client goes away (or, as a backstop, for 40 s).
         server.createContext("/endless", ex -> {
             hits.incrementAndGet();
             endless(ex, 200);
@@ -92,7 +95,7 @@ class SafeHttpFetcherTest {
     static void endless(com.sun.net.httpserver.HttpExchange ex, int status) throws IOException {
         ex.sendResponseHeaders(status, 0);
         try (var out = ex.getResponseBody()) {
-            long end = System.nanoTime() + java.time.Duration.ofSeconds(20).toNanos();
+            long end = System.nanoTime() + java.time.Duration.ofSeconds(40).toNanos();
             while (System.nanoTime() < end) {
                 out.write(new byte[256]);
                 out.flush();
@@ -204,19 +207,19 @@ class SafeHttpFetcherTest {
             long start = System.nanoTime();
             assertThatThrownBy(() -> fetcher.get(url("public.test", "/endless"), null))
                     .isInstanceOf(IOException.class).hasMessageContaining("exceeds 1024 bytes");
-            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(java.time.Duration.ofSeconds(3));
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(LONG_BEFORE_THE_BODY_ENDS);
 
             // Too slow: the total time holds although every single read succeeds.
             cfg.setMaxResponseBytes(8 * 1024 * 1024);
             start = System.nanoTime();
             assertThatThrownBy(() -> fetcher.get(url("public.test", "/endless"), null))
                     .isInstanceOf(IOException.class).hasMessageContaining("took longer than");
-            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(java.time.Duration.ofSeconds(3));
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(LONG_BEFORE_THE_BODY_ENDS);
 
             // A redirect with a body that never ends is followed without reading that body.
             start = System.nanoTime();
             assertThat(fetcher.get(url("public.test", "/endless-redirect"), null).bodyAsString()).isEqualTo("hello");
-            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(java.time.Duration.ofSeconds(3));
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(LONG_BEFORE_THE_BODY_ENDS);
 
             // The fetcher still works afterwards: no connection is left occupied.
             assertThat(fetcher.get(url("public.test", "/ok"), null).bodyAsString()).isEqualTo("hello");

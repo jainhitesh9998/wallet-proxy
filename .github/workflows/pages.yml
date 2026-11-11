@@ -32,24 +32,28 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - run: pip install mkdocs-material==9.5.49
       - run: npm ci
-      - run: scripts/build-site.sh site
+      - run: scripts/build-site.sh site 2>&1 | tee "$RUNNER_TEMP/build.log"
+        shell: bash
+      - name: Report what failed
+        if: failure()
+        run: scripts/ci-report-failures.sh trust-server "$RUNNER_TEMP/build.log"
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: site
 

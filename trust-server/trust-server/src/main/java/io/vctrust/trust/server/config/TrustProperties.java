@@ -223,6 +223,11 @@ public class TrustProperties {
         private int snapshotMaxCrlBytes = 256 * 1024;
         /** Fetch the CRL distribution points of non-anchor issuers during server-side checks. */
         private boolean fetchOnDemand = true;
+        /**
+         * Fetch each anchor's CRL from its configured URLs or the anchor's own distribution point. False: only CRLs
+         * pushed with an anchor are held (a service without outbound access, and tests that must not use the network).
+         */
+        private boolean fetchAnchorCrls = true;
         private boolean relayCrls = true;
         private boolean relayStatusLists = true;
         private Duration statusListMaxTtl = Duration.ofHours(1);
@@ -237,6 +242,8 @@ public class TrustProperties {
         public void setMaxCrlBytes(int v) { this.maxCrlBytes = v; }
         public int getSnapshotMaxCrlBytes() { return snapshotMaxCrlBytes; }
         public void setSnapshotMaxCrlBytes(int v) { this.snapshotMaxCrlBytes = v; }
+        public boolean isFetchAnchorCrls() { return fetchAnchorCrls; }
+        public void setFetchAnchorCrls(boolean v) { this.fetchAnchorCrls = v; }
         public boolean isFetchOnDemand() { return fetchOnDemand; }
         public void setFetchOnDemand(boolean v) { this.fetchOnDemand = v; }
         public boolean isRelayCrls() { return relayCrls; }

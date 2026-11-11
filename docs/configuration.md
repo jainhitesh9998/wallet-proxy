@@ -286,6 +286,7 @@ refusal does not say which address a host resolved to.
 | `trust.revocation.enabled` | `true` | Fetch the anchors' CRLs, check revocation in the service's decisions, ship anchor CRLs in snapshots |
 | `trust.revocation.refresh` | `PT1H` | Anchor CRLs are fetched again at the earlier of this and their next update |
 | `trust.revocation.max-crl-bytes` / `snapshot-max-crl-bytes` | 1 MiB / 256 KiB | Largest CRL fetched; largest shipped in a snapshot (clients fetch larger ones through the proxy) |
+| `trust.revocation.fetch-anchor-crls` | `true` | Fetch each anchor's CRL from its `crlUrls` or its own distribution point. `false`: only CRLs pushed with an anchor (`constraints.crl`) are held, for a service without outbound access |
 | `trust.revocation.fetch-on-demand` | `true` | The service's own decisions fetch CRLs of CAs below an anchor |
 | `trust.revocation.relay-crls` / `relay-status-lists` | `true` | Serve `/api/v1/proxy/crl` and `/api/v1/proxy/status-list` |
 | `trust.revocation.status-list-default-ttl` / `status-list-max-ttl` / `max-status-list-bytes` | `PT5M` / `PT1H` / 2 MiB | Relay caching and size |

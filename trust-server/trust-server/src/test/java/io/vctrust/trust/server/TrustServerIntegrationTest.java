@@ -210,12 +210,13 @@ class TrustServerIntegrationTest {
 
     @BeforeEach
     void awaitReady() throws InterruptedException {
-        for (int i = 0; i < 100 && !sources.ready(); i++) {
+        // Generous limits: a shared build machine may be several times slower than a developer's.
+        for (int i = 0; i < 600 && !sources.ready(); i++) {
             Thread.sleep(50);
         }
         assertThat(sources.ready()).isTrue();
         // Anchor CRLs load in the background after the registry; wait so snapshots are stable during tests.
-        for (int i = 0; i < 100 && crls.heldFor(IACA.certificate()).isEmpty(); i++) {
+        for (int i = 0; i < 600 && crls.heldFor(IACA.certificate()).isEmpty(); i++) {
             Thread.sleep(50);
         }
         assertThat(crls.heldFor(IACA.certificate())).isNotEmpty();

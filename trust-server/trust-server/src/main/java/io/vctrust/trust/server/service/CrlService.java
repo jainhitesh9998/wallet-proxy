@@ -186,7 +186,7 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     /** Loads due anchor CRLs (synchronously); runs on the refresh thread, callable directly in tests. */
     public synchronized void refresh() {
         Instant now = clock.instant();
-        Map<String, Target> targets = targets(registry.snapshot().allAnchors());
+        Map<String, Target> targets = targets(registry.snapshot().allAnchors(), cfg.isFetchAnchorCrls());
         Map<String, AnchorCrl> old = anchorCrls;
         Map<String, AnchorCrl> next = new LinkedHashMap<>();
         Map<String, Future<AnchorCrl>> pending = new LinkedHashMap<>();
@@ -259,7 +259,8 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     }
 
     /** One target per anchor certificate and CRL location. */
-    private static Map<String, Target> targets(Collection<TrustAnchor> anchors) {
+    /** @param fetch whether CRLs are fetched at all; without it only the CRLs pushed with an anchor are targets */
+    private static Map<String, Target> targets(Collection<TrustAnchor> anchors, boolean fetch) {
         Map<String, List<TrustAnchor>> byCert = new LinkedHashMap<>();
         for (TrustAnchor a : anchors) {
             byCert.computeIfAbsent(a.thumbprint(), k -> new ArrayList<>()).add(a);
@@ -279,7 +280,7 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
                 Certificates.crlDistributionPoints(cert).stream().filter(CrlService::isHttp).forEach(urls::add);
             }
             List<TrustAnchor> list = List.copyOf(e.getValue());
-            for (String url : urls) {
+            for (String url : fetch ? urls : Set.<String>of()) {
                 Target t = new Target(e.getKey(), cert, list, url, null);
                 out.put(t.key(), t);
             }

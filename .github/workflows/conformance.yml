@@ -31,20 +31,24 @@ jobs:
     name: Service and library decide alike
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
       # The service regenerates the vectors from the cases and fails when the checked-in file differs.
       - name: The service decides as the vectors say
-        run: mvn --batch-mode --no-transfer-progress test -Dtest=EvaluationVectorsTest,NameRenderingTest -Dsurefire.failIfNoSpecifiedTests=false
+        run: mvn --batch-mode --no-transfer-progress test -Dtest=EvaluationVectorsTest,NameRenderingTest -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$RUNNER_TEMP/build.log"
+        shell: bash
         working-directory: trust-server
+      - name: Report what failed
+        if: failure()
+        run: scripts/ci-report-failures.sh trust-server "$RUNNER_TEMP/build.log"
       - run: npm ci
       # The library decides the same from the snapshots in the vectors, also with the registry listed backwards.
       - name: The library decides as the vectors say
@@ -55,13 +59,13 @@ jobs:
     name: X.509 path validation (x509-limbo)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: packages/trust-client/.cache
           key: x509-limbo-${{ hashFiles('packages/trust-client/scripts/fetch-limbo.sh') }}
@@ -73,8 +77,8 @@ jobs:
     name: Wallet against the reference ecosystem and real credentials
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm
@@ -89,13 +93,13 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm

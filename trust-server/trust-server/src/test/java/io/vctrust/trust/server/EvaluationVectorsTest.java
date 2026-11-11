@@ -96,6 +96,9 @@ class EvaluationVectorsTest {
         r.add("trust.auth.rate-limit.enabled", () -> "false");
         // Nothing is fetched: the vectors must not depend on the network.
         r.add("trust.revocation.fetch-on-demand", () -> "false");
+        // Nor the CRL of an anchor from its distribution point: one of the anchors is a real CA whose CRL can be
+        // fetched, and whether it had arrived when a query was decided would decide the outcome.
+        r.add("trust.revocation.fetch-anchor-crls", () -> "false");
     }
 
     @Autowired
@@ -107,7 +110,7 @@ class EvaluationVectorsTest {
 
     @Test
     void theServiceDecidesAsTheVectorsSay() throws Exception {
-        for (int i = 0; i < 200 && !sources.ready(); i++) {
+        for (int i = 0; i < 600 && !sources.ready(); i++) {
             Thread.sleep(50);
         }
         assertThat(sources.ready()).isTrue();
@@ -120,9 +123,13 @@ class EvaluationVectorsTest {
             }
         }
 
+        // CRLs pushed with an anchor are verified and held in the background, after the registry changed: the snapshot
+        // and the decisions below are taken once they are there, however slow the machine.
+        int pushedCrls = (int) registry.get("anchors").values().stream()
+                .filter(a -> a instanceof Map<?, ?> anchor && anchor.get("constraints") instanceof Map<?, ?> c && c.get("crl") != null).count();
         Map<String, Object> snapshots = new LinkedHashMap<>();
         for (String profile : PROFILES) {
-            snapshots.put(profile, snapshot(profile, registry.get("anchors").size()));
+            snapshots.put(profile, snapshot(profile, registry.get("anchors").size(), pushedCrls));
         }
         List<Map<String, Object>> cases = new ArrayList<>();
         for (Map<String, Object> c : EvaluationVectorsTest.<List<Map<String, Object>>>cast(input.get("cases"))) {
@@ -166,19 +173,20 @@ class EvaluationVectorsTest {
     }
 
     /** The snapshot's content claims, without what differs between runs (issue time, when a source was read). */
-    Map<String, Object> snapshot(String profile, int anchors) throws Exception {
+    Map<String, Object> snapshot(String profile, int anchors, int crls) throws Exception {
         Map<String, Object> claims = Map.of();
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 300; i++) {
             HttpResponse<String> r = send("GET", "/api/v1/snapshot", "key-" + profile, null);
             assertThat(r.statusCode()).as(r.body()).isEqualTo(200);
             claims = new LinkedHashMap<>(SignedJWT.parse(r.body()).getJWTClaimsSet().toJSONObject());
-            // Pushed CRLs are verified and held shortly after the registry changes.
-            if (EvaluationVectorsTest.<List<Object>>cast(claims.getOrDefault("anchors", List.of())).size() == anchors && claims.get("crls") != null) {
+            // The claim is there from the start, as an empty list: wait for the CRLs themselves.
+            if (EvaluationVectorsTest.<List<Object>>cast(claims.getOrDefault("anchors", List.of())).size() == anchors
+                    && EvaluationVectorsTest.<List<Object>>cast(claims.getOrDefault("crls", List.of())).size() >= crls) {
                 break;
             }
             Thread.sleep(100);
         }
-        assertThat(claims.get("crls")).as("the snapshot carries the pushed CRL").isNotNull();
+        assertThat(EvaluationVectorsTest.<List<Object>>cast(claims.getOrDefault("crls", List.of()))).as("the snapshot carries the pushed CRLs").hasSizeGreaterThanOrEqualTo(crls);
         for (String volatileClaim : List.of("iss", "aud", "iat", "exp", "nbf", "jti", "client_id")) {
             claims.remove(volatileClaim);
         }
