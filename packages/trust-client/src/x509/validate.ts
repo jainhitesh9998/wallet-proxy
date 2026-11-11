@@ -90,7 +90,7 @@ function profileIssues(domain: string | undefined, path: Certificate[], anchor: 
     if (leaf.keyUsage && !leaf.keyUsage.digitalSignature) err('issuer.key_usage', 'Signing certificate key usage must include digitalSignature');
   } else if (domain === 'verifier-access') {
     if (leaf.basicConstraints?.ca && path.length > 1) err('verifier.leaf_is_ca', 'Request signing certificate must not be a CA');
-    if (opts.expectedDnsName && !leaf.dnsNames.some((d) => d.toLowerCase() === opts.expectedDnsName!.toLowerCase())) {
+    if (opts.expectedDnsName !== undefined && opts.expectedDnsName !== null && !leaf.dnsNames.some((d) => d.toLowerCase() === opts.expectedDnsName!.toLowerCase())) {
       err('verifier.san_dns', `Leaf certificate has no SAN dNSName matching ${opts.expectedDnsName}`);
     }
   }
@@ -154,7 +154,7 @@ function certificateIssues(c: Certificate, label: string, issues: ValidationIssu
     if (constraint) {
       err('x509.path.unsupported_constraints', `${label} carries ${constraint} (${oid}), which this validator does not evaluate: the chain is refused rather than the constraint ignored`);
     } else if (c.criticalExtensions.includes(oid) && !KNOWN_CRITICAL.has(oid)) {
-      err('x509.path.unrecognized_critical_extension', `${label} has unsupported critical extension ${oid}`);
+      err('x509.path.unrecognized_crit_ext', `${label} has unsupported critical extension ${oid}`);
     }
   }
   const ca = c.basicConstraints?.ca === true;
@@ -168,7 +168,7 @@ function certificateIssues(c: Certificate, label: string, issues: ValidationIssu
     else if (!c.criticalExtensions.includes(OID.subjectAltName)) err('x509.path.invalid_name', `${label} has an empty subject and no critical subjectAltName`);
   }
   const weak = c.publicKey?.kty === 'RSA' ? rsaKeyProblem(c.publicKey) : null;
-  if (weak) err('x509.path.weak_key', `${label} has an unacceptable RSA key: ${weak}`);
+  if (weak) err('x509.path.algorithm_constrained', `${label} has an unacceptable RSA key: ${weak}`);
 }
 
 function checkPath(path: Certificate[], anchor: LocalAnchor, time: Date): ValidationIssue[] {
@@ -191,13 +191,14 @@ function checkPath(path: Certificate[], anchor: LocalAnchor, time: Date): Valida
     const issuer = j + 1 < path.length ? path[j + 1]! : a;
     if (!issuedBy(c, issuer)) err('x509.path.name_chaining', `Issuer of certificate ${j} does not match subject of its issuer`);
     if (!isSignedBy(c, issuer)) err('x509.path.invalid_signature', `Signature of certificate ${j} does not verify`);
-    if (time < c.notBefore || time > c.notAfter) err('x509.path.expired', `Certificate ${j} (${c.subject}) is not valid at ${time.toISOString()}`);
+    if (time < c.notBefore) err('x509.path.not_yet_valid', `Certificate ${j} (${c.subject}) is not valid before ${c.notBefore.toISOString()}`);
+    else if (time > c.notAfter) err('x509.path.expired', `Certificate ${j} (${c.subject}) is not valid after ${c.notAfter.toISOString()}`);
     certificateIssues(c, `Certificate ${j}`, issues);
     if (j >= 1) {
-      if (!c.basicConstraints?.ca) err('x509.path.not_ca', `Intermediate certificate ${j} is not a CA`);
-      if (c.keyUsage && !c.keyUsage.keyCertSign) err('x509.path.key_usage', `Intermediate certificate ${j} cannot sign certificates`);
+      if (!c.basicConstraints?.ca) err('x509.path.not_ca_cert', `Intermediate certificate ${j} is not a CA`);
+      if (c.keyUsage && !c.keyUsage.keyCertSign) err('x509.path.invalid_key_usage', `Intermediate certificate ${j} cannot sign certificates`);
       const pl = c.basicConstraints?.pathLen;
-      if (pl !== undefined && intermediatesBelow(path, j) > pl) err('x509.path.path_length', `Path length constraint of certificate ${j} exceeded`);
+      if (pl !== undefined && intermediatesBelow(path, j) > pl) err('x509.path.path_too_long', `Path length constraint of certificate ${j} exceeded`);
     }
   }
   return issues;

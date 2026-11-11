@@ -6,6 +6,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
@@ -23,6 +24,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
@@ -60,6 +62,7 @@
           "errors" : [
             "x509.anchor_doctype"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -77,6 +80,7 @@
           "errors" : [
             "x509.anchor_doctype"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -112,6 +116,7 @@
           "errors" : [
             "mdoc.ds.eku"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -129,6 +134,7 @@
           "errors" : [
             "mdoc.ds.eku"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -164,6 +170,7 @@
           "errors" : [
             "mdoc.ds.country"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -181,6 +188,7 @@
           "errors" : [
             "mdoc.ds.country"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -214,6 +222,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -229,6 +238,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -262,6 +272,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -277,6 +288,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -313,6 +325,7 @@
           "errors" : [
             "x509.revoked"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -330,6 +343,7 @@
           "errors" : [
             "x509.revoked"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -365,6 +379,7 @@
           "errors" : [
             "x509.on_hold"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -382,6 +397,7 @@
           "errors" : [
             "x509.on_hold"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -415,6 +431,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
@@ -432,6 +449,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
@@ -467,6 +485,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
@@ -484,6 +503,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
@@ -519,6 +539,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -534,6 +555,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -567,6 +589,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -582,6 +605,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -615,6 +639,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-by-subject",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -637,6 +662,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -672,6 +698,7 @@
           "errors" : [
             "mdoc.ds.eku"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -690,6 +717,7 @@
             "mdoc.ds.eku",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -725,6 +753,7 @@
           "errors" : [
             "mdoc.ds.eku"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -743,6 +772,7 @@
             "mdoc.ds.eku",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -777,6 +807,7 @@
           "errors" : [
             "mdoc.ds.eku"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -795,6 +826,7 @@
             "mdoc.ds.eku",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -830,6 +862,7 @@
           "errors" : [
             "mdoc.ds.country"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -847,6 +880,7 @@
           "errors" : [
             "mdoc.ds.country"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -882,6 +916,7 @@
           "errors" : [
             "x509.parse"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -893,6 +928,7 @@
           "errors" : [
             "x509.parse"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -920,12 +956,13 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
           "trustedAuthorities" : [
-            true,
-            false
+            "qHsWZVMT88NapzfT7R_CPnuJSmA",
+            null
           ],
           "warnings" : [ ],
           "x509" : {
@@ -940,12 +977,13 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
           "trustedAuthorities" : [
-            true,
-            false
+            "qHsWZVMT88NapzfT7R_CPnuJSmA",
+            null
           ],
           "warnings" : [ ],
           "x509" : {
@@ -992,6 +1030,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://dmv.vectors.example"
           ],
@@ -1003,6 +1042,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-dmv",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://dmv.vectors.example"
           ],
@@ -1030,6 +1070,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1039,6 +1080,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1064,6 +1106,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1073,6 +1116,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1098,6 +1142,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1107,6 +1152,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1134,6 +1180,7 @@
           "errors" : [
             "entity.not_authorized"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://dmv.vectors.example"
           ],
@@ -1147,6 +1194,7 @@
           "errors" : [
             "entity.not_authorized"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://dmv.vectors.example"
           ],
@@ -1172,8 +1220,89 @@
       "expect" : {
         "lenient" : {
           "decision" : "TRUSTED",
+          "entity" : "vec-dmv",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "URL:https://dmv.vectors.example"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-dmv",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "URL:https://dmv.vectors.example"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "issuer URL with a format of only spaces (as if none was given)",
+      "query" : {
+        "context" : {
+          "credentialFormat" : " ",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "https://dmv.vectors.example"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-dmv",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "URL:https://dmv.vectors.example"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-dmv",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "URL:https://dmv.vectors.example"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "issuer URL with a type of only spaces (as if none was given)",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : " \t",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "https://dmv.vectors.example"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
           "entity" : "vec-open",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://open.vectors.example"
           ],
@@ -1187,6 +1316,7 @@
           "errors" : [
             "entity.not_authorized"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://open.vectors.example"
           ],
@@ -1216,6 +1346,7 @@
           "errors" : [
             "entity.status"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://revoked.vectors.example"
           ],
@@ -1229,6 +1360,7 @@
           "errors" : [
             "entity.status"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://revoked.vectors.example"
           ],
@@ -1256,6 +1388,7 @@
           "errors" : [
             "entity.status"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://expired.vectors.example"
           ],
@@ -1269,6 +1402,7 @@
           "errors" : [
             "entity.status"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://expired.vectors.example"
           ],
@@ -1294,6 +1428,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-open",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://open.vectors.example"
           ],
@@ -1307,6 +1442,7 @@
           "errors" : [
             "entity.not_authorized"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://open.vectors.example"
           ],
@@ -1334,6 +1470,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [
             "URL:https://wallet.vectors.example"
           ],
@@ -1347,6 +1484,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [
             "URL:https://wallet.vectors.example"
           ],
@@ -1374,6 +1512,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1383,6 +1522,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1406,6 +1546,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1415,6 +1556,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1438,6 +1580,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-did",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1449,6 +1592,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-did",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1479,6 +1623,7 @@
           "errors" : [
             "entity.not_authorized"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1492,6 +1637,7 @@
           "errors" : [
             "entity.not_authorized"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1526,6 +1672,7 @@
           "errors" : [
             "did.vm_not_found"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1539,6 +1686,7 @@
           "errors" : [
             "did.vm_not_found"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1566,6 +1714,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-did",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1577,6 +1726,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-did",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1607,6 +1757,7 @@
           "errors" : [
             "did.vm_not_found"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1620,6 +1771,7 @@
           "errors" : [
             "did.vm_not_found"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -1649,6 +1801,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1660,6 +1813,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1685,6 +1839,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1694,6 +1849,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1722,6 +1878,7 @@
             "did.invalid",
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1734,6 +1891,7 @@
             "did.invalid",
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1759,8 +1917,10 @@
           "decision" : "TRUSTED",
           "entity" : "vec-rsa",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
-            "ANCHOR:vec-rsa"
+            "ANCHOR:vec-rsa",
+            "X509_SKI:AygiZrCCPWpSxgF_uaB0MZNUZrs"
           ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -1780,6 +1940,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1812,8 +1973,10 @@
           "decision" : "TRUSTED",
           "entity" : "vec-rsa",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
-            "ANCHOR:vec-rsa"
+            "ANCHOR:vec-rsa",
+            "X509_SKI:AygiZrCCPWpSxgF_uaB0MZNUZrs"
           ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -1834,6 +1997,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1869,8 +2033,10 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : "vectors",
           "matched" : [
-            "ANCHOR:vec-rsa"
+            "ANCHOR:vec-rsa",
+            "X509_SKI:AygiZrCCPWpSxgF_uaB0MZNUZrs"
           ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -1891,6 +2057,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1924,6 +2091,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-by-subject",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -1946,6 +2114,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -1980,6 +2149,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -2003,6 +2173,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2036,6 +2207,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-a-by-uri",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://fed.example/rp",
             "URL:https://fed.example/rp",
@@ -2059,6 +2231,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2091,6 +2264,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-a-by-uri",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://fed.example/rp",
             "URL:https://fed.example/rp",
@@ -2114,6 +2288,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2147,6 +2322,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-by-ski",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://fed.example/rp",
             "URL:https://fed.example/rp",
@@ -2170,6 +2346,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2203,6 +2380,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-by-bmp-subject",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "X509_SUBJECT:CN=#1e100042004d00500020006e0061006d0065,O=#1e12004f006400640020004e0061006d00650073,C=UT"
           ],
@@ -2224,6 +2402,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2256,8 +2435,10 @@
           "decision" : "TRUSTED",
           "entity" : "vec-rsa",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
-            "ANCHOR:vec-rsa"
+            "ANCHOR:vec-rsa",
+            "X509_SKI:AygiZrCCPWpSxgF_uaB0MZNUZrs"
           ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -2277,6 +2458,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2308,8 +2490,480 @@
       "expect" : {
         "lenient" : {
           "decision" : "TRUSTED",
+          "entity" : "vec-rsa",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-rsa"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN",
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN",
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "chain with an intermediate under the RSA root",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB1DCCAXqgAwIBAgIJAJ04QjauRYzyMAoGCCqGSM49BAMCMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwHhcNMjYxMTExMjEzMDIyWhcNNDYwMTEwMjEzMDIyWjBEMQswCQYDVQQGEwJVVDEQMA4GA1UECgwHQ2hhaW5lZDEjMCEGA1UEAwwaTGVhZiB1bmRlciBhbiBpbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR+PjhrEO06K8h5HuShYLTq9pR3Mc9byX4oAFWyhntS/OnU0sUl9Fr50xeo6T3AEm0V8nGoXPSpA9mUuxnuJH8eo2AwXjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUmtN2CDDY8KzIAZOFQGqtLDo4C/cwHwYDVR0jBBgwFoAU0CZ0ucKi8sFrWinteDYtjcArPLowCgYIKoZIzj0EAwIDSAAwRQIhAIVNdFbvhq6xdGMJ1QXF8YkZvr3pYWSCK+gosHMGcwo+AiAH74XjsC/PT09Knsw2j3U4fVVNpwIPeoxUSzdthRZR6w==",
+            "MIICdzCCAV+gAwIBAgIJAJn8QWY2Jfq2MA0GCSqGSIb3DQEBCwUAMCAxCzAJBgNVBAYTAlVUMREwDwYDVQQDDAhSU0EgUm9vdDAeFw0yNjExMTEyMTMwMjJaFw00NjAxMTAyMTMwMjJaMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQJcsXGY+x/BUgG7p5wnKU7J2dMSUAXCLj0lLLe2wGuVRIShE+LC4LPRYBWSmLemtaF9o6BwtAdbwFBUbKI5J6ro2YwZDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQU0CZ0ucKi8sFrWinteDYtjcArPLowHwYDVR0jBBgwFoAUxYHEzlr/vkMxqUVEH7Sa9ZPAc3gwDQYJKoZIhvcNAQELBQADggEBAIHHjcEs2xLlFsjwBBQp8Xkz/PV09Jm5AS1tvGLezX16vxYFIduSg5xokVOrVmrFek8mDfPECcicq2zq9/EnpHSdfSKdDVYEOkFSSdnQW6YKl3LvUO2mXn0ustXS04FdC9cbvQhmThn7Pdhr7eSkQ855FHM+/bHHXYi+70vk+3qcGhsInWVR3B8woSRYSA2uEURiU+lo8iWuSjVwABs5Ex6KfXu+3bUgL9VspuD6ZDefNEmKT5P7fkMO2veQLauqXp4crxJnWA2Buipg8wXuUUCozt7AutuZkFrpgczd4BYFbbD5EbeWM1/8wk3VYQbUzvJsyHBqxXM60aSwkYnZxlo="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-rsa",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-rsa"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN",
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN",
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "the same chain with the root appended",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB1DCCAXqgAwIBAgIJAJ04QjauRYzyMAoGCCqGSM49BAMCMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwHhcNMjYxMTExMjEzMDIyWhcNNDYwMTEwMjEzMDIyWjBEMQswCQYDVQQGEwJVVDEQMA4GA1UECgwHQ2hhaW5lZDEjMCEGA1UEAwwaTGVhZiB1bmRlciBhbiBpbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR+PjhrEO06K8h5HuShYLTq9pR3Mc9byX4oAFWyhntS/OnU0sUl9Fr50xeo6T3AEm0V8nGoXPSpA9mUuxnuJH8eo2AwXjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUmtN2CDDY8KzIAZOFQGqtLDo4C/cwHwYDVR0jBBgwFoAU0CZ0ucKi8sFrWinteDYtjcArPLowCgYIKoZIzj0EAwIDSAAwRQIhAIVNdFbvhq6xdGMJ1QXF8YkZvr3pYWSCK+gosHMGcwo+AiAH74XjsC/PT09Knsw2j3U4fVVNpwIPeoxUSzdthRZR6w==",
+            "MIICdzCCAV+gAwIBAgIJAJn8QWY2Jfq2MA0GCSqGSIb3DQEBCwUAMCAxCzAJBgNVBAYTAlVUMREwDwYDVQQDDAhSU0EgUm9vdDAeFw0yNjExMTEyMTMwMjJaFw00NjAxMTAyMTMwMjJaMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQJcsXGY+x/BUgG7p5wnKU7J2dMSUAXCLj0lLLe2wGuVRIShE+LC4LPRYBWSmLemtaF9o6BwtAdbwFBUbKI5J6ro2YwZDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQU0CZ0ucKi8sFrWinteDYtjcArPLowHwYDVR0jBBgwFoAUxYHEzlr/vkMxqUVEH7Sa9ZPAc3gwDQYJKoZIhvcNAQELBQADggEBAIHHjcEs2xLlFsjwBBQp8Xkz/PV09Jm5AS1tvGLezX16vxYFIduSg5xokVOrVmrFek8mDfPECcicq2zq9/EnpHSdfSKdDVYEOkFSSdnQW6YKl3LvUO2mXn0ustXS04FdC9cbvQhmThn7Pdhr7eSkQ855FHM+/bHHXYi+70vk+3qcGhsInWVR3B8woSRYSA2uEURiU+lo8iWuSjVwABs5Ex6KfXu+3bUgL9VspuD6ZDefNEmKT5P7fkMO2veQLauqXp4crxJnWA2Buipg8wXuUUCozt7AutuZkFrpgczd4BYFbbD5EbeWM1/8wk3VYQbUzvJsyHBqxXM60aSwkYnZxlo=",
+            "MIIDCDCCAfCgAwIBAgIJAINgcNX6Z8xhMA0GCSqGSIb3DQEBCwUAMCAxCzAJBgNVBAYTAlVUMREwDwYDVQQDDAhSU0EgUm9vdDAeFw0yNjEwMzEyMDA4NThaFw00NjEwMjYyMDA4NThaMCAxCzAJBgNVBAYTAlVUMREwDwYDVQQDDAhSU0EgUm9vdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAOqTtJkd1wofDlFzQXtyo6fFBBXPnzr8+NTB1AJHcs7xeOeLW0eIV+dTKagi1oxqzuSUGv2u+HUuIQrO5lhs2E/su2t95JkVVL1RT95ylWl+USvlCoos5+GmAqwmsUwbCD9yL8d5Z3KWr8uSPdvKJEneR2QVSwSBVsVRNggZglZc+22tbBvVffedEc2SLe0jbxQi7JX5H8KvXqcbsW8HiRSQB4b7ceuH0vs2PAle/Ggs4rTj0AfFgDVOJsmhswbXVAmi0hXAGxRGCKghEo82x3NTvbiwfXKBqSB+9a+mv4H4Ar0n3KxzB88IK2PYLSpAlP0HaRuBp7E6kv6TEg5fbFECAwEAAaNFMEMwEgYDVR0TAQH/BAgwBgEB/wIBATAOBgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFMWBxM5a/75DMalFRB+0mvWTwHN4MA0GCSqGSIb3DQEBCwUAA4IBAQBnC4wX94UlNtaZ1tlIld1lUaidxa3rxyMBZd4vb1oYLR6Td6MhwXFa+j/zlXePkOS3MzVi3mU+YVQuuP2W+gYuAdp20DiZpOWojS4CaTQOaoeae25/LdYCKFKqfp8bNiMkkyoe6HGRHklDisHA1JnrsQMUwIEodiT2q9CbEVUKU8VwPQmHru+Oc37jxjuCduM6ahayMk39sEv0wECGDIfEiZxQq6IjYi9enlWLFd9CxgIFihC9lT3FRZ11TGY9DwtGFjUiuktPYcZZMo3dqzF4x2kKee7XyLM6pkluaC9+V6zh8Ksv84NaxUHoDeCxa6kqAN1m9Lea8uQGbtLZZlvc"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "UNKNOWN",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "UNKNOWN",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "the same leaf without its intermediate",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB1DCCAXqgAwIBAgIJAJ04QjauRYzyMAoGCCqGSM49BAMCMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwHhcNMjYxMTExMjEzMDIyWhcNNDYwMTEwMjEzMDIyWjBEMQswCQYDVQQGEwJVVDEQMA4GA1UECgwHQ2hhaW5lZDEjMCEGA1UEAwwaTGVhZiB1bmRlciBhbiBpbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR+PjhrEO06K8h5HuShYLTq9pR3Mc9byX4oAFWyhntS/OnU0sUl9Fr50xeo6T3AEm0V8nGoXPSpA9mUuxnuJH8eo2AwXjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUmtN2CDDY8KzIAZOFQGqtLDo4C/cwHwYDVR0jBBgwFoAU0CZ0ucKi8sFrWinteDYtjcArPLowCgYIKoZIzj0EAwIDSAAwRQIhAIVNdFbvhq6xdGMJ1QXF8YkZvr3pYWSCK+gosHMGcwo+AiAH74XjsC/PT09Knsw2j3U4fVVNpwIPeoxUSzdthRZR6w=="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "UNKNOWN",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "UNKNOWN",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "the same chain in the wrong order",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICdzCCAV+gAwIBAgIJAJn8QWY2Jfq2MA0GCSqGSIb3DQEBCwUAMCAxCzAJBgNVBAYTAlVUMREwDwYDVQQDDAhSU0EgUm9vdDAeFw0yNjExMTEyMTMwMjJaFw00NjAxMTAyMTMwMjJaMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQJcsXGY+x/BUgG7p5wnKU7J2dMSUAXCLj0lLLe2wGuVRIShE+LC4LPRYBWSmLemtaF9o6BwtAdbwFBUbKI5J6ro2YwZDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQU0CZ0ucKi8sFrWinteDYtjcArPLowHwYDVR0jBBgwFoAUxYHEzlr/vkMxqUVEH7Sa9ZPAc3gwDQYJKoZIhvcNAQELBQADggEBAIHHjcEs2xLlFsjwBBQp8Xkz/PV09Jm5AS1tvGLezX16vxYFIduSg5xokVOrVmrFek8mDfPECcicq2zq9/EnpHSdfSKdDVYEOkFSSdnQW6YKl3LvUO2mXn0ustXS04FdC9cbvQhmThn7Pdhr7eSkQ855FHM+/bHHXYi+70vk+3qcGhsInWVR3B8woSRYSA2uEURiU+lo8iWuSjVwABs5Ex6KfXu+3bUgL9VspuD6ZDefNEmKT5P7fkMO2veQLauqXp4crxJnWA2Buipg8wXuUUCozt7AutuZkFrpgczd4BYFbbD5EbeWM1/8wk3VYQbUzvJsyHBqxXM60aSwkYnZxlo=",
+            "MIIB1DCCAXqgAwIBAgIJAJ04QjauRYzyMAoGCCqGSM49BAMCMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwHhcNMjYxMTExMjEzMDIyWhcNNDYwMTEwMjEzMDIyWjBEMQswCQYDVQQGEwJVVDEQMA4GA1UECgwHQ2hhaW5lZDEjMCEGA1UEAwwaTGVhZiB1bmRlciBhbiBpbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR+PjhrEO06K8h5HuShYLTq9pR3Mc9byX4oAFWyhntS/OnU0sUl9Fr50xeo6T3AEm0V8nGoXPSpA9mUuxnuJH8eo2AwXjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUmtN2CDDY8KzIAZOFQGqtLDo4C/cwHwYDVR0jBBgwFoAU0CZ0ucKi8sFrWinteDYtjcArPLowCgYIKoZIzj0EAwIDSAAwRQIhAIVNdFbvhq6xdGMJ1QXF8YkZvr3pYWSCK+gosHMGcwo+AiAH74XjsC/PT09Knsw2j3U4fVVNpwIPeoxUSzdthRZR6w=="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.chain_too_long"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.chain_too_long"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "x5c with more certificates than a chain is read for",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.anchor_path_length",
+            "x509.path.invalid_key_usage"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.anchor_path_length",
+            "x509.path.invalid_key_usage"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "x5c of exactly the longest chain read, the certificate repeated",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S",
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-rsa",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-rsa"
+          ],
+          "trustedAuthorities" : [
+            "0CZ0ucKi8sFrWinteDYtjcArPLo"
+          ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN",
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [
+            "0CZ0ucKi8sFrWinteDYtjcArPLo"
+          ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN",
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "trusted_authorities aki listing the root's key identifier before the intermediate's",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci",
+          "trustedAuthorities" : [
+            {
+              "type" : "aki",
+              "values" : [
+                "xYHEzlr_vkMxqUVEH7Sa9ZPAc3g",
+                "0CZ0ucKi8sFrWinteDYtjcArPLo"
+              ]
+            }
+          ]
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB1DCCAXqgAwIBAgIJAJ04QjauRYzyMAoGCCqGSM49BAMCMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwHhcNMjYxMTExMjEzMDIyWhcNNDYwMTEwMjEzMDIyWjBEMQswCQYDVQQGEwJVVDEQMA4GA1UECgwHQ2hhaW5lZDEjMCEGA1UEAwwaTGVhZiB1bmRlciBhbiBpbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR+PjhrEO06K8h5HuShYLTq9pR3Mc9byX4oAFWyhntS/OnU0sUl9Fr50xeo6T3AEm0V8nGoXPSpA9mUuxnuJH8eo2AwXjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUmtN2CDDY8KzIAZOFQGqtLDo4C/cwHwYDVR0jBBgwFoAU0CZ0ucKi8sFrWinteDYtjcArPLowCgYIKoZIzj0EAwIDSAAwRQIhAIVNdFbvhq6xdGMJ1QXF8YkZvr3pYWSCK+gosHMGcwo+AiAH74XjsC/PT09Knsw2j3U4fVVNpwIPeoxUSzdthRZR6w==",
+            "MIICdzCCAV+gAwIBAgIJAJn8QWY2Jfq2MA0GCSqGSIb3DQEBCwUAMCAxCzAJBgNVBAYTAlVUMREwDwYDVQQDDAhSU0EgUm9vdDAeFw0yNjExMTEyMTMwMjJaFw00NjAxMTAyMTMwMjJaMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQJcsXGY+x/BUgG7p5wnKU7J2dMSUAXCLj0lLLe2wGuVRIShE+LC4LPRYBWSmLemtaF9o6BwtAdbwFBUbKI5J6ro2YwZDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQU0CZ0ucKi8sFrWinteDYtjcArPLowHwYDVR0jBBgwFoAUxYHEzlr/vkMxqUVEH7Sa9ZPAc3gwDQYJKoZIhvcNAQELBQADggEBAIHHjcEs2xLlFsjwBBQp8Xkz/PV09Jm5AS1tvGLezX16vxYFIduSg5xokVOrVmrFek8mDfPECcicq2zq9/EnpHSdfSKdDVYEOkFSSdnQW6YKl3LvUO2mXn0ustXS04FdC9cbvQhmThn7Pdhr7eSkQ855FHM+/bHHXYi+70vk+3qcGhsInWVR3B8woSRYSA2uEURiU+lo8iWuSjVwABs5Ex6KfXu+3bUgL9VspuD6ZDefNEmKT5P7fkMO2veQLauqXp4crxJnWA2Buipg8wXuUUCozt7AutuZkFrpgczd4BYFbbD5EbeWM1/8wk3VYQbUzvJsyHBqxXM60aSwkYnZxlo="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-rsa",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-rsa"
+          ],
+          "trustedAuthorities" : [
+            "xYHEzlr_vkMxqUVEH7Sa9ZPAc3g"
+          ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN",
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [
+            "xYHEzlr_vkMxqUVEH7Sa9ZPAc3g"
+          ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN",
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "trusted_authorities aki listing only the root's key identifier",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci",
+          "trustedAuthorities" : [
+            {
+              "type" : "aki",
+              "values" : [
+                "bm9wZQ",
+                "xYHEzlr_vkMxqUVEH7Sa9ZPAc3g"
+              ]
+            }
+          ]
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB1DCCAXqgAwIBAgIJAJ04QjauRYzyMAoGCCqGSM49BAMCMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwHhcNMjYxMTExMjEzMDIyWhcNNDYwMTEwMjEzMDIyWjBEMQswCQYDVQQGEwJVVDEQMA4GA1UECgwHQ2hhaW5lZDEjMCEGA1UEAwwaTGVhZiB1bmRlciBhbiBpbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR+PjhrEO06K8h5HuShYLTq9pR3Mc9byX4oAFWyhntS/OnU0sUl9Fr50xeo6T3AEm0V8nGoXPSpA9mUuxnuJH8eo2AwXjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUmtN2CDDY8KzIAZOFQGqtLDo4C/cwHwYDVR0jBBgwFoAU0CZ0ucKi8sFrWinteDYtjcArPLowCgYIKoZIzj0EAwIDSAAwRQIhAIVNdFbvhq6xdGMJ1QXF8YkZvr3pYWSCK+gosHMGcwo+AiAH74XjsC/PT09Knsw2j3U4fVVNpwIPeoxUSzdthRZR6w==",
+            "MIICdzCCAV+gAwIBAgIJAJn8QWY2Jfq2MA0GCSqGSIb3DQEBCwUAMCAxCzAJBgNVBAYTAlVUMREwDwYDVQQDDAhSU0EgUm9vdDAeFw0yNjExMTEyMTMwMjJaFw00NjAxMTAyMTMwMjJaMDkxCzAJBgNVBAYTAlVUMRAwDgYDVQQKDAdDaGFpbmVkMRgwFgYDVQQDDA9JbnRlcm1lZGlhdGUgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQJcsXGY+x/BUgG7p5wnKU7J2dMSUAXCLj0lLLe2wGuVRIShE+LC4LPRYBWSmLemtaF9o6BwtAdbwFBUbKI5J6ro2YwZDASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQU0CZ0ucKi8sFrWinteDYtjcArPLowHwYDVR0jBBgwFoAUxYHEzlr/vkMxqUVEH7Sa9ZPAc3gwDQYJKoZIhvcNAQELBQADggEBAIHHjcEs2xLlFsjwBBQp8Xkz/PV09Jm5AS1tvGLezX16vxYFIduSg5xokVOrVmrFek8mDfPECcicq2zq9/EnpHSdfSKdDVYEOkFSSdnQW6YKl3LvUO2mXn0ustXS04FdC9cbvQhmThn7Pdhr7eSkQ855FHM+/bHHXYi+70vk+3qcGhsInWVR3B8woSRYSA2uEURiU+lo8iWuSjVwABs5Ex6KfXu+3bUgL9VspuD6ZDefNEmKT5P7fkMO2veQLauqXp4crxJnWA2Buipg8wXuUUCozt7AutuZkFrpgczd4BYFbbD5EbeWM1/8wk3VYQbUzvJsyHBqxXM60aSwkYnZxlo="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
           "entity" : "vec-by-long-subject",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "X509_SUBJECT:2.5.4.97=#0c115641544154554944313233343536373839,O=walt.id GmbH,C=AT,CN=walt.id PID Provider"
           ],
@@ -2331,6 +2985,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2367,6 +3022,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -2384,6 +3040,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -2420,6 +3077,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
@@ -2439,6 +3097,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : "vectors",
           "matched" : [
             "ANCHOR:vec-dmv"
           ],
@@ -2475,6 +3134,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-pinned",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "X509_CERT:tN_t5PNClQmQXDKHh7BxKMU08OuG9cmehE-moSn41fA"
           ],
@@ -2494,6 +3154,7 @@
           "errors" : [
             "entity.not_authorized"
           ],
+          "framework" : "vectors",
           "matched" : [
             "X509_CERT:tN_t5PNClQmQXDKHh7BxKMU08OuG9cmehE-moSn41fA"
           ],
@@ -2530,6 +3191,7 @@
           "errors" : [
             "x509.pinned_expired"
           ],
+          "framework" : "vectors",
           "matched" : [
             "X509_CERT:tN_t5PNClQmQXDKHh7BxKMU08OuG9cmehE-moSn41fA"
           ],
@@ -2550,6 +3212,7 @@
             "entity.not_authorized",
             "x509.pinned_expired"
           ],
+          "framework" : "vectors",
           "matched" : [
             "X509_CERT:tN_t5PNClQmQXDKHh7BxKMU08OuG9cmehE-moSn41fA"
           ],
@@ -2585,6 +3248,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -2600,6 +3264,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -2636,6 +3301,7 @@
             "x509.anchor_expired",
             "x509.path.expired"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2652,6 +3318,7 @@
             "x509.anchor_expired",
             "x509.path.expired"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2684,6 +3351,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-verifier",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -2707,6 +3375,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2740,6 +3409,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-verifier",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -2765,6 +3435,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2800,6 +3471,7 @@
           "errors" : [
             "client_id.response_uri_host"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -2824,6 +3496,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2859,6 +3532,7 @@
           "errors" : [
             "client_id.response_uri_host"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -2883,6 +3557,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2918,6 +3593,7 @@
           "errors" : [
             "client_id.response_uri_host"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -2942,6 +3618,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -2975,6 +3652,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-verifier",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -2998,6 +3676,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3033,6 +3712,7 @@
           "errors" : [
             "verifier.san_dns"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3051,6 +3731,7 @@
             "verifier.san_dns",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3086,6 +3767,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -3103,6 +3785,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [
@@ -3138,6 +3821,7 @@
           "errors" : [
             "client_id.x5c_required"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example"
           ],
@@ -3151,6 +3835,7 @@
           "errors" : [
             "client_id.x5c_required"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example"
           ],
@@ -3177,6 +3862,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-verifier",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -3199,6 +3885,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3234,6 +3921,7 @@
           "errors" : [
             "client_id.x509_hash_mismatch"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -3257,6 +3945,7 @@
             "client_id.x509_hash_mismatch",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3292,6 +3981,7 @@
           "errors" : [
             "client_id.x5c_required"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3303,6 +3993,7 @@
           "errors" : [
             "client_id.x5c_required"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3324,10 +4015,245 @@
       "expect" : {
         "lenient" : {
           "decision" : "NOT_TRUSTED",
+          "entity" : "vec-verifier",
+          "errors" : [
+            "client_id.x509_hash_mismatch"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:verifier.example",
+            "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "client_id.x509_hash_mismatch",
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "x509_hash with an empty hash",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp",
+          "responseUri" : "https://verifier.example/post"
+        },
+        "role" : "verifier",
+        "subject" : {
+          "identifier" : "x509_hash:",
+          "x5c" : [
+            "MIIB6zCCAZGgAwIBAgIJAKrzkwjDGI/6MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMD8xCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxWZXJpZmllciBJbmMxGTAXBgNVBAMMEHZlcmlmaWVyLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASNAYI3JZHHSEW/M3fSiT0/6qEY8/cX1zaH2YLpQ1BPY84DoDetWRm4jW9pcplGy9y8wxt1M+2anSw0FbeEUpHdo30wezAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUCnRj815ZXY6/924MWoergbZIRcAwHwYDVR0jBBgwFoAUmMJXQHf5cPPBSF/CAUDUcXnTRHEwGwYDVR0RBBQwEoIQdmVyaWZpZXIuZXhhbXBsZTAKBggqhkjOPQQDAgNIADBFAiBfmFJaE7YV8m2jv5+zCtO0ostv86noqzjyNDrbeS2eQQIhAI+ccHvniVi9kE7eYGHbQzUtOjqnFjiBX0Ou+JXREUUo"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "client_id.response_uri_host",
+            "verifier.san_dns"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "client_id.response_uri_host",
+            "verifier.san_dns",
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "x509_san_dns with an empty name, certificate under the anchor",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp",
+          "responseUri" : "https://verifier.example/post"
+        },
+        "role" : "verifier",
+        "subject" : {
+          "identifier" : "x509_san_dns:",
+          "x5c" : [
+            "MIIB6zCCAZGgAwIBAgIJAKrzkwjDGI/6MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMD8xCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxWZXJpZmllciBJbmMxGTAXBgNVBAMMEHZlcmlmaWVyLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASNAYI3JZHHSEW/M3fSiT0/6qEY8/cX1zaH2YLpQ1BPY84DoDetWRm4jW9pcplGy9y8wxt1M+2anSw0FbeEUpHdo30wezAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUCnRj815ZXY6/924MWoergbZIRcAwHwYDVR0jBBgwFoAUmMJXQHf5cPPBSF/CAUDUcXnTRHEwGwYDVR0RBBQwEoIQdmVyaWZpZXIuZXhhbXBsZTAKBggqhkjOPQQDAgNIADBFAiBfmFJaE7YV8m2jv5+zCtO0ostv86noqzjyNDrbeS2eQQIhAI+ccHvniVi9kE7eYGHbQzUtOjqnFjiBX0Ou+JXREUUo"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "client_id.response_uri_host",
+            "client_id.san_dns_mismatch"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "client_id.response_uri_host",
+            "client_id.san_dns_mismatch"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "x509_san_dns with an empty name, certificate outside the anchors",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp",
+          "responseUri" : "https://verifier.example/post"
+        },
+        "role" : "verifier",
+        "subject" : {
+          "identifier" : "x509_san_dns:",
+          "x5c" : [
+            "MIIBsjCCAVigAwIBAgIJANVygxOXjjiGMAoGCCqGSM49BAMCMD8xCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxWZXJpZmllciBJbmMxGTAXBgNVBAMMEHZlcmlmaWVyLmV4YW1wbGUwHhcNMjYxMTAxMDg0MjQ2WhcNMzYxMDI5MDg0MjQ2WjA/MQswCQYDVQQGEwJVVDEVMBMGA1UECgwMVmVyaWZpZXIgSW5jMRkwFwYDVQQDDBB2ZXJpZmllci5leGFtcGxlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGk7YAX9eBFv+Hyl3fXf4NEdNRTUY2KHlYN8/oelpmSUYWHz6Kl7Tg1HvbIUuIASyzIpeR1v60T1aqR5PZX6tXKM9MDswDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwGwYDVR0RBBQwEoIQdmVyaWZpZXIuZXhhbXBsZTAKBggqhkjOPQQDAgNIADBFAiEAoO2+TJW0VclNQMFvIW6jCeCjmP4au3cOb4tyIi7sFcsCICSAMCgT2oho3wezGgT+Uq5ZIB+V8mbJXpN1MahJoL8u"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-verifier",
+          "errors" : [
+            "client_id.response_uri_host"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:verifier.example",
+            "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "client_id.response_uri_host",
+            "identifier.unbound",
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "x509_san_dns with an empty response_uri",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp",
+          "responseUri" : ""
+        },
+        "role" : "verifier",
+        "subject" : {
+          "identifier" : "x509_san_dns:verifier.example",
+          "x5c" : [
+            "MIIB6zCCAZGgAwIBAgIJAKrzkwjDGI/6MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMD8xCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxWZXJpZmllciBJbmMxGTAXBgNVBAMMEHZlcmlmaWVyLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASNAYI3JZHHSEW/M3fSiT0/6qEY8/cX1zaH2YLpQ1BPY84DoDetWRm4jW9pcplGy9y8wxt1M+2anSw0FbeEUpHdo30wezAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUCnRj815ZXY6/924MWoergbZIRcAwHwYDVR0jBBgwFoAUmMJXQHf5cPPBSF/CAUDUcXnTRHEwGwYDVR0RBBQwEoIQdmVyaWZpZXIuZXhhbXBsZTAKBggqhkjOPQQDAgNIADBFAiBfmFJaE7YV8m2jv5+zCtO0ostv86noqzjyNDrbeS2eQQIhAI+ccHvniVi9kE7eYGHbQzUtOjqnFjiBX0Ou+JXREUUo"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
           "entity" : "vec-suspended",
           "errors" : [
             "entity.status"
           ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://fed.example/rp",
             "URL:https://fed.example/rp",
@@ -3351,6 +4277,7 @@
           "errors" : [
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3383,6 +4310,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-by-hash-client-id",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "CLIENT_ID:x509_hash:FLJPM3iNn_ygjgRPB-3lq9Uf9XJV61nRnZSzpqVS0_U"
           ],
@@ -3400,6 +4328,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-by-hash-client-id",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "CLIENT_ID:x509_hash:FLJPM3iNn_ygjgRPB-3lq9Uf9XJV61nRnZSzpqVS0_U"
           ],
@@ -3438,6 +4367,7 @@
             "client_id.x509_hash_mismatch",
             "identifier.unbound"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -3462,6 +4392,7 @@
             "identifier.unbound",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3497,6 +4428,7 @@
           "errors" : [
             "client_id.x5c_required"
           ],
+          "framework" : "vectors",
           "matched" : [
             "CLIENT_ID:x509_hash:FLJPM3iNn_ygjgRPB-3lq9Uf9XJV61nRnZSzpqVS0_U"
           ],
@@ -3510,6 +4442,7 @@
           "errors" : [
             "client_id.x5c_required"
           ],
+          "framework" : "vectors",
           "matched" : [
             "CLIENT_ID:x509_hash:FLJPM3iNn_ygjgRPB-3lq9Uf9XJV61nRnZSzpqVS0_U"
           ],
@@ -3535,6 +4468,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-by-did-client-id",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "CLIENT_ID:decentralized_identifier:did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9"
           ],
@@ -3546,6 +4480,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-by-did-client-id",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "CLIENT_ID:decentralized_identifier:did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9"
           ],
@@ -3574,6 +4509,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -3589,6 +4525,7 @@
           "errors" : [
             "identifier.unbound"
           ],
+          "framework" : null,
           "matched" : [
             "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
           ],
@@ -3617,6 +4554,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-redirect",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://rp.vectors.example/cb"
           ],
@@ -3628,6 +4566,7 @@
           "decision" : "TRUSTED",
           "entity" : "vec-redirect",
           "errors" : [ ],
+          "framework" : "vectors",
           "matched" : [
             "URL:https://rp.vectors.example/cb"
           ],
@@ -3653,6 +4592,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3662,6 +4602,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3685,6 +4626,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3694,6 +4636,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3717,6 +4660,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3726,6 +4670,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3750,6 +4695,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3759,6 +4705,7 @@
           "decision" : "UNKNOWN",
           "entity" : null,
           "errors" : [ ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -3784,6 +4731,7 @@
           "errors" : [
             "key.ambiguous"
           ],
+          "framework" : "vectors",
           "matched" : [
             "DNS:verifier.example",
             "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
@@ -3807,6 +4755,7 @@
             "key.ambiguous",
             "x509.revocation_unknown"
           ],
+          "framework" : null,
           "matched" : [ ],
           "trustedAuthorities" : [ ],
           "warnings" : [ ],
@@ -4439,6 +5388,41 @@
             {
               "type" : "URL",
               "value" : "https://rsa.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Known by key identifier and by subject"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-rsa-names",
+          "identifiers" : [
+            {
+              "type" : "X509_SKI",
+              "value" : "AygiZrCCPWpSxgF_uaB0MZNUZrs"
+            },
+            {
+              "type" : "X509_SUBJECT",
+              "value" : "CN=RSA signed leaf,C=UT"
             }
           ],
           "metadataTypes" : [ ],
@@ -5166,6 +6150,41 @@
             {
               "type" : "URL",
               "value" : "https://rsa.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Known by key identifier and by subject"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-rsa-names",
+          "identifiers" : [
+            {
+              "type" : "X509_SKI",
+              "value" : "AygiZrCCPWpSxgF_uaB0MZNUZrs"
+            },
+            {
+              "type" : "X509_SUBJECT",
+              "value" : "CN=RSA signed leaf,C=UT"
             }
           ],
           "metadataTypes" : [ ],

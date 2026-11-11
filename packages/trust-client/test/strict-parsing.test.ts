@@ -232,12 +232,12 @@ describe('what the validator does not implement, it refuses', () => {
   const codes = (r: { issues: { code: string }[] }) => r.issues.map((i) => i.code);
 
   it('an unknown critical extension fails the path, wherever it is', () => {
-    expect(errors(validate([mkLeafRoot({ exts: [P.X.unknown(true)] })]))).toEqual(['x509.path.unrecognized_critical_extension']);
-    expect(errors(validate([mkLeaf(), mkInt({ exts: [...CA_EXTS, P.X.unknown(true)] })]))).toEqual(['x509.path.unrecognized_critical_extension']);
+    expect(errors(validate([mkLeafRoot({ exts: [P.X.unknown(true)] })]))).toEqual(['x509.path.unrecognized_crit_ext']);
+    expect(errors(validate([mkLeaf(), mkInt({ exts: [...CA_EXTS, P.X.unknown(true)] })]))).toEqual(['x509.path.unrecognized_crit_ext']);
     const viaAnchor = validate([mkLeafRoot()], anchorOf(mkRoot({ exts: [...CA_EXTS, P.X.unknown(true)] })));
     expect(viaAnchor.valid).toBe(false);
-    expect(viaAnchor.issues).toContainEqual({ code: 'x509.path.unrecognized_critical_extension', severity: 'ERROR', message: 'Trust anchor has unsupported critical extension 1.3.6.1.4.1.99999.1' });
-    expect(errors(validate([mkLeaf(), mkInt({ exts: [...CA_EXTS, P.X.inhibitAnyPolicy(true)] })]))).toEqual(['x509.path.unrecognized_critical_extension']);
+    expect(viaAnchor.issues).toContainEqual({ code: 'x509.path.unrecognized_crit_ext', severity: 'ERROR', message: 'Trust anchor has unsupported critical extension 1.3.6.1.4.1.99999.1' });
+    expect(errors(validate([mkLeaf(), mkInt({ exts: [...CA_EXTS, P.X.inhibitAnyPolicy(true)] })]))).toEqual(['x509.path.unrecognized_crit_ext']);
     expect(validate([mkLeaf(), mkInt({ exts: [...CA_EXTS, P.X.unknown(false)] })]).valid).toBe(true);
   });
 
@@ -299,17 +299,17 @@ describe('RSA key floor in certificates', () => {
     const weakInt = P.cert({ subject: INT, issuer: ROOT, key: weak, signer: rootKey, exts: CA_EXTS });
     const r = validate([P.cert({ subject: LEAF, issuer: INT, key: leafKey, signer: weak }), weakInt]);
     expect(r.valid).toBe(false);
-    expect(errors(r)).toEqual(expect.arrayContaining(['x509.path.invalid_signature', 'x509.path.weak_key']));
+    expect(errors(r)).toEqual(expect.arrayContaining(['x509.path.invalid_signature', 'x509.path.algorithm_constrained']));
     const weakLeaf = validate([mkLeafRoot({ key: weak })]);
-    expect(errors(weakLeaf)).toEqual(['x509.path.weak_key']);
+    expect(errors(weakLeaf)).toEqual(['x509.path.algorithm_constrained']);
     expect(weakLeaf.issues.find((i) => i.severity === 'ERROR')!.message).toMatch(/the modulus has 1024 bits, fewer than 2048/);
   });
 
   it('refuses a public exponent of 1 or an even one', () => {
     const n = strong.publicKey.export({ format: 'jwk' }).n!;
     const modulus = BigInt(`0x${Buffer.from(n, 'base64url').toString('hex')}`);
-    expect(errors(validate([mkLeafRoot({ spki: P.rsaSpki(modulus, 1n) })]))).toEqual(['x509.path.weak_key']);
-    expect(errors(validate([mkLeafRoot({ spki: P.rsaSpki(modulus, 65536n) })]))).toEqual(['x509.path.weak_key']);
+    expect(errors(validate([mkLeafRoot({ spki: P.rsaSpki(modulus, 1n) })]))).toEqual(['x509.path.algorithm_constrained']);
+    expect(errors(validate([mkLeafRoot({ spki: P.rsaSpki(modulus, 65536n) })]))).toEqual(['x509.path.algorithm_constrained']);
     expect(validate([mkLeafRoot({ spki: P.rsaSpki(modulus, 3n) })]).valid).toBe(true);
     // a root with e = 1 "signs" anything: the signature is the padded hash itself
     const forgedRoot = P.cert({ subject: RR, issuer: RR, spki: P.rsaSpki(modulus, 1n), signer: strong, exts: CA_EXTS });

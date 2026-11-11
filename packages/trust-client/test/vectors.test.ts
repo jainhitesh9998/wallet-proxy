@@ -12,7 +12,7 @@ import { jwkThumbprint } from '../src/primitives.js';
 import { es256Key, fakeFetch, json, signJwt } from './helpers.js';
 
 interface Outcome { decision: string; errors: string[]; warnings: string[]; entity: string | null;
-  x509: { valid: boolean; anchorFound: boolean; revocation: string[] } | null; trustedAuthorities: boolean[]; matched: string[] }
+  x509: { valid: boolean; anchorFound: boolean; revocation: string[] } | null; trustedAuthorities: Array<string | null>; framework: string | null; matched: string[] }
 const vectors = JSON.parse(readFileSync(new URL('../../../conformance/evaluation/vectors.json', import.meta.url), 'utf8')) as {
   snapshots: Record<string, Record<string, unknown>>;
   cases: Array<{ name: string; query: TrustQuery; expect: Record<string, Outcome> }>;
@@ -30,7 +30,8 @@ function outcome(d: TrustDecision): Outcome {
     decision: d.decision, errors: codes('ERROR'), warnings: codes('WARNING'), entity: d.entity?.id ?? null,
     x509: d.evidence?.x509 ? { valid: d.evidence.x509.valid, anchorFound: d.evidence.x509.anchorFound,
       revocation: (d.evidence.x509.revocation ?? []).map((r) => r.status) } : null,
-    trustedAuthorities: (d.evidence?.trustedAuthorities ?? []).map((t) => t.matched),
+    trustedAuthorities: (d.evidence?.trustedAuthorities ?? []).map((t) => (t.matched ? t.matchedValue ?? null : null)),
+    framework: d.framework?.id ?? null,
     matched: [...(d.evidence?.matchedIdentifiers ?? [])].sort(),
   };
 }
@@ -54,7 +55,12 @@ describe('evaluation vectors: the device decides as the service does', () => {
       for (const c of vectors.cases) {
         const got = outcome(await client.evaluate(c.query));
         const want = c.expect[profile]!;
-        if (!isDeepStrictEqual(got, want)) {
+        // Why a path is invalid (x509.path.*): the service's validator stops at the first broken rule, this one
+        // reports every rule it finds broken. The device must name what the service names; it may name more.
+        const detail = (codes: string[]) => codes.filter((code) => code.startsWith('x509.path.'));
+        const named = detail(want.errors).every((code) => got.errors.includes(code)) && (detail(want.errors).length > 0) === (detail(got.errors).length > 0);
+        const rest = (o: Outcome) => ({ ...o, errors: o.errors.filter((code) => !code.startsWith('x509.path.')) });
+        if (!named || !isDeepStrictEqual(rest(got), rest(want))) {
           differences.push(`${c.name}\n  service: ${JSON.stringify(want)}\n  device:  ${JSON.stringify(got)}`);
         }
       }

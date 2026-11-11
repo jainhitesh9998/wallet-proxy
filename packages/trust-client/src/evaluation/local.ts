@@ -11,8 +11,8 @@ import type { Crl } from '../x509/crl.js';
 import { verifyX509Signature } from '../x509/signature.js';
 import { findVerificationMethod, hasRelationship, didError, parseDid } from '../did/did.js';
 import { jwkThumbprint } from '../crypto/keys.js';
-import type { DidEvidence, DidResolutionResult, EntityView, PathValidationResult, Reason, SnapshotRef, TrustDecision, TrustFramework,
-  TrustQuery, TrustedAuthorityMatch } from '../types.js';
+import type { DidEvidence, DidResolutionResult, EntityView, Evidence, Identifier, PathValidationResult, Reason, SnapshotRef, TrustDecision,
+  TrustFramework, TrustQuery, TrustedAuthorityMatch, TrustedAuthorityQuery } from '../types.js';
 
 export interface LocalTrustData {
   entities: EntityView[];
@@ -85,9 +85,29 @@ function roleName(role: TrustQuery['role']): string | undefined {
 }
 
 const canonicalFormat = (f?: string | null) => (f === 'vc+sd-jwt' ? 'dc+sd-jwt' : f);
+/** A format or type that is empty or only spaces, tabs or line breaks is absent, on the service too. */
+const present = (s?: string | null): string | undefined => (typeof s === 'string' && !/^[ \t\r\n]*$/.test(s) ? s : undefined);
 /** OpenID4VP 1.0 §5.9.3 client identifier prefixes; anything else is a pre-registered client_id. */
 const CLIENT_ID_PREFIXES = new Set(['redirect_uri', 'x509_san_dns', 'x509_hash', 'decentralized_identifier', 'verifier_attestation', 'openid_federation', 'origin']);
 const pickName = (e: EntityView) => (e.display.find((d) => d.locale?.startsWith('en')) ?? e.display[0])?.name ?? e.id;
+const goodStanding = (e: EntityView, now: Date) => e.status === 'ACTIVE' && !(e.validUntil && now > new Date(e.validUntil)) && !(e.validFrom && now < new Date(e.validFrom));
+const error = (code: string, message: string): Reason => ({ code, message, severity: 'ERROR' });
+const warning = (code: string, message: string): Reason => ({ code, message, severity: 'WARNING' });
+const info = (code: string, message: string): Reason => ({ code, message, severity: 'INFO' });
+
+interface ClientId { raw: string; prefix: string; value: string }
+
+function parseClientId(raw: string): ClientId {
+  const i = raw.indexOf(':');
+  if (i > 0 && CLIENT_ID_PREFIXES.has(raw.slice(0, i))) return { raw, prefix: raw.slice(0, i), value: raw.slice(i + 1) };
+  return { raw, prefix: 'pre-registered', value: raw };
+}
+
+function identifiersFor(identifier: string): Identifier[] {
+  if (identifier.startsWith('did:')) return [{ type: 'DID', value: identifier }];
+  if (identifier.startsWith('https://') || identifier.startsWith('http://')) return [{ type: 'URL', value: identifier }, { type: 'FEDERATION_ENTITY', value: identifier }];
+  return [{ type: 'CLIENT_ID', value: identifier }, { type: 'OTHER', value: identifier }];
+}
 
 export interface CrlFetchResult {
   crls: HeldCrl[];
@@ -116,285 +136,480 @@ export async function validateChainOnDevice(chain: Certificate[], anchors: Local
   return validateCertificateChain(chain, anchors, { ...opts, revocation: { ...revocation, crls: [...revocation.crls, ...got.crls], failures: got.failures } });
 }
 
+/** One evaluation: the query as the steps read it, and the reasons they give. */
+interface Evaluation {
+  query: TrustQuery;
+  data: LocalTrustData;
+  now: Date;
+  role: TrustQuery['role'];
+  /** the role as the registry names it */
+  wantRole: string | undefined;
+  format: string | undefined;
+  type: string | undefined;
+  types: string[];
+  strict: boolean;
+  reasons: Reason[];
+}
+const hasDidKey = (ev: Evaluation) => !!ev.query.subject.kid?.startsWith('did:');
+const hasJwk = (ev: Evaluation) => Object.keys(ev.query.subject.jwk ?? {}).length > 0;
+
+/**
+ * What the query claims. Its identifiers are only claimed by the identifier; those of the KeyProof are proven by the
+ * presented key material (see the matching rules of findEntity).
+ */
+interface Claim {
+  identifiers: Identifier[];
+  clientId?: ClientId;
+  expectedDns?: string;
+  expectedHash?: string;
+}
+
+/** What the presented key proves. */
+interface KeyProof {
+  identifiers: Identifier[];
+  /** the DID of a DID key, else the DID the identifier names */
+  did: string | undefined;
+  chain: Certificate[];
+  x509: PathValidationResult | null;
+  /** the trust anchor a valid chain leads to */
+  anchor: LocalAnchor | undefined;
+}
+
+/** Registry entries the query may be about, each with what it was found through. */
+class Candidates {
+  entities: EntityView[] = [];
+  readonly matched: string[] = [];
+
+  take(entity: EntityView, how: string): void {
+    if (!this.entities.includes(entity)) {
+      this.entities.push(entity);
+      this.matched.push(how);
+    }
+  }
+
+  takeAll(found: Map<EntityView, string>): void {
+    found.forEach((how, entity) => this.take(entity, how));
+  }
+}
+
+interface Found { entity: EntityView | undefined; matched: string[] }
+
+type Authorization = NonNullable<Evidence['authorization']>;
+
+/** Certificates read from one x5c: a real chain has a few, and each one costs parsing and path building. As on the service. */
+export const MAX_CHAIN = 10;
+
 export class LocalEvaluator {
   constructor(private readonly resolveDid: (did: string) => Promise<DidResolutionResult>, private readonly now: () => Date = () => new Date(),
               private readonly fetchCrls?: CrlFetcher) {}
 
   async evaluate(q: TrustQuery, data: LocalTrustData): Promise<TrustDecision> {
-    const time = q.context?.time ? new Date(q.context.time) : this.now();
-    const reasons: Reason[] = [];
-    // ids: proven by the presented key material; identIds: only claimed by the identifier (see the matching rules below)
-    const ids: Array<{ type: string; value: string }> = [];
-    const identIds: Array<{ type: string; value: string }> = [];
-    const role = q.role;
+    const ev = this.begin(q, data);
+    const claim = this.claim(ev);
+    const key = await this.keyProof(ev, claim);
+    const found = await this.findEntity(ev, claim, key);
+    const entity = found.entity;
+    const did = await this.checkDid(ev, key);
+    const authorization = this.checkStanding(ev, key, entity);
+    this.checkResponseUri(ev, claim, entity);
+    const authorities = this.matchAuthorities(ev, key, entity);
+    const evidence = { x509: key.x509, did, authorization, trustedAuthorities: authorities, matchedIdentifiers: found.matched };
+    return this.decide(ev, key, entity, evidence);
+  }
+
+  private begin(query: TrustQuery, data: LocalTrustData): Evaluation {
+    const now = query.context?.time ? new Date(query.context.time) : this.now();
     // An empty format or type is no format or type: the two evaluators must not read "" differently.
-    const format = canonicalFormat(q.context?.credentialFormat || undefined) ?? undefined;
-    const type = q.context?.credentialType || undefined;
+    const format = canonicalFormat(present(query.context?.credentialFormat)) ?? undefined;
+    const type = present(query.context?.credentialType);
     // Every type the credential asserts must be authorized (a W3C VC may carry several).
-    const types = [...new Set([type, ...(q.context?.credentialTypes ?? [])].filter((t): t is string => typeof t === 'string' && t.trim() !== ''))];
+    const types = [...new Set([type, ...(query.context?.credentialTypes ?? [])].filter((t): t is string => typeof t === 'string' && t.trim() !== ''))];
+    return { query, data, now, role: query.role, wantRole: roleName(query.role), format, type, types,
+      strict: data.policy?.strictAuthorization === true, reasons: [] };
+  }
+
+  private claim(ev: Evaluation): Claim {
+    const identifier = ev.query.subject.identifier;
+    if (!identifier) return { identifiers: [] };
+    if (ev.role !== 'verifier') return { identifiers: identifiersFor(identifier) };
+    return this.clientIdClaim(ev, parseClientId(identifier));
+  }
+
+  private clientIdClaim(ev: Evaluation, clientId: ClientId): Claim {
+    const { prefix, value } = clientId;
+    const identifiers: Identifier[] = [{ type: 'CLIENT_ID', value: clientId.raw }];
     let expectedDns: string | undefined;
     let expectedHash: string | undefined;
-    let clientId: { prefix: string; value: string } | undefined;
-    const ident = q.subject.identifier;
-    if (ident) {
-      if (role === 'verifier') {
-        const i = ident.indexOf(':');
-        const known = i > 0 && CLIENT_ID_PREFIXES.has(ident.slice(0, i));
-        const prefix = known ? ident.slice(0, i) : 'pre-registered';
-        const val = known ? ident.slice(i + 1) : ident;
-        identIds.push({ type: 'CLIENT_ID', value: ident });
-        clientId = { prefix, value: val };
-        if (prefix === 'x509_san_dns') { expectedDns = val; identIds.push({ type: 'DNS', value: val }); }
-        else if (prefix === 'x509_hash') { expectedHash = val; identIds.push({ type: 'X509_SHA256', value: val }); }
-        else if (prefix === 'decentralized_identifier') identIds.push({ type: 'DID', value: val });
-        else if (prefix === 'redirect_uri' || prefix === 'origin') identIds.push({ type: 'URL', value: val });
-        else if (prefix === 'openid_federation') identIds.push({ type: 'FEDERATION_ENTITY', value: val }, { type: 'URL', value: val });
-        else if (prefix === 'verifier_attestation') reasons.push({ code: 'client_id.verifier_attestation',
-          message: 'Verifier attestation JWT must be validated by the wallet; matching registry by client_id only', severity: 'INFO' });
-        if ((prefix === 'x509_san_dns' || prefix === 'x509_hash') && !q.subject.x5c?.length) {
-          reasons.push({ code: 'client_id.x5c_required', message: `Client identifier prefix ${prefix} requires the request object's x5c chain`, severity: 'ERROR' });
-        }
-      } else if (ident.startsWith('did:')) identIds.push({ type: 'DID', value: ident });
-      else if (ident.startsWith('https://') || ident.startsWith('http://')) identIds.push({ type: 'URL', value: ident }, { type: 'FEDERATION_ENTITY', value: ident });
-      else identIds.push({ type: 'CLIENT_ID', value: ident }, { type: 'OTHER', value: ident });
+    switch (prefix) {
+      case 'x509_san_dns':
+        expectedDns = value;
+        identifiers.push({ type: 'DNS', value });
+        break;
+      case 'x509_hash':
+        expectedHash = value;
+        identifiers.push({ type: 'X509_SHA256', value });
+        break;
+      case 'decentralized_identifier': identifiers.push({ type: 'DID', value }); break;
+      case 'redirect_uri': case 'origin': identifiers.push({ type: 'URL', value }); break;
+      case 'openid_federation': identifiers.push({ type: 'FEDERATION_ENTITY', value }, { type: 'URL', value }); break;
+      case 'verifier_attestation':
+        ev.reasons.push(info('client_id.verifier_attestation', 'Verifier attestation JWT must be validated by the wallet; matching registry by client_id only'));
+        break;
     }
-    // A query names one key: the certificate's or the DID's. With both, the evaluator cannot tell which one the caller
-    // verified the signature with, and the other may be copied from anyone (callers pass only the key they checked).
-    if ((q.subject.x5c?.length ?? 0) > 0 && q.subject.kid?.startsWith('did:')) {
-      reasons.push({ code: 'key.ambiguous', message: 'The query presents both an x5c chain and a DID key; pass only the key the signature was verified with', severity: 'ERROR' });
+    if ((prefix === 'x509_san_dns' || prefix === 'x509_hash') && !ev.query.subject.x5c?.length) {
+      ev.reasons.push(error('client_id.x5c_required', `Client identifier prefix ${prefix} requires the request object's x5c chain`));
     }
-    let did: string | undefined;
-    if (q.subject.kid?.startsWith('did:')) {
-      try { did = parseDid(q.subject.kid).did; ids.push({ type: 'DID', value: did }); } catch { reasons.push({ code: 'did.invalid', message: 'kid is not a valid DID URL', severity: 'ERROR' }); }
-    } else if (ident?.startsWith('did:')) did = ident.split('#')[0];
-    if (Object.keys(q.subject.jwk ?? {}).length > 0) {
-      try { ids.push({ type: 'JWK_THUMBPRINT', value: jwkThumbprint(q.subject.jwk!) }); } catch (e) {
-        reasons.push({ code: 'jwk.invalid', message: `Unparseable JWK: ${(e as Error).message}`, severity: 'WARNING' });
-      }
-    }
+    return { identifiers, clientId, expectedDns, expectedHash };
+  }
 
-    let chain: Certificate[] = [];
-    try {
-      chain = (q.subject.x5c ?? []).map((c) => parseCertificate(c));
-    } catch (e) {
-      reasons.push({ code: 'x509.parse', message: (e as Error).message, severity: 'ERROR' });
-    }
-    let x509: PathValidationResult | null = null;
-    let anchor: LocalAnchor | undefined;
-    if (chain.length > 0) {
-      const leaf = chain[0]!;
-      // The leaf's hash is a pin (the caller verifies with the leaf's key); its other names count only once the chain validates.
-      ids.push({ type: 'X509_SHA256', value: leaf.sha256 });
-      if (expectedHash && expectedHash !== leaf.sha256) {
-        reasons.push({ code: 'client_id.x509_hash_mismatch', message: 'x509_hash client_id does not match the SHA-256 hash of the leaf certificate', severity: 'ERROR' });
-      }
-      const domain = domainFor(role, format);
-      const anchors = data.anchors.filter((a) => a.domain === domain);
-      const r = await validateChainOnDevice(chain, anchors, { time, domain, expectedDnsName: expectedDns, docType: format === 'mso_mdoc' ? type : undefined },
-        data, this.fetchCrls);
-      const { anchorRef, ...result } = r;
-      x509 = result;
-      if (r.valid) {
-        anchor = anchorRef;
-        ids.push({ type: 'X509_SUBJECT', value: leaf.subject });
-        if (leaf.subjectKeyIdentifier) ids.push({ type: 'X509_SKI', value: leaf.subjectKeyIdentifier });
-        leaf.dnsNames.forEach((n) => ids.push({ type: 'DNS', value: n }));
-        leaf.uriNames.forEach((u) => ids.push({ type: 'URL', value: u }));
-        reasons.push({ code: 'x509.valid', message: `Certificate chain validates to trust anchor ${anchorRef?.certificate.subject ?? ''} in domain ${domain}`, severity: 'INFO' });
-        reasons.push(...r.issues.filter((i) => i.code.startsWith('x509.revocation') && i.severity === 'WARNING'));
-      } else if (!r.anchorFound) {
-        reasons.push({ code: 'x509.no_anchor', message: anchors.length === 0 ? `No trust anchors configured for domain '${domain}' in accepted frameworks`
-          : `Certificate chain does not lead to any trust anchor in domain '${domain}'`, severity: 'WARNING' });
-        if (expectedDns && !leaf.dnsNames.some((d) => d.toLowerCase() === expectedDns!.toLowerCase())) {
-          reasons.push({ code: 'client_id.san_dns_mismatch', message: 'Leaf certificate has no SAN dNSName equal to the x509_san_dns client_id', severity: 'ERROR' });
-        }
-      } else {
-        reasons.push(...r.issues.filter((i) => i.severity === 'ERROR'));
-      }
-    }
-
+  private async keyProof(ev: Evaluation, claim: Claim): Promise<KeyProof> {
+    const proven: Identifier[] = [];
+    const did = this.keyDid(ev, proven);
+    this.keyThumbprint(ev, proven);
+    const chain = this.parseChain(ev);
+    const validated = chain.length > 0 ? await this.validateChain(ev, claim, chain, proven) : undefined;
+    const x509 = validated?.x509 ?? null;
     // A client identifier the presented key itself proves is one of the key's identifiers, so a verifier registered by
     // its client_id is found: x509_hash of the leaf certificate, x509_san_dns naming a dNSName of a validated leaf,
     // decentralized_identifier of the key's DID.
-    if (clientId && ident) {
-      const leaf = chain[0];
-      const proven = clientId.prefix === 'x509_hash' ? !!leaf && leaf.sha256 === clientId.value
-        : clientId.prefix === 'x509_san_dns' ? !!leaf && x509?.valid === true && leaf.dnsNames.some((d) => d.toLowerCase() === clientId!.value.toLowerCase())
-          : clientId.prefix === 'decentralized_identifier' ? !!q.subject.kid?.startsWith('did:') && did === identifierKey('DID', clientId.value) : false;
-      if (proven) ids.push({ type: 'CLIENT_ID', value: ident });
+    if (claim.clientId && this.provesClientId(claim.clientId, chain, x509, hasDidKey(ev) ? did : undefined)) {
+      proven.push({ type: 'CLIENT_ID', value: claim.clientId.raw });
     }
+    return { identifiers: proven, did, chain, x509, anchor: validated?.anchor };
+  }
 
-    // Matching. With key material (x5c, DID kid, JWK) an entity is found only through what that key proves: the key's
-    // own identifiers (a validated certificate's names, the DID of a DID key, a JWK thumbprint), a pinned leaf
-    // certificate, or the entity the validated anchor belongs to. The identifier in the query is then only a claim.
-    // Without key material the identifier is a registry lookup (issuer metadata, or a key the caller fetched from it).
-    const matched: string[] = [];
-    // In the order of the identifiers asked about, as the service does: what is reported as matched is then the same.
-    const lookup = (list: Array<{ type: string; value: string }>) => {
-      const hits: Array<{ e: EntityView; how: string }> = [];
-      for (const id of list) {
-        const key = identifierKey(id.type, id.value);
-        for (const e of data.entities) {
-          if (e.identifiers.some((x) => x.type === id.type && identifierKey(x.type, x.value) === key)) hits.push({ e, how: `${id.type}:${key}` });
-        }
+  /**
+   * A query names one key: the certificate's or the DID's. With both, the evaluator cannot tell which one the caller
+   * verified the signature with, and the other may be copied from anyone (callers pass only the key they checked).
+   */
+  private keyDid(ev: Evaluation, proven: Identifier[]): string | undefined {
+    const { subject } = ev.query;
+    if ((subject.x5c?.length ?? 0) > 0 && hasDidKey(ev)) {
+      ev.reasons.push(error('key.ambiguous', 'The query presents both an x5c chain and a DID key; pass only the key the signature was verified with'));
+    }
+    let did: string | undefined;
+    if (hasDidKey(ev)) {
+      try {
+        did = parseDid(subject.kid!).did;
+        proven.push({ type: 'DID', value: did });
+      } catch {
+        ev.reasons.push(error('did.invalid', 'kid is not a valid DID URL'));
       }
-      return hits;
-    };
-    const take = (e: EntityView, how: string, into: EntityView[]) => { if (!into.includes(e)) { into.push(e); matched.push(how); } };
-    const keyMaterial = chain.length > 0 || !!q.subject.kid?.startsWith('did:') || Object.keys(q.subject.jwk ?? {}).length > 0;
-    const wantRole = roleName(role);
-    const hasRole = (e: EntityView) => !wantRole || e.roles.includes(wantRole);
-    const byIdentifier = lookup(identIds);
-    let candidates: EntityView[] = [];
-    if (!keyMaterial) byIdentifier.forEach((h) => take(h.e, h.how, candidates));
-    else {
-      lookup(ids).forEach((h) => take(h.e, h.how, candidates));
-      const leaf = chain[0];
-      if (leaf) data.entities.filter((e) => e.certificates?.some((c) => c.sha256 === leaf.sha256)).forEach((e) => take(e, `X509_CERT:${leaf.sha256}`, candidates));
-      if (anchor?.entityId) {
-        const e = data.entities.find((x) => x.id === anchor!.entityId);
-        if (e) take(e, `ANCHOR:${e.id}`, candidates);
-      }
-      if (leaf && !anchor && candidates.length > 0 && (time < leaf.notBefore || time > leaf.notAfter)) {
-        // No anchor vouches for this certificate: it stands only as a registered pin, and then only while valid.
-        reasons.push({ code: 'x509.pinned_expired', message: `The pinned certificate is not valid at ${time.toISOString()}`, severity: 'ERROR' });
+    } else if (subject.identifier?.startsWith('did:')) {
+      did = subject.identifier.split('#')[0];
+    }
+    return did;
+  }
+
+  private keyThumbprint(ev: Evaluation, proven: Identifier[]): void {
+    if (hasJwk(ev)) {
+      try {
+        proven.push({ type: 'JWK_THUMBPRINT', value: jwkThumbprint(ev.query.subject.jwk!) });
+      } catch (e) {
+        ev.reasons.push(warning('jwk.invalid', `Unparseable JWK: ${(e as Error).message}`));
       }
     }
-    if (keyMaterial) {
-      // Refused when the identifier names entities in this role and the key is bound to none of them.
-      const named = byIdentifier.filter((h) => hasRole(h.e));
-      if (named.length && !named.some((h) => candidates.includes(h.e))) {
-        reasons.push({ code: 'identifier.unbound', message: `The identifier names '${pickName(named[0]!.e)}', but the presented `
-          + `${chain.length ? 'certificate' : 'key'} is not bound to it`, severity: 'ERROR' });
-      }
+  }
+
+  private parseChain(ev: Evaluation): Certificate[] {
+    const x5c = ev.query.subject.x5c ?? [];
+    if (x5c.length > MAX_CHAIN) {
+      ev.reasons.push(error('x509.chain_too_long', `x5c holds ${x5c.length} certificates; a chain of more than ${MAX_CHAIN} is not read`));
+      return [];
     }
-    if (candidates.length === 0 && data.onDemand) {
+    try {
+      return (ev.query.subject.x5c ?? []).map((c) => parseCertificate(c));
+    } catch (e) {
+      ev.reasons.push(error('x509.parse', (e as Error).message));
+      return [];
+    }
+  }
+
+  private async validateChain(ev: Evaluation, claim: Claim, chain: Certificate[], proven: Identifier[]): Promise<{ x509: PathValidationResult; anchor: LocalAnchor | undefined }> {
+    const { reasons } = ev;
+    const leaf = chain[0]!;
+    // The leaf's hash is a pin (the caller verifies with the leaf's key); its other names count only once the chain validates.
+    proven.push({ type: 'X509_SHA256', value: leaf.sha256 });
+    if (claim.expectedHash !== undefined && claim.expectedHash !== leaf.sha256) {
+      reasons.push(error('client_id.x509_hash_mismatch', 'x509_hash client_id does not match the SHA-256 hash of the leaf certificate'));
+    }
+    const domain = domainFor(ev.role, ev.format);
+    const anchors = ev.data.anchors.filter((a) => a.domain === domain);
+    const r = await validateChainOnDevice(chain, anchors, { time: ev.now, domain, expectedDnsName: claim.expectedDns, docType: ev.format === 'mso_mdoc' ? ev.type : undefined },
+      ev.data, this.fetchCrls);
+    const { anchorRef, ...x509 } = r;
+    if (r.valid) {
+      if (leaf.subjectKeyIdentifier) proven.push({ type: 'X509_SKI', value: leaf.subjectKeyIdentifier });
+      proven.push({ type: 'X509_SUBJECT', value: leaf.subject });
+      leaf.dnsNames.forEach((n) => proven.push({ type: 'DNS', value: n }));
+      leaf.uriNames.forEach((u) => proven.push({ type: 'URL', value: u }));
+      reasons.push(info('x509.valid', `Certificate chain validates to trust anchor ${anchorRef?.certificate.subject ?? ''} in domain ${domain}`));
+      reasons.push(...r.issues.filter((i) => i.code.startsWith('x509.revocation') && i.severity === 'WARNING'));
+    } else if (!r.anchorFound) {
+      reasons.push(warning('x509.no_anchor', anchors.length === 0 ? `No trust anchors configured for domain '${domain}' in accepted frameworks`
+        : `Certificate chain does not lead to any trust anchor in domain '${domain}'`));
+    } else {
+      reasons.push(...r.issues.filter((i) => i.severity === 'ERROR'));
+    }
+    const { expectedDns } = claim;
+    if (expectedDns !== undefined && !r.anchorFound && !leaf.dnsNames.some((d) => d.toLowerCase() === expectedDns.toLowerCase())) {
+      reasons.push(error('client_id.san_dns_mismatch', 'Leaf certificate has no SAN dNSName equal to the x509_san_dns client_id'));
+    }
+    return { x509, anchor: r.valid ? anchorRef : undefined };
+  }
+
+  private provesClientId(clientId: ClientId, chain: Certificate[], x509: PathValidationResult | null, keyDid: string | undefined): boolean {
+    const leaf = chain[0];
+    switch (clientId.prefix) {
+      case 'x509_hash': return !!leaf && leaf.sha256 === clientId.value;
+      case 'x509_san_dns': return !!leaf && x509?.valid === true && leaf.dnsNames.some((d) => d.toLowerCase() === clientId.value.toLowerCase());
+      case 'decentralized_identifier': return keyDid !== undefined && keyDid === identifierKey('DID', clientId.value);
+      default: return false;
+    }
+  }
+
+  /**
+   * Matching. With key material (x5c, DID kid, JWK) an entity is found only through what that key proves: the key's
+   * own identifiers (a validated certificate's names, the DID of a DID key, a JWK thumbprint), a pinned leaf
+   * certificate, or the entity the validated anchor belongs to. The identifier in the query is then only a claim.
+   * Without key material the identifier is a registry lookup (issuer metadata, or a key the caller fetched from it).
+   */
+  private async findEntity(ev: Evaluation, claim: Claim, key: KeyProof): Promise<Found> {
+    const keyMaterial = key.chain.length > 0 || hasDidKey(ev) || hasJwk(ev);
+    const claimed = this.registered(ev, claim.identifiers);
+    const candidates = new Candidates();
+    if (!keyMaterial) {
+      candidates.takeAll(claimed);
+    } else {
+      this.takeBoundToKey(ev, key, candidates);
+      this.checkPinnedCertificate(ev, key, candidates);
+      this.checkClaimBound(ev, key, [...claimed.keys()], candidates);
+    }
+    if (candidates.entities.length === 0 && ev.data.onDemand) {
       // On-demand discovery follows the same rule: the key's identifiers, or the identifier without key material.
-      const found = await data.onDemand((keyMaterial ? ids : identIds).filter(onDemandIdentifier));
-      if (found) {
-        take(found.entity, `${found.identifier.type}:${identifierKey(found.identifier.type, found.identifier.value)} (on-demand)`, candidates);
-        reasons.push({ code: 'lookup.on_demand', message: 'Not in the trust snapshot; registry entry obtained by an on-demand lookup at the trust service', severity: 'INFO' });
+      await this.lookUpOnDemand(ev, keyMaterial ? key.identifiers : claim.identifiers, candidates);
+    }
+    this.keepRole(ev, candidates);
+    const entity = this.pick(candidates.entities, key.anchor, ev.now, (e) => this.denied(e, ev.format, ev.types, ev.strict) === undefined);
+    return { entity, matched: candidates.matched };
+  }
+
+  /** In the order of the identifiers asked about, as the service does: what is reported as matched is then the same. */
+  private registered(ev: Evaluation, identifiers: Identifier[]): Map<EntityView, string> {
+    const found = new Map<EntityView, string>();
+    for (const id of identifiers) {
+      const key = identifierKey(id.type, id.value);
+      for (const e of ev.data.entities) {
+        if (!found.has(e) && e.identifiers.some((x) => x.type === id.type && identifierKey(x.type, x.value) === key)) found.set(e, `${id.type}:${key}`);
       }
     }
+    return found;
+  }
+
+  private takeBoundToKey(ev: Evaluation, key: KeyProof, candidates: Candidates): void {
+    candidates.takeAll(this.registered(ev, key.identifiers));
+    const leaf = key.chain[0];
+    if (leaf) {
+      ev.data.entities.filter((e) => e.certificates?.some((c) => c.sha256 === leaf.sha256))
+        .forEach((e) => candidates.take(e, `X509_CERT:${leaf.sha256}`));
+    }
+    const { anchor } = key;
+    if (anchor?.entityId) {
+      const e = ev.data.entities.find((x) => x.id === anchor.entityId);
+      if (e) candidates.take(e, `ANCHOR:${e.id}`);
+    }
+  }
+
+  private checkPinnedCertificate(ev: Evaluation, key: KeyProof, candidates: Candidates): void {
+    const leaf = key.chain[0];
+    if (leaf && !key.anchor && candidates.entities.length > 0) {
+      // No anchor vouches for this certificate: it stands only as a registered pin, and then only while valid.
+      const { now } = ev;
+      if (now < leaf.notBefore || now > leaf.notAfter) {
+        ev.reasons.push(error('x509.pinned_expired', `The pinned certificate is not valid at ${now.toISOString()}`));
+      }
+    }
+  }
+
+  private checkClaimBound(ev: Evaluation, key: KeyProof, claimed: EntityView[], candidates: Candidates): void {
+    // Refused when the identifier names entities in this role and the key is bound to none of them.
+    const { wantRole } = ev;
+    const named = claimed.filter((e) => !wantRole || e.roles.includes(wantRole));
+    if (named.length && !named.some((e) => candidates.entities.includes(e))) {
+      ev.reasons.push(error('identifier.unbound', `The identifier names '${pickName(named[0]!)}', but the presented `
+        + `${key.chain.length ? 'certificate' : 'key'} is not bound to it`));
+    }
+  }
+
+  private async lookUpOnDemand(ev: Evaluation, identifiers: Identifier[], candidates: Candidates): Promise<void> {
+    const found = await ev.data.onDemand?.(identifiers.filter(onDemandIdentifier));
+    if (found) {
+      candidates.take(found.entity, `${found.identifier.type}:${identifierKey(found.identifier.type, found.identifier.value)} (on-demand)`);
+      ev.reasons.push(info('lookup.on_demand', 'Not in the trust snapshot; registry entry obtained by an on-demand lookup at the trust service'));
+    }
+  }
+
+  private keepRole(ev: Evaluation, candidates: Candidates): void {
+    const { wantRole } = ev;
     if (wantRole) {
-      const withRole = candidates.filter((e) => e.roles.includes(wantRole));
-      if (candidates.length > 0 && withRole.length === 0) reasons.push({ code: 'entity.role_mismatch', message: `Matching entity is registered, but not as ${wantRole}`, severity: 'WARNING' });
-      candidates = withRole;
+      const withRole = candidates.entities.filter((e) => e.roles.includes(wantRole));
+      if (candidates.entities.length > 0 && withRole.length === 0) {
+        ev.reasons.push(warning('entity.role_mismatch', `Matching entity is registered, but not as ${wantRole}`));
+      }
+      candidates.entities = withRole;
     }
-    // The entity the decision is about. When the key is bound to several registered parties, which one is meant must not
-    // depend on the order a snapshot lists them in: the entity the anchor belongs to; else, in order of entity id, the
-    // first in good standing that is authorized for what is asked; else the first in good standing; else the first.
-    const strict = data.policy?.strictAuthorization === true;
-    const goodStanding = (e: EntityView) => e.status === 'ACTIVE' && !(e.validUntil && time > new Date(e.validUntil)) && !(e.validFrom && time < new Date(e.validFrom));
-    /** the type the entity is not authorized for ('' when no type is asked and the format is refused); undefined when it is authorized */
-    const denied = (e: EntityView): string | undefined => {
-      if (!format && types.length === 0) return undefined;
-      if (e.authorizations.length === 0) return strict ? (types[0] ?? '') : undefined;
-      const allowed = (t?: string) => e.authorizations.some((a) => (!a.format || !format || canonicalFormat(a.format) === format) && (!a.type || !t || a.type === t));
-      return types.length ? types.find((t) => !allowed(t)) : (allowed() ? undefined : '');
-    };
+  }
+
+  /**
+   * The entity the decision is about. When the key is bound to several registered parties, which one is meant must not
+   * depend on the order a snapshot lists them in: the entity the anchor belongs to; else, in order of entity id, the
+   * first in good standing that is authorized for what is asked; else the first in good standing; else the first.
+   */
+  private pick(candidates: EntityView[], anchor: LocalAnchor | undefined, now: Date, authorized: (e: EntityView) => boolean): EntityView | undefined {
     const ordered = [...candidates].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const entity = (anchor?.entityId ? ordered.find((e) => e.id === anchor!.entityId) : undefined)
-      ?? ordered.find((e) => goodStanding(e) && denied(e) === undefined) ?? ordered.find(goodStanding) ?? ordered[0];
+    return (anchor?.entityId ? ordered.find((e) => e.id === anchor.entityId) : undefined)
+      ?? ordered.find((e) => goodStanding(e, now) && authorized(e)) ?? ordered.find((e) => goodStanding(e, now)) ?? ordered[0];
+  }
 
-    let didEv: DidEvidence | null = null;
-    if (did && q.subject.kid) {
-      // The DID URL lets the resolver skip a snapshot document that lacks this (e.g. rotated) key.
-      // A relative reference ("#key-1") names a key of the DID.
-      const kid = q.subject.kid.startsWith('#') ? `${did}${q.subject.kid}` : q.subject.kid;
-      const res = await this.resolveDid(kid.includes('#') ? kid : did);
-      const err = didError(res);
-      if (err || !res.didDocument) {
-        reasons.push({ code: 'did.unresolved', message: `DID ${did} could not be resolved: ${err ?? 'no document'}`, severity: 'WARNING' });
-        didEv = { did, resolved: false, error: err };
-      } else if (q.subject.kid.includes('#')) {
-        const vm = findVerificationMethod(res.didDocument, q.subject.kid);
-        if (!vm) {
-          reasons.push({ code: 'did.vm_not_found', message: `Verification method ${q.subject.kid} is not in the DID document`, severity: 'ERROR' });
-          didEv = { did, resolved: true, verificationMethod: q.subject.kid, verificationMethodFound: false };
-        } else {
-          const relationship = role === 'verifier' || role === 'wallet_provider' ? 'authentication' : 'assertionMethod';
-          // DID Core: a relationship lists verification methods (by reference or embedded), never the DID itself.
-          const rel = hasRelationship(res.didDocument, relationship, q.subject.kid);
-          if (!rel) reasons.push({ code: 'did.relationship', message: `Verification method ${q.subject.kid} is not authorized for ${relationship}`, severity: 'ERROR' });
-          didEv = { did, resolved: true, verificationMethod: q.subject.kid, verificationMethodFound: true, relationship, relationshipValid: rel };
-        }
-      } else {
-        didEv = { did, resolved: true };
-      }
-    }
+  /** the type the entity is not authorized for ('' when no type is asked and the format is refused); undefined when it is authorized */
+  private denied(e: EntityView, format: string | undefined, types: string[], strict: boolean): string | undefined {
+    if (!format && types.length === 0) return undefined;
+    if (e.authorizations.length === 0) return strict ? (types[0] ?? '') : undefined;
+    const allowed = (t?: string) => e.authorizations.some((a) => (!a.format || !format || canonicalFormat(a.format) === format) && (!a.type || !t || a.type === t));
+    return types.length ? types.find((t) => !allowed(t)) : (allowed() ? undefined : '');
+  }
 
-    let authorization: { format?: string | null; type?: string | null; authorized: boolean; rule?: string } | null = null;
-    if (entity) {
-      if (!goodStanding(entity)) {
-        const expired = !!entity.validUntil && time > new Date(entity.validUntil);
-        reasons.push({ code: 'entity.status', message: `Entity '${entity.id}' is ${entity.status}${expired ? ' (expired)' : ''}`, severity: 'ERROR' });
-      }
-      if (format || type) {
-        const refused = denied(entity);
-        authorization = { format, type, authorized: refused === undefined, rule: entity.authorizations.length === 0
-          ? (strict ? 'strict: no authorizations registered' : 'unconstrained') : 'registered authorizations' };
-        if (refused !== undefined) reasons.push({ code: 'entity.not_authorized', message: `Entity '${entity.id}' is not authorized for ${format ?? ''} ${refused || type || ''}`.trim(), severity: 'ERROR' });
-      }
+  private async checkDid(ev: Evaluation, key: KeyProof): Promise<DidEvidence | null> {
+    const { did } = key;
+    const ref = ev.query.subject.kid;
+    if (!did || !ref) return null;
+    const { reasons } = ev;
+    // The DID URL lets the resolver skip a snapshot document that lacks this (e.g. rotated) key.
+    // A relative reference ("#key-1") names a key of the DID.
+    const kid = ref.startsWith('#') ? `${did}${ref}` : ref;
+    const res = await this.resolveDid(kid.includes('#') ? kid : did);
+    const err = didError(res);
+    if (err || !res.didDocument) {
+      reasons.push(warning('did.unresolved', `DID ${did} could not be resolved: ${err ?? 'no document'}`));
+      return { did, resolved: false, error: err };
     }
-    if (anchor?.frameworkId && entity && anchor.frameworkId !== entity.frameworkId) {
-      reasons.push({ code: 'framework.mixed', message: `Chain anchor framework '${anchor.frameworkId}' differs from entity framework '${entity.frameworkId}'`, severity: 'INFO' });
+    if (!ref.includes('#')) {
+      return { did, resolved: true };
     }
-    if (expectedDns && q.context?.responseUri) {
-      // A response_uri that is not a plain https URL has no host to compare, and is refused like a mismatch.
-      const host = httpsHost(q.context.responseUri);
-      if (host === undefined) {
-        reasons.push({ code: 'client_id.response_uri_host', message: 'response_uri is not a plain https URL', severity: 'ERROR' });
-      } else if (host !== expectedDns.toLowerCase()) {
-        reasons.push(entity
-          ? { code: 'client_id.response_uri_host', message: 'response_uri host differs from x509_san_dns; accepted because the verifier is registered', severity: 'WARNING' }
-          : { code: 'client_id.response_uri_host', message: `response_uri host '${host}' does not match x509_san_dns '${expectedDns}'`, severity: 'ERROR' });
-      }
+    const vm = findVerificationMethod(res.didDocument, ref);
+    if (!vm) {
+      reasons.push(error('did.vm_not_found', `Verification method ${ref} is not in the DID document`));
+      return { did, resolved: true, verificationMethod: ref, verificationMethodFound: false };
     }
-    const taMatches: TrustedAuthorityMatch[] = (q.context?.trustedAuthorities ?? []).map((ta) => {
-      if (ta.type === 'aki') {
-        const akis = new Set(chain.map((c) => c.authorityKeyIdentifier).filter(Boolean) as string[]);
-        if (anchor?.certificate.subjectKeyIdentifier) akis.add(anchor.certificate.subjectKeyIdentifier);
-        const hit = ta.values.find((v) => akis.has(v));
-        return { type: ta.type, values: ta.values, matched: !!hit, matchedValue: hit ?? null };
-      }
-      if (ta.type !== 'etsi_tl' && ta.type !== 'openid_federation') return { type: ta.type, values: ta.values, matched: false, matchedValue: null };
-      const attr = ta.type === 'etsi_tl' ? 'trustedListUri' : 'trustAnchor';
-      const have = [anchor?.constraints?.[attr], anchor?.provenance?.sourceUri, entity?.attributes?.[attr], entity?.provenance?.sourceUri]
-        .filter(Boolean).map(String);
-      const hit = ta.values.find((v) => have.includes(v));
+    const relationship = ev.role === 'verifier' || ev.role === 'wallet_provider' ? 'authentication' : 'assertionMethod';
+    // DID Core: a relationship lists verification methods (by reference or embedded), never the DID itself.
+    const rel = hasRelationship(res.didDocument, relationship, ref);
+    if (!rel) {
+      reasons.push(error('did.relationship', `Verification method ${ref} is not authorized for ${relationship}`));
+    }
+    return { did, resolved: true, verificationMethod: ref, verificationMethodFound: true, relationship, relationshipValid: rel };
+  }
+
+  private checkStanding(ev: Evaluation, key: KeyProof, entity: EntityView | undefined): Authorization | null {
+    if (!entity) return null;
+    const { now } = ev;
+    if (!goodStanding(entity, now)) {
+      const expired = !!entity.validUntil && now > new Date(entity.validUntil);
+      ev.reasons.push(error('entity.status', `Entity '${entity.id}' is ${entity.status}${expired ? ' (expired)' : ''}`));
+    }
+    const authorization = ev.format || ev.type ? this.checkAuthorization(ev, entity) : null;
+    const { anchor } = key;
+    if (anchor?.frameworkId && anchor.frameworkId !== entity.frameworkId) {
+      ev.reasons.push(info('framework.mixed', `Chain anchor framework '${anchor.frameworkId}' differs from entity framework '${entity.frameworkId}'`));
+    }
+    return authorization;
+  }
+
+  private checkAuthorization(ev: Evaluation, entity: EntityView): Authorization {
+    const { format, type } = ev;
+    const denied = this.denied(entity, format, ev.types, ev.strict);
+    if (denied !== undefined) {
+      ev.reasons.push(error('entity.not_authorized', `Entity '${entity.id}' is not authorized for ${format ?? ''} ${denied || type || ''}`.trim()));
+    }
+    return { format, type, authorized: denied === undefined, rule: entity.authorizations.length === 0
+      ? (ev.strict ? 'strict: no authorizations registered' : 'unconstrained') : 'registered authorizations' };
+  }
+
+  private checkResponseUri(ev: Evaluation, claim: Claim, entity: EntityView | undefined): void {
+    const { expectedDns } = claim;
+    const responseUri = ev.query.context?.responseUri;
+    if (expectedDns === undefined || responseUri === undefined || responseUri === null) return;
+    // A response_uri that is not a plain https URL has no host to compare, and is refused like a mismatch.
+    const host = httpsHost(responseUri);
+    if (host === undefined) {
+      ev.reasons.push(error('client_id.response_uri_host', 'response_uri is not a plain https URL'));
+    } else if (host !== expectedDns.toLowerCase()) {
+      ev.reasons.push(entity
+        ? warning('client_id.response_uri_host', 'response_uri host differs from x509_san_dns; accepted because the verifier is registered')
+        : error('client_id.response_uri_host', `response_uri host '${host}' does not match x509_san_dns '${expectedDns}'`));
+    }
+  }
+
+  private matchAuthorities(ev: Evaluation, key: KeyProof, entity: EntityView | undefined): TrustedAuthorityMatch[] {
+    return (ev.query.context?.trustedAuthorities ?? []).map((ta) => this.matchAuthority(ta, key.chain, key.anchor, entity));
+  }
+
+  private matchAuthority(ta: TrustedAuthorityQuery, chain: Certificate[], anchor: LocalAnchor | undefined, entity: EntityView | undefined): TrustedAuthorityMatch {
+    if (ta.type === 'aki') {
+      // The first of the chain's key identifiers (leaf first, then the anchor's own) that the query lists.
+      const akis = new Set(chain.map((c) => c.authorityKeyIdentifier).filter(Boolean) as string[]);
+      if (anchor?.certificate.subjectKeyIdentifier) akis.add(anchor.certificate.subjectKeyIdentifier);
+      const hit = [...akis].find((v) => ta.values.includes(v));
       return { type: ta.type, values: ta.values, matched: !!hit, matchedValue: hit ?? null };
-    });
+    }
+    if (ta.type !== 'etsi_tl' && ta.type !== 'openid_federation') return { type: ta.type, values: ta.values, matched: false, matchedValue: null };
+    const attr = ta.type === 'etsi_tl' ? 'trustedListUri' : 'trustAnchor';
+    const have = [anchor?.constraints?.[attr], anchor?.provenance?.sourceUri, entity?.attributes?.[attr], entity?.provenance?.sourceUri]
+      .filter((v) => v !== undefined && v !== null).map(String);
+    const hit = have.find((v) => ta.values.includes(v));
+    return { type: ta.type, values: ta.values, matched: !!hit, matchedValue: hit ?? null };
+  }
 
+  private decide(ev: Evaluation, key: KeyProof, entity: EntityView | undefined, evidence: Evidence): TrustDecision {
+    const { data, reasons } = ev;
+    const { anchor } = key;
     const errors = reasons.filter((r) => r.severity === 'ERROR');
     const snap = data.snapshot;
     reasons.push(data.source === 'snapshot'
-      ? { code: 'local.snapshot', message: `Evaluated on this device from the trust snapshot issued ${snap?.issuedAt ?? '?'}`, severity: 'INFO' }
-      : { code: 'local.pinned', message: 'No trust snapshot is available: evaluated on this device from the trust pinned in the app', severity: 'WARNING' });
-    if (data.stale) reasons.push({ code: 'snapshot.stale', message: `Trust snapshot expired at ${snap?.expiresAt ?? '?'} and could not be refreshed`, severity: 'WARNING' });
+      ? info('local.snapshot', `Evaluated on this device from the trust snapshot issued ${snap?.issuedAt ?? '?'}`)
+      : warning('local.pinned', 'No trust snapshot is available: evaluated on this device from the trust pinned in the app'));
+    if (data.stale) reasons.push(warning('snapshot.stale', `Trust snapshot expired at ${snap?.expiresAt ?? '?'} and could not be refreshed`));
     let decision: TrustDecision['decision'];
     let summary: string;
-    if (errors.length > 0) { decision = 'NOT_TRUSTED'; summary = errors[0]!.message; }
-    else if (entity || anchor) {
+    if (errors.length > 0) {
+      decision = 'NOT_TRUSTED';
+      summary = errors[0]!.message;
+    } else if (entity || anchor) {
       decision = 'TRUSTED';
-      summary = entity ? `Trusted ${wantRole?.toLowerCase().replace('_', ' ') ?? 'entity'} '${pickName(entity)}'${entity.frameworkId ? ` in framework '${entity.frameworkId}'` : ''}`
+      summary = entity ? `Trusted ${ev.wantRole?.toLowerCase().replace(/_/g, ' ') ?? 'entity'} '${pickName(entity)}'${entity.frameworkId ? ` in framework '${entity.frameworkId}'` : ''}`
         : `Certificate chain validates to trusted anchor in framework '${anchor!.frameworkId ?? 'local'}'`;
     } else {
       decision = 'UNKNOWN';
       summary = data.source === 'snapshot' ? 'No trust information found for the subject in accepted frameworks' : 'No trust information available on this device';
     }
-    const frameworkId = entity?.frameworkId ?? anchor?.frameworkId;
-    // Valid until the earliest of: the decision TTL, the snapshot's expiry, the entity's validity, the leaf certificate.
-    let validUntil = time.getTime() + 3600_000;
-    if (snap && !data.stale) validUntil = Math.min(validUntil, new Date(snap.expiresAt).getTime());
-    if (entity?.validUntil) validUntil = Math.min(validUntil, new Date(entity.validUntil).getTime());
-    if (chain[0]) validUntil = Math.min(validUntil, chain[0].notAfter.getTime());
-    if (data.stale) validUntil = Math.min(validUntil, time.getTime() + 5 * 60_000);
+    const frameworkId = entity ? entity.frameworkId : anchor?.frameworkId;
     return {
       decision, summary, reasons, entity: entity ?? null,
       framework: data.frameworks.find((f) => f.id === frameworkId) ?? null,
-      evidence: { x509, did: didEv, authorization, trustedAuthorities: taMatches, matchedIdentifiers: matched },
-      evaluatedAt: time.toISOString(), validUntil: new Date(validUntil).toISOString(), source: data.source, snapshot: snap ?? null,
+      evidence,
+      evaluatedAt: ev.now.toISOString(), validUntil: this.validUntil(ev, key, entity).toISOString(), source: data.source, snapshot: snap ?? null,
     };
+  }
+
+  private validUntil(ev: Evaluation, key: KeyProof, entity: EntityView | undefined): Date {
+    const { data, now } = ev;
+    const snap = data.snapshot;
+    // Valid until the earliest of: the decision TTL, the snapshot's expiry, the entity's validity, the leaf certificate.
+    let validUntil = now.getTime() + 3600_000;
+    if (snap && !data.stale) validUntil = Math.min(validUntil, new Date(snap.expiresAt).getTime());
+    if (entity?.validUntil) validUntil = Math.min(validUntil, new Date(entity.validUntil).getTime());
+    if (key.chain[0]) validUntil = Math.min(validUntil, key.chain[0].notAfter.getTime());
+    if (data.stale) validUntil = Math.min(validUntil, now.getTime() + 5 * 60_000);
+    return new Date(validUntil);
   }
 }

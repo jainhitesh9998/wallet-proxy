@@ -266,6 +266,22 @@
             "value": "subject:odd-bmp"
           }
         ]
+      },
+      "vec-rsa-names": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by key identifier and by subject",
+        "identifiers": [
+          {
+            "type": "X509_SKI",
+            "value": "aki:rsa-leaf"
+          },
+          {
+            "type": "X509_SUBJECT",
+            "value": "subject:rsa-leaf"
+          }
+        ]
       }
     }
   },
@@ -659,6 +675,34 @@
       }
     },
     {
+      "name": "issuer URL with a format of only spaces (as if none was given)",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://dmv.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": " ",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "issuer URL with a type of only spaces (as if none was given)",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://dmv.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": " \t"
+        }
+      }
+    },
+    {
       "name": "issuer URL, legacy vc+sd-jwt format name",
       "query": {
         "role": "issuer",
@@ -1022,6 +1066,171 @@
       }
     },
     {
+      "name": "chain with an intermediate under the RSA root",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf",
+            "pki:chain-ca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "the same chain with the root appended",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf",
+            "pki:chain-ca",
+            "pki:rsa-root"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "the same leaf without its intermediate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "the same chain in the wrong order",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-ca",
+            "pki:chain-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "x5c with more certificates than a chain is read for",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "x5c of exactly the longest chain read, the certificate repeated",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds",
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "trusted_authorities aki listing the root's key identifier before the intermediate's",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf",
+            "pki:chain-ca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "trustedAuthorities": [
+            {
+              "type": "aki",
+              "values": [
+                "aki:rsa-root",
+                "aki:chain-ca"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "trusted_authorities aki listing only the root's key identifier",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf",
+            "pki:chain-ca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "trustedAuthorities": [
+            {
+              "type": "aki",
+              "values": [
+                "bm9wZQ",
+                "aki:rsa-root"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
       "name": "real PID provider certificate (EUDI pre-production PKI), issuer registered by its subject name",
       "query": {
         "role": "issuer",
@@ -1318,6 +1527,70 @@
         },
         "context": {
           "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "x509_hash with an empty hash",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns with an empty name, certificate under the anchor",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns with an empty name, certificate outside the anchors",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:",
+          "x5c": [
+            "pki:selfsigned-verifier"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "x509_san_dns with an empty response_uri",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": ""
         }
       }
     },

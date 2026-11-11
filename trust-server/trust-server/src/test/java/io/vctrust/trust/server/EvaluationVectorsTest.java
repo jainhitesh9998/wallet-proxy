@@ -225,8 +225,10 @@ class EvaluationVectorsTest {
         } else {
             out.put("x509", null);
         }
+        // For each trusted_authorities query, the value that matched (null: none).
         out.put("trustedAuthorities", evidence.get("trustedAuthorities") instanceof List<?> l
-                ? l.stream().map(t -> ((Map<?, ?>) t).get("matched")).toList() : List.of());
+                ? l.stream().map(t -> Boolean.TRUE.equals(((Map<?, ?>) t).get("matched")) ? ((Map<?, ?>) t).get("matchedValue") : null).toList() : List.of());
+        out.put("framework", d.get("framework") instanceof Map<?, ?> f ? f.get("id") : null);
         out.put("matched", evidence.get("matchedIdentifiers") instanceof List<?> l ? l.stream().map(String::valueOf).sorted().toList() : List.of());
         return out;
     }
