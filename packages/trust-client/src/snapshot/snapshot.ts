@@ -75,6 +75,23 @@ export function snapshotRef(s: SnapshotData): SnapshotRef {
   return { id: s.id, issuedAt: s.issuedAt.toISOString(), expiresAt: s.expiresAt.toISOString(), stale: s.stale };
 }
 
+export interface SnapshotInfo extends SnapshotRef {
+  entities: number;
+  anchors: number;
+  didDocuments: number;
+  contexts: number;
+  crls: number;
+  strictAuthorization: boolean;
+  requireRevocationStatus: boolean;
+  requireSignedIssuerMetadata: boolean;
+}
+
+export function snapshotInfo(s: SnapshotData): SnapshotInfo {
+  return { ...snapshotRef(s), entities: s.entities.length, anchors: s.anchors.length, didDocuments: Object.keys(s.didDocuments).length,
+    contexts: Object.keys(s.contexts).length, crls: s.crls.length, strictAuthorization: s.policy.strictAuthorization,
+    requireRevocationStatus: s.policy.requireRevocationStatus, requireSignedIssuerMetadata: s.policy.requireSignedIssuerMetadata };
+}
+
 const KEY = 'snapshot';
 const PINNED = 'service-keys';
 
