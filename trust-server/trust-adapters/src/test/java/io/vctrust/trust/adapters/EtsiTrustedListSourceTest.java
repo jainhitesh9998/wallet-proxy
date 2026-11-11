@@ -34,6 +34,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class EtsiTrustedListSourceTest {
 
+    /** A date within the validity of the checked-in list of lists (issued 2026-10-15, next update 2027-04-07). */
+    static final String LOTL_READ_AT = "2026-11-01T00:00:00Z";
+
     static String nationalTl(String eaaCert, String caCert) {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -76,11 +79,29 @@ class EtsiTrustedListSourceTest {
     }
 
     static byte[] sign(String xml, TestPki.Issued signer) throws Exception {
+        return sign(xml, signer, "");
+    }
+
+    static Document parse(byte[] xml) throws Exception {
         DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
         dbf.setNamespaceAware(true);
-        Document doc = dbf.newDocumentBuilder().parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
+        return dbf.newDocumentBuilder().parse(new ByteArrayInputStream(xml));
+    }
+
+    static byte[] bytes(Document doc) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        TransformerFactory.newInstance().newTransformer().transform(new DOMSource(doc), new StreamResult(out));
+        return out.toByteArray();
+    }
+
+    /** Signs the list with an enveloped signature whose reference is {@code referenceUri}: "" or "#" and the root's Id. */
+    static byte[] sign(String xml, TestPki.Issued signer, String referenceUri) throws Exception {
+        Document doc = parse(xml.getBytes(StandardCharsets.UTF_8));
+        if (doc.getDocumentElement().hasAttribute("Id")) {
+            doc.getDocumentElement().setIdAttribute("Id", true);
+        }
         XMLSignatureFactory f = XMLSignatureFactory.getInstance("DOM");
-        var ref = f.newReference("", f.newDigestMethod(DigestMethod.SHA256, null),
+        var ref = f.newReference(referenceUri, f.newDigestMethod(DigestMethod.SHA256, null),
                 List.of(f.newTransform(Transform.ENVELOPED, (TransformParameterSpec) null),
                         f.newTransform(CanonicalizationMethod.EXCLUSIVE, (TransformParameterSpec) null)), null, null);
         var si = f.newSignedInfo(f.newCanonicalizationMethod(CanonicalizationMethod.EXCLUSIVE, (C14NMethodParameterSpec) null),
@@ -88,9 +109,14 @@ class EtsiTrustedListSourceTest {
         var kif = f.getKeyInfoFactory();
         var ki = kif.newKeyInfo(List.of(kif.newX509Data(List.of(signer.certificate()))));
         f.newXMLSignature(si, ki).sign(new DOMSignContext(signer.keys().getPrivate(), doc.getDocumentElement()));
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        TransformerFactory.newInstance().newTransformer().transform(new DOMSource(doc), new StreamResult(out));
-        return out.toByteArray();
+        return bytes(doc);
+    }
+
+    static SourceDefinition pinned(TestPki.Issued signer, Map<String, Object> more) {
+        Map<String, Object> properties = new java.util.LinkedHashMap<>(more);
+        properties.put("location", "mem:tl");
+        properties.put("signerCertificates", List.of(Certificates.toPem(signer.certificate())));
+        return new SourceDefinition("tl", "etsi-tl", "eu", null, true, properties);
     }
 
     @Test
@@ -137,7 +163,7 @@ class EtsiTrustedListSourceTest {
 
     @Test
     void parsesTheRealEuLotlPointers() throws Exception {
-        var ctx = new TestContext();
+        var ctx = new TestContext().at(LOTL_READ_AT);
         var r = new EtsiTrustedListSourceFactory().create(new SourceDefinition("lotl", "etsi-tl", "eu", null, true,
                 Map.of("location", "classpath:etsi/eu-lotl.xml", "followPointers", false, "allowUnverified", true)), ctx).load();
         assertThat(r.listInfo().details().get("tslType")).isEqualTo("http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUlistofthelists");
@@ -147,12 +173,102 @@ class EtsiTrustedListSourceTest {
 
     @Test
     void followsLotlPointersWithTerritoryFilter() throws Exception {
-        var ctx = new TestContext();
+        var ctx = new TestContext().at(LOTL_READ_AT);
         // Every national TL is unreachable in the fake HTTP layer: the load must still succeed and report warnings.
         var r = new EtsiTrustedListSourceFactory().create(new SourceDefinition("lotl", "etsi-tl", "eu", null, true,
                 Map.of("location", "classpath:etsi/eu-lotl.xml", "territories", List.of("AT", "BE"), "allowUnverified", true)), ctx).load();
         assertThat(r.warnings()).filteredOn(w -> w.startsWith("TL ")).hasSize(2)
                 .allMatch(w -> w.startsWith("TL AT") || w.startsWith("TL BE"));
         assertThat(r.warnings()).anyMatch(w -> w.contains("signature not verified"));
+    }
+
+    @Test
+    void aSignedListCarriedInsideAnotherDocumentSignsNothingOfIt() throws Exception {
+        var genuineCa = TestPki.rootCa("CN=QEAA CA,C=UT");
+        var evilCa = TestPki.rootCa("CN=Evil CA,C=UT");
+        var signer = TestPki.rootCa("CN=TL Signer,C=UT");
+        String genuine = nationalTl(Certificates.toBase64(genuineCa.certificate()), Certificates.toBase64(genuineCa.certificate()));
+        String evil = nationalTl(Certificates.toBase64(evilCa.certificate()), Certificates.toBase64(evilCa.certificate()))
+                .replace("Utopia QEAA Provider", "Evil QEAA Provider");
+        for (String referenceUri : List.of("#tsl", "")) {
+            byte[] signed = sign(genuine, signer, referenceUri);
+            assertThat(new EtsiTrustedListSourceFactory().create(pinned(signer, Map.of()), new TestContext().put("mem:tl", signed)).load()
+                    .listInfo().signature()).as("reference %s", referenceUri).isEqualTo(ListInfo.SignatureStatus.VERIFIED);
+
+            // The attacker's list as the document, the genuine signed list moved inside it untouched.
+            for (String rootId : List.of("other", "tsl", "")) {
+                Document wrapped = parse(evil.replace(" Id=\"tsl\"", rootId.isEmpty() ? "" : " Id=\"" + rootId + "\"").getBytes(StandardCharsets.UTF_8));
+                wrapped.getDocumentElement().appendChild(wrapped.importNode(parse(signed).getDocumentElement(), true));
+                var ctx = new TestContext().put("mem:tl", bytes(wrapped));
+                assertThatThrownBy(() -> new EtsiTrustedListSourceFactory().create(pinned(signer, Map.of()), ctx).load())
+                        .as("reference %s, wrapping root Id '%s'", referenceUri, rootId).isInstanceOf(TrustSourceException.class)
+                        .hasMessageContaining("not signed");
+            }
+
+            // The genuine signature lifted out and placed directly under the attacker's root, the signed list beside it.
+            Document lifted = parse(evil.replace(" Id=\"tsl\"", "").getBytes(StandardCharsets.UTF_8));
+            var inner = (org.w3c.dom.Element) lifted.importNode(parse(signed).getDocumentElement(), true);
+            var signature = inner.getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature").item(0);
+            inner.removeChild(signature);
+            lifted.getDocumentElement().appendChild(inner);
+            lifted.getDocumentElement().appendChild(signature);
+            var ctx = new TestContext().put("mem:tl", bytes(lifted));
+            assertThatThrownBy(() -> new EtsiTrustedListSourceFactory().create(pinned(signer, Map.of()), ctx).load())
+                    .as("reference %s, signature lifted to the root", referenceUri).isInstanceOf(TrustSourceException.class)
+                    .hasMessageContaining("signature");
+        }
+    }
+
+    @Test
+    void theRealListOfListsVerifiesAgainstItsOwnSigner() throws Exception {
+        // An XAdES signature as the EU publishes it: a reference to the document and one to its signed properties.
+        byte[] lotl;
+        try (var in = getClass().getResourceAsStream("/etsi/eu-lotl.xml")) {
+            lotl = in.readAllBytes();
+        }
+        var certificate = parse(lotl).getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "X509Certificate").item(0);
+        String signer = "-----BEGIN CERTIFICATE-----\n" + certificate.getTextContent().replaceAll("\\s", "") + "\n-----END CERTIFICATE-----";
+        var definition = new SourceDefinition("lotl", "etsi-tl", "eu", null, true,
+                Map.of("location", "classpath:etsi/eu-lotl.xml", "followPointers", false, "signerCertificates", List.of(signer)));
+        var r = new EtsiTrustedListSourceFactory().create(definition, new TestContext().at(LOTL_READ_AT)).load();
+        assertThat(r.listInfo().signature()).isEqualTo(ListInfo.SignatureStatus.VERIFIED);
+
+        // One character of a pointer changed: the signature no longer covers what is read.
+        String tampered = new String(lotl, StandardCharsets.UTF_8).replaceFirst("<TSLLocation>https://", "<TSLLocation>https://evil.");
+        var bad = new TestContext().at(LOTL_READ_AT).put("mem:lotl", tampered);
+        var badDefinition = new SourceDefinition("lotl", "etsi-tl", "eu", null, true,
+                Map.of("location", "mem:lotl", "followPointers", false, "signerCertificates", List.of(signer)));
+        assertThatThrownBy(() -> new EtsiTrustedListSourceFactory().create(badDefinition, bad).load())
+                .isInstanceOf(TrustSourceException.class).hasMessageContaining("signature");
+    }
+
+    @Test
+    void aListPastItsNextUpdateIsNotLoaded() throws Exception {
+        var ca = TestPki.rootCa("CN=QEAA CA,C=UT");
+        var signer = TestPki.rootCa("CN=TL Signer,C=UT");
+        String expired = nationalTl(Certificates.toBase64(ca.certificate()), Certificates.toBase64(ca.certificate()))
+                .replace("2099-01-01T00:00:00Z", "2026-10-15T00:00:00Z");
+        var ctx = new TestContext().put("mem:tl", sign(expired, signer));
+        // Validly signed, and possibly from before a provider was withdrawn: whoever serves the list can serve it again.
+        assertThatThrownBy(() -> new EtsiTrustedListSourceFactory().create(pinned(signer, Map.of()), ctx).load())
+                .isInstanceOf(TrustSourceException.class).hasMessageContaining("past its NextUpdate");
+        var allowed = new EtsiTrustedListSourceFactory().create(pinned(signer, Map.of("allowExpired", true)), ctx).load();
+        assertThat(allowed.anchors()).isNotEmpty();
+        assertThat(allowed.warnings()).anyMatch(w -> w.contains("past its NextUpdate"));
+    }
+
+    @Test
+    void aListOlderThanTheOneLoadedBeforeIsRefused() throws Exception {
+        var ca = TestPki.rootCa("CN=QEAA CA,C=UT");
+        var signer = TestPki.rootCa("CN=TL Signer,C=UT");
+        String current = nationalTl(Certificates.toBase64(ca.certificate()), Certificates.toBase64(ca.certificate()));
+        String earlier = current.replace("<TSLSequenceNumber>12<", "<TSLSequenceNumber>11<").replace("2026-10-01T00:00:00Z", "2026-09-01T00:00:00Z");
+        var ctx = new TestContext().put("mem:tl", sign(current, signer));
+        var source = new EtsiTrustedListSourceFactory().create(pinned(signer, Map.of()), ctx);
+        assertThat(source.load().listInfo().sequence()).isEqualTo("12");
+        ctx.put("mem:tl", sign(earlier, signer));
+        assertThatThrownBy(source::load).isInstanceOf(TrustSourceException.class).hasMessageContaining("older than the one already loaded");
+        ctx.put("mem:tl", sign(current, signer));
+        assertThat(source.load().listInfo().sequence()).isEqualTo("12");
     }
 }

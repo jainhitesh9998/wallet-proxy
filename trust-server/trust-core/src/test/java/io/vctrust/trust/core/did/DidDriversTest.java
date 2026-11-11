@@ -70,6 +70,31 @@ class DidDriversTest {
     }
 
     @Test
+    void didWebNamesAHostAndPlainSegmentsOnly() {
+        var d = new DidWebDriver(new FakeHttp(), Set.of());
+        // The first part decodes to a host and a port. Anything else would make the DID name some other resource:
+        // did:web:victim.example%2Fuploads%2Fx.json%3F would be read from https://victim.example/uploads/x.json?/...
+        for (String did : List.of("did:web:victim.example%2Fuploads%2Fx.json%3F", "did:web:user%40victim.example", "did:web:victim.example%23",
+                "did:web:victim.example%5Cx", "did:web:victim.example%3A80%3A80", "did:web:victim.example:a%2Fb", "did:web:victim.example:..",
+                "did:web:victim.example:%2E%2E", "did:web:victim.example::x", "did:web:victim.example:a%3Fb", "did:web:victim.example:a%20b")) {
+            assertThat(d.resolve(Did.parse(did)).error()).as(did).contains(DidResolutionResult.INVALID_DID);
+        }
+        assertThat(d.documentUrl(Did.parse("did:web:example.com:dept%2Eone:alice")).toString()).isEqualTo("https://example.com/dept.one/alice/did.json");
+    }
+
+    @Test
+    void aDidHasALengthLimit() {
+        // Long enough for a did:jwk of a large RSA key; beyond it nothing is parsed (or echoed back in full).
+        assertThat(Did.parse("did:example:" + "a".repeat(Did.MAX_LENGTH - 12)).method()).isEqualTo("example");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> Did.parse("did:example:" + "a".repeat(200_000)))
+                .isInstanceOf(Did.InvalidDidException.class).hasMessageContaining("longer than").message().hasSizeLessThan(400);
+        assertThat(Did.parse("did:example:a%3Ab:c.d-e_f").methodSpecificId()).isEqualTo("a%3Ab:c.d-e_f");
+        for (String bad : List.of("did:example:", "did:example:a:", "did:example:a%3", "did:example:a%zz", "did:example:a b", "did:Example:a", "did::a")) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> Did.parse(bad)).as(bad).isInstanceOf(Did.InvalidDidException.class);
+        }
+    }
+
+    @Test
     void didWebResolvesAndChecksId() {
         var http = new FakeHttp()
                 .json("https://issuer.example/.well-known/did.json", "{\"id\":\"did:web:issuer.example\",\"verificationMethod\":[]}")

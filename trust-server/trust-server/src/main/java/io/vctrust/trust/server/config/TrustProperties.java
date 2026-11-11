@@ -33,10 +33,12 @@ public class TrustProperties {
         private Duration decisionTtl = Duration.ofHours(1);
         private Duration snapshotTtl = Duration.ofHours(24);
         private Duration signedResponseTtl = Duration.ofMinutes(10);
+        /** Largest request body accepted, in bytes (an entry sent to the admin API may carry certificates and a CRL). */
+        private long maxRequestBytes = 2 * 1024 * 1024;
         /** Embed the DID documents of registered DID identifiers in snapshots (offline, private verification). */
         private boolean snapshotDidDocuments = true;
         private int snapshotMaxDidDocuments = 200;
-        /** Upper bound on DID resolution while building a snapshot; slower documents are left out. */
+        /** How long a snapshot build waits for DID documents and for JSON-LD contexts; what is slower is left out of that snapshot. */
         private Duration snapshotDidDeadline = Duration.ofSeconds(5);
         /** JSON-LD context documents are embedded in a snapshot up to this total; past it only their digests are. */
         private int snapshotMaxContextBytes = 256 * 1024;
@@ -54,6 +56,8 @@ public class TrustProperties {
         public Duration getSnapshotTtl() { return snapshotTtl; }
         public void setSnapshotTtl(Duration snapshotTtl) { this.snapshotTtl = snapshotTtl; }
         public Duration getSignedResponseTtl() { return signedResponseTtl; }
+        public long getMaxRequestBytes() { return maxRequestBytes; }
+        public void setMaxRequestBytes(long v) { this.maxRequestBytes = v; }
         public void setSignedResponseTtl(Duration signedResponseTtl) { this.signedResponseTtl = signedResponseTtl; }
         public boolean isSnapshotDidDocuments() { return snapshotDidDocuments; }
         public void setSnapshotDidDocuments(boolean v) { this.snapshotDidDocuments = v; }
@@ -355,7 +359,15 @@ public class TrustProperties {
         /** Requests a client may make at once before the per-minute rate applies. */
         private int burst = 100;
         private boolean exemptAdmin = true;
+        /** Requests one caller may have in progress at once (0: no limit); more are answered 429. */
+        private int maxConcurrent = 32;
+        /** Refused credentials per minute from one address before further ones are turned away unseen (0: no limit). */
+        private int refusedPerMinute = 60;
 
+        public int getMaxConcurrent() { return maxConcurrent; }
+        public void setMaxConcurrent(int v) { this.maxConcurrent = v; }
+        public int getRefusedPerMinute() { return refusedPerMinute; }
+        public void setRefusedPerMinute(int v) { this.refusedPerMinute = v; }
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean v) { this.enabled = v; }
         public int getRequestsPerMinute() { return requestsPerMinute; }

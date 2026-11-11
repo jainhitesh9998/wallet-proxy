@@ -47,7 +47,14 @@ public final class Dtos {
             case "authorization_server", "as" -> EntityRole.AUTHORIZATION_SERVER;
             case "accreditation_authority" -> EntityRole.ACCREDITATION_AUTHORITY;
             case "status_list_provider" -> EntityRole.STATUS_LIST_PROVIDER;
-            default -> EntityRole.valueOf(role.trim().toUpperCase(Locale.ROOT));
+            default -> {
+                try {
+                    yield EntityRole.valueOf(role.trim().toUpperCase(Locale.ROOT));
+                } catch (IllegalArgumentException e) {
+                    // Not the JDK's message, which names the enum class.
+                    throw new IllegalArgumentException("Unknown role '" + (role.length() <= 40 ? role : role.substring(0, 40) + "…") + "'");
+                }
+            }
         };
     }
 }

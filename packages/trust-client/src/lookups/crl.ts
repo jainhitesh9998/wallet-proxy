@@ -1,6 +1,7 @@
 /**
  * CRLs the snapshot does not carry, per {@code lookups.crl}. Cached until their nextUpdate. Callers verify each CRL
- * against the issuing CA, so neither the cache nor the proxy is trusted for them.
+ * against the issuing CA, so neither the cache nor the proxy is trusted for them. A CRL older than the one held does
+ * not replace it.
  */
 import { fetchWithTimeout } from '../did/resolver.js';
 import type { CrlFetchResult } from '../evaluation/local.js';
@@ -37,6 +38,9 @@ export class CrlLookup {
         const crl = parseCrl(der);
         // Unverified CRLs are not kept: a forged one would otherwise mask the real CRL until it expired.
         if (accept && !accept(url, crl)) throw new Error('CRL is not signed by the issuing CA');
+        // Nor is one older than the CRL held: a CRL from before a revocation, served again, would undo that revocation.
+        const held = fromCache();
+        if (held && crl.thisUpdate.getTime() < held.crl.thisUpdate.getTime()) throw new Error('CRL is older than the one already held');
         const ttl = Math.min(24 * 3600_000, Math.max(60_000, (crl.nextUpdate?.getTime() ?? ctx.now() + 3600_000) - ctx.now()));
         await ctx.cache.set(key, base64Encode(crl.der), ttl);
         out.crls.push({ crl, url, source });

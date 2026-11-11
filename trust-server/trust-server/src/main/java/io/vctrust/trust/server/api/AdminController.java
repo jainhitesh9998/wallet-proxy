@@ -17,7 +17,10 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/** Operator API: source health and refresh, managed entities/anchors, caches. Requires an admin client. */
+/**
+ * Operator API: source health and refresh, managed entities/anchors, caches. Every use case behind it requires an
+ * admin client and checks that itself; the authentication filter refuses others before they get here.
+ */
 @RestController
 @RequestMapping("/admin/v1")
 public class AdminController {
@@ -31,8 +34,8 @@ public class AdminController {
     }
 
     @GetMapping("/sources")
-    public List<SourceState> sourceStates() {
-        return administration.sourceStates();
+    public List<SourceState> sourceStates(ClientProfile admin) {
+        return administration.sourceStates(admin);
     }
 
     @PostMapping("/sources/{id}/refresh")
@@ -41,18 +44,18 @@ public class AdminController {
     }
 
     @GetMapping("/registry")
-    public Map<String, Object> registrySummary() {
-        return administration.registrySummary();
+    public Map<String, Object> registrySummary(ClientProfile admin) {
+        return administration.registrySummary(admin);
     }
 
     @GetMapping("/clients")
-    public List<ClientProfile> clientProfiles() {
-        return administration.clientProfiles();
+    public List<ClientProfile> clientProfiles(ClientProfile admin) {
+        return administration.clientProfiles(admin);
     }
 
     @GetMapping("/managed/{kind}")
-    public List<Map<String, Object>> listManaged(@PathVariable String kind) {
-        return managed.list(kind);
+    public List<Map<String, Object>> listManaged(ClientProfile admin, @PathVariable String kind) {
+        return managed.list(admin, kind);
     }
 
     @PutMapping("/managed/{kind}/{id}")

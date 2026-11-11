@@ -10,6 +10,7 @@ import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustDomain;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.spi.ListInfo;
+import io.vctrust.trust.core.spi.ResourceLoader;
 import io.vctrust.trust.core.spi.SourceContext;
 import io.vctrust.trust.core.spi.SourceDefinition;
 import io.vctrust.trust.core.spi.SourceLoadResult;
@@ -29,6 +30,9 @@ import javax.xml.crypto.KeySelector;
 import javax.xml.crypto.KeySelectorException;
 import javax.xml.crypto.KeySelectorResult;
 import javax.xml.crypto.XMLCryptoContext;
+import javax.xml.crypto.dsig.CanonicalizationMethod;
+import javax.xml.crypto.dsig.Reference;
+import javax.xml.crypto.dsig.Transform;
 import javax.xml.crypto.dsig.XMLSignature;
 import javax.xml.crypto.dsig.XMLSignatureFactory;
 import javax.xml.crypto.dsig.dom.DOMValidateContext;
@@ -46,6 +50,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@code type: etsi-tl} — ETSI TS 119 612 Trusted Lists (XML), including the EU List of Trusted Lists.
@@ -53,7 +58,13 @@ import java.util.Set;
  * <p>Properties: {@code location} (TL or LOTL URL); {@code followPointers} (LOTL → national TLs, default true
  * for a LOTL); {@code territories} filter; {@code serviceTypeDomains} (service type URI → trust domain);
  * {@code signerCertificates} / {@code signerCertificateLocation} to require a valid XML signature;
- * {@code verifyPointerSignatures} (validate national TLs against the LOTL's pointer certificates).
+ * {@code verifyPointerSignatures} (validate national TLs against the LOTL's pointer certificates);
+ * {@code allowExpired} (default false: a list past its NextUpdate is not loaded).
+ *
+ * <p>A signature counts only when it is the list's own: the one {@code ds:Signature} directly under the root
+ * element, with a reference to that root (TS 119 612 §5.7.1, an enveloped signature). A signed list placed
+ * anywhere inside another document signs nothing of that document. A list older than the one last loaded from
+ * the same location is refused, for as long as the service runs.
  */
 public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
 
@@ -71,6 +82,12 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
     static final Set<String> ACTIVE_STATUS = Set.of("granted", "recognisedatnationallevel", "undersupervision",
             "accredited", "setbynationallaw", "supervisionincessation");
 
+    /** What the reference to the list may apply: removal of the signature itself, and canonicalization. */
+    static final Set<String> ROOT_TRANSFORMS = Set.of(Transform.ENVELOPED,
+            CanonicalizationMethod.EXCLUSIVE, CanonicalizationMethod.EXCLUSIVE_WITH_COMMENTS,
+            CanonicalizationMethod.INCLUSIVE, CanonicalizationMethod.INCLUSIVE_WITH_COMMENTS,
+            "http://www.w3.org/2006/12/xml-c14n11", "http://www.w3.org/2006/12/xml-c14n11#WithComments");
+
     @Override
     public String type() {
         return "etsi-tl";
@@ -79,9 +96,23 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
     @Override
     public TrustSource create(SourceDefinition def, SourceContext ctx) {
         return new TrustSource() {
+            /** The newest list seen at each location, so that an older one served later is refused. */
+            private final Map<String, ListInfo> newest = new ConcurrentHashMap<>();
+
             @Override
             public SourceDefinition definition() {
                 return def;
+            }
+
+            private Parsed fresh(Parsed list) throws TrustSourceException {
+                ListInfo held = newest.get(list.location);
+                if (list.info.olderThan(held)) {
+                    throw new TrustSourceException("Trusted list " + list.location + " (sequence " + list.info.sequence()
+                            + ", issued " + list.info.issuedAt() + ") is older than the one already loaded (sequence "
+                            + held.sequence() + ", issued " + held.issuedAt() + ")");
+                }
+                newest.put(list.location, list.info);
+                return list;
             }
 
             @Override
@@ -92,8 +123,9 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                     Map<String, String> domains = new LinkedHashMap<>(DEFAULT_DOMAINS);
                     def.map("serviceTypeDomains").forEach((k, v) -> domains.put(k, String.valueOf(v)));
                     boolean includeAll = def.bool("includeAllServiceTypes", false);
-                    Parsed root = parse(ctx.resources().load(location), location, signers, ctx.clock().instant(),
-                            def.bool("allowUnverified", false));
+                    boolean allowExpired = def.bool("allowExpired", false);
+                    Parsed root = fresh(parse(ctx.resources().load(location), location, signers, ctx.clock().instant(),
+                            def.bool("allowUnverified", false), allowExpired));
                     List<TrustedEntity> entities = new ArrayList<>();
                     List<TrustAnchor> anchors = new ArrayList<>();
                     List<String> warnings = new ArrayList<>(root.warnings);
@@ -109,8 +141,9 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                                 SignerVerification ps = def.bool("verifyPointerSignatures", true)
                                         ? SignerVerification.of(p.certificates) : SignerVerification.of(List.of());
                                 // Pointed-to lists are verified with the certificates the list of lists names for them.
-                                Parsed tl = parse(ctx.resources().load(p.location), p.location, ps, ctx.clock().instant(),
-                                        !def.bool("verifyPointerSignatures", true));
+                                // A pointer names a web location; it cannot make the service read its own files.
+                                Parsed tl = fresh(parse(ResourceLoader.remoteOnly(ctx.resources()).load(p.location), p.location, ps, ctx.clock().instant(),
+                                        !def.bool("verifyPointerSignatures", true), allowExpired));
                                 warnings.addAll(tl.warnings);
                                 map(tl, def, domains, includeAll, ctx.clock().instant(), entities, anchors);
                             } catch (Exception e) {
@@ -148,7 +181,8 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                   List<String> warnings) {
     }
 
-    static Parsed parse(byte[] xml, String location, SignerVerification signers, Instant now, boolean allowUnverified) throws Exception {
+    static Parsed parse(byte[] xml, String location, SignerVerification signers, Instant now, boolean allowUnverified,
+                        boolean allowExpired) throws Exception {
         Document doc = secureParse(xml);
         Element root = doc.getDocumentElement();
         if (!"TrustServiceStatusList".equals(root.getLocalName()) || !NS.equals(root.getNamespaceURI())) {
@@ -167,7 +201,12 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
         ListInfo info = new ListInfo(firstName(child(si, "SchemeOperatorName")), text(child(si, "TSLSequenceNumber")),
                 parseInstant(text(child(si, "ListIssueDateTime"))), nextUpdate, sig, details);
         if (nextUpdate != null && nextUpdate.isBefore(now)) {
-            warnings.add("Trusted list " + location + " is past its NextUpdate " + nextUpdate);
+            // An expired list may be one from before a withdrawal, served again by whoever controls its location.
+            if (!allowExpired) {
+                throw new TrustSourceException("Trusted list " + location + " is past its NextUpdate " + nextUpdate
+                        + " and is not loaded (allowExpired: true overrides)");
+            }
+            warnings.add("Trusted list " + location + " is past its NextUpdate " + nextUpdate + " (allowExpired)");
         }
 
         List<Pointer> pointers = new ArrayList<>();
@@ -288,8 +327,16 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
 
     private static ListInfo.SignatureStatus verifySignature(Document doc, SignerVerification signers, Instant now,
                                                             List<String> warnings, boolean allowUnverified) throws TrustSourceException {
-        NodeList sigs = doc.getElementsByTagNameNS(XMLSignature.XMLNS, "Signature");
-        if (sigs.getLength() == 0) {
+        Element root = doc.getDocumentElement();
+        // Only a signature directly under the root can be the list's own. One found deeper belongs to whatever
+        // element it sits in, and would let a signed list be carried inside a document that says something else.
+        List<Element> sigs = new ArrayList<>();
+        for (Node n = root.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (n instanceof Element e && "Signature".equals(e.getLocalName()) && XMLSignature.XMLNS.equals(e.getNamespaceURI())) {
+                sigs.add(e);
+            }
+        }
+        if (sigs.isEmpty()) {
             if (signers.configured() || !allowUnverified) {
                 throw new TrustSourceException("Trusted list is not signed");
             }
@@ -303,7 +350,24 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
             warnings.add("Trusted list signature not verified: no signer certificates configured (allowUnverified)");
             return ListInfo.SignatureStatus.NOT_CHECKED;
         }
-        registerIds(doc.getDocumentElement());
+        if (sigs.size() > 1) {
+            throw new TrustSourceException("Trusted list carries more than one signature under its root element");
+        }
+        Element sig = sigs.getFirst();
+        // References may resolve to the root, or to what the signature itself holds (XAdES signed properties):
+        // nothing else in the document is registered as referable.
+        String rootId = root.getAttribute("Id");
+        if (!rootId.isEmpty()) {
+            NodeList all = doc.getElementsByTagNameNS("*", "*");
+            for (int i = 0; i < all.getLength(); i++) {
+                Element e = (Element) all.item(i);
+                if (e != root && rootId.equals(e.getAttribute("Id"))) {
+                    throw new TrustSourceException("Trusted list uses the Id of its root element more than once");
+                }
+            }
+            root.setIdAttribute("Id", true);
+        }
+        registerIds(sig);
         X509Certificate[] signer = new X509Certificate[1];
         try {
             DOMValidateContext vc = new DOMValidateContext(new KeySelector() {
@@ -325,11 +389,14 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                     }
                     throw new KeySelectorException("No X509Certificate in KeyInfo");
                 }
-            }, sigs.item(0));
+            }, sig);
             vc.setProperty("org.jcp.xml.dsig.secureValidation", Boolean.TRUE);
             XMLSignature signature = XMLSignatureFactory.getInstance("DOM").unmarshalXMLSignature(vc);
             if (!signature.validate(vc)) {
                 throw new TrustSourceException("Trusted list XML signature is invalid");
+            }
+            if (!coversRoot(signature, rootId)) {
+                throw new TrustSourceException("Trusted list XML signature does not cover the list: it has no reference to the root element");
             }
         } catch (TrustSourceException e) {
             throw e;
@@ -343,7 +410,30 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
         return ListInfo.SignatureStatus.VERIFIED;
     }
 
-    /** Marks every {@code Id} attribute as an XML ID so that same-document references resolve. */
+    /**
+     * Whether a validated signature signs the root element: a reference to the whole document ({@code URI=""}) or
+     * to the root by its Id, transformed by nothing but the removal of the signature and canonicalization (a filter
+     * could otherwise narrow what is signed to a part of the document).
+     */
+    private static boolean coversRoot(XMLSignature signature, String rootId) throws TrustSourceException {
+        boolean covers = false;
+        for (Reference ref : signature.getSignedInfo().getReferences()) {
+            String uri = ref.getURI();
+            if (uri == null || !(uri.isEmpty() || (!rootId.isEmpty() && uri.equals("#" + rootId)))) {
+                continue;
+            }
+            for (Transform t : ref.getTransforms()) {
+                if (!ROOT_TRANSFORMS.contains(t.getAlgorithm())) {
+                    throw new TrustSourceException("Trusted list XML signature applies transform " + t.getAlgorithm()
+                            + " to the list, which is not accepted");
+                }
+            }
+            covers = true;
+        }
+        return covers;
+    }
+
+    /** Marks the {@code Id} attributes of an element and of everything below it as XML IDs, so that references to them resolve. */
     private static void registerIds(Element e) {
         if (e.hasAttribute("Id")) {
             e.setIdAttribute("Id", true);

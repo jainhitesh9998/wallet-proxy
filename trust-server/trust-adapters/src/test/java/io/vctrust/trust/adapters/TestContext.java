@@ -17,6 +17,12 @@ import java.util.Map;
 final class TestContext implements SourceContext {
     final FakeHttp http = new FakeHttp();
     final Map<String, byte[]> resources = new HashMap<>();
+    Clock clock = Clock.systemUTC();
+
+    TestContext at(String instant) {
+        clock = Clock.fixed(java.time.Instant.parse(instant), java.time.ZoneOffset.UTC);
+        return this;
+    }
 
     TestContext put(String location, String content) {
         resources.put(location, content.getBytes(StandardCharsets.UTF_8));
@@ -53,6 +59,6 @@ final class TestContext implements SourceContext {
 
     @Override
     public Clock clock() {
-        return Clock.systemUTC();
+        return clock;
     }
 }

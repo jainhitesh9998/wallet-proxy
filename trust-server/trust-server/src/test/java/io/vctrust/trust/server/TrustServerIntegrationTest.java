@@ -74,8 +74,12 @@ class TrustServerIntegrationTest {
             route("/.well-known/openid-credential-issuer/liar", """
                     {"credential_issuer":"https://elsewhere.example","credential_endpoint":"x","credential_configurations_supported":{}}""");
             raw("/crl/iaca.crl", "application/pkix-crl", TestPki.crl(IACA, TestPki.Revoked.of(REVOKED_DS, 1)).getEncoded());
-            raw("/status/token", "application/statuslist+jwt", "eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6e319.c2ln".getBytes(StandardCharsets.UTF_8));
+            raw("/status/token", "application/statuslist+jwt", "eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6eyJiaXRzIjoxLCJsc3QiOiJlTnBqQUFBQUFRQUIifX0.c2ln".getBytes(StandardCharsets.UTF_8));
             raw("/status/page", "text/html", "<html></html>".getBytes(StandardCharsets.UTF_8));
+            raw("/status/bitstring", "application/vc+ld+json", ("{\"type\":[\"VerifiableCredential\",\"BitstringStatusListCredential\"],"
+                    + "\"credentialSubject\":{\"type\":\"BitstringStatusList\",\"statusPurpose\":\"revocation\",\"encodedList\":\"uH4sIAAAAAAAAA\"}}")
+                    .getBytes(StandardCharsets.UTF_8));
+            raw("/status/not-a-list.json", "application/json", "{\"internal\":\"what an admin console might say\"}".getBytes(StandardCharsets.UTF_8));
             raw("/contexts/degree/v1", "application/ld+json", CONTEXT.getBytes(StandardCharsets.UTF_8));
             raw("/contexts/pinned/v1", "application/ld+json", CONTEXT.getBytes(StandardCharsets.UTF_8));
             UPSTREAM.start();
@@ -117,7 +121,6 @@ class TrustServerIntegrationTest {
         Files.writeString(registry, """
                 entities:
                   - id: test-issuer
-                    framework: fw-a
                     roles: [CREDENTIAL_ISSUER]
                     name: Test Issuer
                     identifiers:
@@ -131,24 +134,26 @@ class TrustServerIntegrationTest {
                       oauth_authorization_server:
                         grant_types_supported: {add: ["urn:ietf:params:oauth:grant-type:pre-authorized_code"]}
                         token_endpoint: {default: "%s/issuer/token"}
-                  - id: b-issuer
-                    framework: fw-b
-                    roles: [CREDENTIAL_ISSUER]
-                    identifiers: [did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK]
                   - id: revoked-issuer
-                    framework: fw-a
                     roles: [CREDENTIAL_ISSUER]
                     status: REVOKED
                     identifiers: [{type: URL, value: "https://revoked.example"}]
                 anchors:
                   - domain: mdoc-iaca
-                    framework: fw-a
                     entity: test-issuer
                     constraints:
                       crlUrls: ["%s/crl/iaca.crl"]
                     certificate: |
                 %s
                 """.formatted(UPSTREAM_BASE, UPSTREAM_BASE, UPSTREAM_BASE, UPSTREAM_BASE, UPSTREAM_BASE, Certificates.toPem(IACA.certificate()).indent(6)));
+        // A source loads into one framework: the other framework's issuer comes from a list of its own.
+        Path registryB = dataDir.resolve("registry-b.yaml");
+        Files.writeString(registryB, """
+                entities:
+                  - id: b-issuer
+                    roles: [CREDENTIAL_ISSUER]
+                    identifiers: [did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK]
+                """);
         r.add("spring.datasource.url", () -> "jdbc:h2:mem:trust-it;DB_CLOSE_DELAY=-1;MODE=PostgreSQL");
         r.add("trust.service.signing-key-file", () -> dataDir.resolve("key.jwk").toString());
         r.add("trust.service.issuer", () -> "https://trust.test");
@@ -161,7 +166,12 @@ class TrustServerIntegrationTest {
         r.add("trust.frameworks[2].id", () -> "local");
         r.add("trust.sources[0].id", () -> "reg");
         r.add("trust.sources[0].type", () -> "static");
+        r.add("trust.sources[0].framework", () -> "fw-a");
         r.add("trust.sources[0].properties.location", () -> registry.toUri().toString());
+        r.add("trust.sources[2].id", () -> "reg-b");
+        r.add("trust.sources[2].type", () -> "static");
+        r.add("trust.sources[2].framework", () -> "fw-b");
+        r.add("trust.sources[2].properties.location", () -> registryB.toUri().toString());
         r.add("trust.sources[1].id", () -> "managed");
         r.add("trust.sources[1].type", () -> "managed");
         r.add("trust.sources[1].framework", () -> "local");
@@ -490,11 +500,17 @@ class TrustServerIntegrationTest {
                 "Accept", "application/statuslist+jwt");
         assertThat(token.statusCode()).isEqualTo(200);
         assertThat(token.headers().firstValue("Content-Type")).contains("application/statuslist+jwt");
-        assertThat(new String(token.body(), StandardCharsets.UTF_8)).isEqualTo("eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6e319.c2ln");
+        assertThat(new String(token.body(), StandardCharsets.UTF_8)).isEqualTo("eyJhbGciOiJFUzI1NiJ9.eyJzdGF0dXNfbGlzdCI6eyJiaXRzIjoxLCJsc3QiOiJlTnBqQUFBQUFRQUIifX0.c2ln");
         assertThat(token.headers().firstValue("Cache-Control").orElse("")).contains("private").contains("max-age=");
         var page = get("/api/v1/proxy/status-list?uri=" + UPSTREAM_BASE + "/status/page", "key-a");
         assertThat(page.statusCode()).isEqualTo(502);
         assertThat(json(page).get("code")).isEqualTo("invalid_status_list");
+        assertThat(get("/api/v1/proxy/status-list?uri=" + UPSTREAM_BASE + "/status/bitstring", "key-a").statusCode()).isEqualTo(200);
+        // JSON that is not a status list is not passed on, whatever its content type: the relay reads nothing else for a caller.
+        var other = get("/api/v1/proxy/status-list?uri=" + UPSTREAM_BASE + "/status/not-a-list.json", "key-a");
+        assertThat(other.statusCode()).isEqualTo(502);
+        assertThat(json(other).get("code")).isEqualTo("invalid_status_list");
+        assertThat(other.body()).doesNotContain("admin console");
 
         var d = json(get("/.well-known/trust-service", null));
         assertThat(((Map<?, ?>) d.get("endpoints")).get("proxy_status_list")).isEqualTo("https://trust.test/api/v1/proxy/status-list");
@@ -594,5 +610,52 @@ class TrustServerIntegrationTest {
         assertThat(http.send(HttpRequest.newBuilder(URI.create(base() + "/admin/v1/managed/entities/local-verifier")).DELETE()
                 .header("Authorization", "Bearer key-admin").build(), HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(204);
         assertThat(get("/api/v1/entities/lookup?identifier=x509_san_dns:rp.local", "key-a").body()).doesNotContain("local-verifier");
+    }
+
+    @Test
+    void operatorEntriesAndRequestsAreHeldToTheirLimits() throws Exception {
+        // Managed entries load into the managed source's framework ("local"); an entry cannot place itself elsewhere.
+        var foreign = put("/admin/v1/managed/entities/sneaked", "key-admin", Map.of("framework", "fw-a", "roles", List.of("CREDENTIAL_ISSUER"),
+                "identifiers", List.of("https://sneaked.example")));
+        assertThat(foreign.statusCode()).isEqualTo(400);
+        assertThat(json(foreign).get("detail").toString()).contains("cannot name another framework");
+        // Nor can it make the service read its own files.
+        for (String location : List.of("file:///etc/hosts", "/etc/hosts", "classpath:application.yml")) {
+            var local = put("/admin/v1/managed/anchors/local-file", "key-admin", Map.of("domain", "mdoc-iaca", "certificateLocation", location));
+            assertThat(local.statusCode()).as(location).isEqualTo(400);
+            assertThat(json(local).get("detail").toString()).as(location).contains("Only an http(s) location");
+        }
+        assertThat(put("/admin/v1/managed/entities/" + "x".repeat(129), "key-admin", Map.of("roles", List.of("VERIFIER"))).statusCode()).isEqualTo(400);
+        assertThat(put("/admin/v1/managed/entities/a%20b", "key-admin", Map.of("roles", List.of("VERIFIER"))).statusCode()).isEqualTo(400);
+        // What is stored says which framework it was stored for.
+        var stored = put("/admin/v1/managed/entities/limits-ok", "key-admin", Map.of("roles", List.of("VERIFIER"), "identifiers", List.of("https://limits.example")));
+        assertThat(stored.statusCode()).isEqualTo(200);
+        assertThat(json(stored)).containsEntry("framework", "local");
+        http.send(HttpRequest.newBuilder(URI.create(base() + "/admin/v1/managed/entities/limits-ok")).DELETE()
+                .header("Authorization", "Bearer key-admin").build(), HttpResponse.BodyHandlers.discarding());
+
+        // Errors name what was wrong, not the classes of the service.
+        var role = post("/api/v1/evaluate", "key-a", Map.of("role", "nonsense", "subject", Map.of("identifier", "https://x.example")));
+        assertThat(role.statusCode()).isEqualTo(400);
+        assertThat(role.body()).contains("Unknown role").doesNotContain("io.vctrust");
+        var type = get("/api/v1/entities/lookup?identifier=x&type=nonsense", "key-a");
+        assertThat(type.statusCode()).isEqualTo(400);
+        assertThat(type.body()).contains("Unknown identifier type").doesNotContain("io.vctrust");
+        assertThat(get("/api/v1/issuers?page=2147483647&size=1000", "key-a").statusCode()).isEqualTo(200);
+
+        // A request body has a size limit, whoever sends it.
+        var large = post("/api/v1/evaluate", "key-a", Map.of("role", "issuer", "subject", Map.of("x5c", List.of("A".repeat(3 * 1024 * 1024)))));
+        assertThat(large.statusCode()).isEqualTo(413);
+        // A chain of more certificates than any real one is not read.
+        var long11 = post("/api/v1/evaluate", "key-a", Map.of("role", "issuer", "subject",
+                Map.of("x5c", java.util.Collections.nCopies(11, Certificates.toBase64(IACA.certificate())))));
+        assertThat(long11.statusCode()).isEqualTo(200);
+        assertThat(long11.body()).contains("x509.chain_too_long");
+
+        // The public health endpoint says UP or DOWN; what is behind it is for operators.
+        var health = get("/actuator/health", null);
+        assertThat(health.statusCode()).isEqualTo(200);
+        assertThat(health.body()).contains("\"status\":\"UP\"").doesNotContain("components").doesNotContain("sources");
+        assertThat(get("/admin/v1/sources", "key-admin").body()).contains("\"reg\"");
     }
 }

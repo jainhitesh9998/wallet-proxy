@@ -60,6 +60,46 @@ class StaticAndBundleSourcesTest {
     }
 
     @Test
+    void aDocumentCannotPlaceItsEntriesInAnotherFramework() throws Exception {
+        var ca = TestPki.rootCa("CN=Partner CA,C=UT");
+        String yaml = """
+                entities:
+                  - {id: partner, roles: [CREDENTIAL_ISSUER], identifiers: ["https://partner.example"]}
+                  - {id: same, framework: sandbox, roles: [CREDENTIAL_ISSUER], identifiers: ["https://same.example"]}
+                  - {id: evil, framework: gov, roles: [CREDENTIAL_ISSUER], identifiers: ["https://evil.example"]}
+                anchors:
+                  - domain: credential-issuer
+                    framework: gov
+                    certificate: |
+                %s
+                """.formatted(Certificates.toPem(ca.certificate()).indent(6));
+        var def = new SourceDefinition("partner-list", "static", "sandbox", null, true, Map.of("location", "mem:reg.yaml"));
+        var r = new StaticTrustSourceFactory().create(def, new TestContext().put("mem:reg.yaml", yaml)).load();
+        // The list is configured for the sandbox: what it says about another framework is not loaded at all.
+        assertThat(r.entities()).extracting(e -> e.id() + " in " + e.frameworkId()).containsExactly("partner in sandbox", "same in sandbox");
+        assertThat(r.anchors()).isEmpty();
+        assertThat(r.warnings()).hasSize(2).allMatch(w -> w.contains("names framework 'gov'"));
+    }
+
+    @Test
+    void aRegistryFetchedFromElsewhereCannotNameFilesOfThisHost() throws Exception {
+        var ca = TestPki.rootCa("CN=Partner CA,C=UT");
+        String yaml = """
+                anchors:
+                  - {domain: credential-issuer, certificateLocation: "classpath:etsi/eu-lotl.xml"}
+                  - {domain: credential-issuer, certificateLocation: "/etc/hosts"}
+                  - {domain: credential-issuer, certificateLocation: "file:///etc/hosts"}
+                  - {domain: credential-issuer, certificateLocation: "https://partner.example/ca.pem"}
+                """;
+        var ctx = new TestContext().put("https://partner.example/registry.yaml", yaml)
+                .put("https://partner.example/ca.pem", Certificates.toPem(ca.certificate())).put("mem:local.yaml", yaml);
+        var remote = new StaticTrustSourceFactory().create(new SourceDefinition("partner", "static", "sandbox", null, true,
+                Map.of("location", "https://partner.example/registry.yaml")), ctx).load();
+        assertThat(remote.anchors()).singleElement().satisfies(a -> assertThat(a.certificate()).isEqualTo(ca.certificate()));
+        assertThat(remote.warnings()).hasSize(3).allMatch(w -> w.contains("Only an http(s) location"));
+    }
+
+    @Test
     void x509BundleFromJsonField() throws Exception {
         var ca = TestPki.rootCa("CN=Animo,C=NL");
         var ctx = new TestContext();

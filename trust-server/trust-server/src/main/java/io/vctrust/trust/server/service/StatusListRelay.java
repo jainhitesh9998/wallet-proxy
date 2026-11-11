@@ -17,7 +17,8 @@ import java.util.stream.Collectors;
 /**
  * Relay for credential status lists (IETF Token Status List, W3C Bitstring Status List). Lists are signed by
  * their issuer and verified on the device; the relay passes them through byte for byte, caching them as the
- * upstream allows (bounded by {@code status-list-max-ttl}). Through the relay the issuer does not see the device;
+ * upstream allows (bounded by {@code status-list-max-ttl}). Only what has the shape of a status list is passed on
+ * ({@link StatusLists}): the relay is not a way to read other documents from where the service stands. Through the relay the issuer does not see the device;
  * the service sees which list was asked for. Decides whether the relay is on, which URLs may be asked for, and what
  * a failed fetch means to the caller.
  */
@@ -108,6 +109,10 @@ public class StatusListRelay {
         }
         if (r.body().length > cfg.getMaxStatusListBytes()) {
             throw new InvalidStatusListException("Status list exceeds " + cfg.getMaxStatusListBytes() + " bytes");
+        }
+        // The content type alone would make this a way to read any JSON the service can reach.
+        if (!StatusLists.isStatusList(r.body())) {
+            throw new InvalidStatusListException("Upstream returned something that is not a status list");
         }
         Duration ttl = r.maxAge().orElse(cfg.getStatusListDefaultTtl());
         if (ttl.compareTo(cfg.getStatusListMaxTtl()) > 0) {

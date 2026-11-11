@@ -7,6 +7,7 @@ import io.vctrust.trust.server.security.ClientAuthenticator;
 import io.vctrust.trust.server.security.ClientProfileArgumentResolver;
 import io.vctrust.trust.server.security.ClientRegistry;
 import io.vctrust.trust.server.security.RateLimiter;
+import io.vctrust.trust.server.security.RequestSizeFilter;
 import io.vctrust.trust.server.service.RegistryReadiness;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -42,9 +43,21 @@ public class WebConfiguration implements WebMvcConfigurer {
     FilterRegistrationBean<ClientAuthenticationFilter> clientAuthenticationFilter(ClientAuthenticator authenticator, ClientRegistry clients) {
         TrustProperties.RateLimit limit = props.getAuth().getRateLimit();
         RateLimiter limiter = limit.isEnabled() ? new RateLimiter(limit.getRequestsPerMinute(), limit.getBurst()) : null;
+        // Refused credentials: a tenth of the burst at once, then the configured rate.
+        RateLimiter refused = limit.isEnabled() && limit.getRefusedPerMinute() > 0
+                ? new RateLimiter(limit.getRefusedPerMinute(), Math.max(5, limit.getBurst() / 10)) : null;
         FilterRegistrationBean<ClientAuthenticationFilter> reg = new FilterRegistrationBean<>(
-                new ClientAuthenticationFilter(authenticator, clients, limiter, limit.isExemptAdmin()));
+                new ClientAuthenticationFilter(authenticator, clients, limiter, refused,
+                        limit.isEnabled() ? limit.getMaxConcurrent() : 0, limit.isExemptAdmin()));
         reg.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
+        return reg;
+    }
+
+    /** Runs before authentication: an oversized body is refused whoever sends it. */
+    @Bean
+    FilterRegistrationBean<RequestSizeFilter> requestSizeFilter() {
+        FilterRegistrationBean<RequestSizeFilter> reg = new FilterRegistrationBean<>(new RequestSizeFilter(props.getService().getMaxRequestBytes()));
+        reg.setOrder(Ordered.HIGHEST_PRECEDENCE + 5);
         return reg;
     }
 

@@ -307,6 +307,97 @@ class ClientAuthenticatorTest {
     }
 
     @Test
+    void refusedCredentialsAreCountedPerAddress() throws Exception {
+        TrustProperties p = props();
+        ClientRegistry clients = new ClientRegistry(p);
+        AtomicLong now = new AtomicLong();
+        ClientAuthenticationFilter filter = new ClientAuthenticationFilter(authenticator(p), clients, null,
+                new RateLimiter(60, 3, now::get), 0, true);
+        for (int i = 0; i < 3; i++) {
+            assertThat(run(filter, request("GET", "/api/v1/issuers", "guess-" + i)).getStatus()).isEqualTo(401);
+        }
+        // The address has used up its refusals: what it presents next is turned away unseen, whatever it is.
+        MockHttpServletResponse blocked = run(filter, request("GET", "/api/v1/issuers", "guess-3"));
+        assertThat(blocked.getStatus()).isEqualTo(429);
+        assertThat(blocked.getHeader("Retry-After")).isNotNull();
+        assertThat(run(filter, request("GET", "/api/v1/issuers", "wallet-key")).getStatus()).isEqualTo(429);
+        // Another address is not affected, nor is a request that presents nothing.
+        MockHttpServletRequest elsewhere = request("GET", "/api/v1/issuers", "wallet-key");
+        elsewhere.setRemoteAddr("198.51.100.7");
+        assertThat(run(filter, elsewhere).getStatus()).isEqualTo(200);
+        assertThat(run(filter, request("GET", "/api/v1/issuers", null)).getStatus()).isEqualTo(401);
+        // Refusals are forgotten at the configured rate.
+        now.addAndGet(Duration.ofSeconds(2).toNanos());
+        assertThat(run(filter, request("GET", "/api/v1/issuers", "wallet-key")).getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void oneCallerHasABoundedNumberOfRequestsInProgress() throws Exception {
+        TrustProperties p = props();
+        ClientRegistry clients = new ClientRegistry(p);
+        ClientAuthenticationFilter filter = new ClientAuthenticationFilter(authenticator(p), clients, null, null, 2, true);
+        java.util.concurrent.atomic.AtomicInteger third = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger other = new java.util.concurrent.atomic.AtomicInteger();
+        // Two requests of one client are being served (each inside the other's chain) when a third arrives.
+        jakarta.servlet.FilterChain second = (rq, rs) -> {
+            try {
+                third.set(run(filter, request("GET", "/api/v1/proxy/status-list", "wallet-key")).getStatus());
+                other.set(run(filter, bearer(token(claims().build()))).getStatus());
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+        jakarta.servlet.FilterChain first = (rq, rs) ->
+                filter.doFilter(request("GET", "/api/v1/proxy/status-list", "wallet-key"), new MockHttpServletResponse(), second);
+        filter.doFilter(request("GET", "/api/v1/proxy/status-list", "wallet-key"), new MockHttpServletResponse(), first);
+        assertThat(third).hasValue(429);
+        // Another client is served meanwhile, and so is this one once its requests are done.
+        assertThat(other).hasValue(200);
+        assertThat(run(filter, request("GET", "/api/v1/issuers", "wallet-key")).getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void anOversizedBodyIsRefusedBeforeAnythingReadsIt() throws Exception {
+        RequestSizeFilter filter = new RequestSizeFilter(1000);
+        MockHttpServletRequest declared = new MockHttpServletRequest("POST", "/api/v1/evaluate");
+        declared.setContent(new byte[1001]);
+        MockHttpServletResponse refused = new MockHttpServletResponse();
+        MockFilterChain untouched = new MockFilterChain();
+        filter.doFilter(declared, refused, untouched);
+        assertThat(refused.getStatus()).isEqualTo(413);
+        assertThat(untouched.getRequest()).isNull();
+
+        // A body that does not say how long it is (chunked) stops being read at the limit.
+        MockHttpServletRequest chunked = new MockHttpServletRequest("POST", "/api/v1/evaluate") {
+            @Override
+            public long getContentLengthLong() {
+                return -1;
+            }
+        };
+        chunked.setContent(new byte[5000]);
+        java.util.concurrent.atomic.AtomicInteger read = new java.util.concurrent.atomic.AtomicInteger();
+        jakarta.servlet.FilterChain reading = (rq, rs) -> {
+            try {
+                var in = rq.getInputStream();
+                byte[] buffer = new byte[256];
+                for (int n; (n = in.read(buffer)) > 0; ) {
+                    read.addAndGet(n);
+                }
+            } catch (java.io.IOException tooLarge) {
+                read.set(-read.get());
+            }
+        };
+        filter.doFilter(chunked, new MockHttpServletResponse(), reading);
+        assertThat(read.get()).isNegative().isGreaterThanOrEqualTo(-1000);
+
+        MockHttpServletRequest small = new MockHttpServletRequest("POST", "/api/v1/evaluate");
+        small.setContent(new byte[1000]);
+        MockFilterChain passed = new MockFilterChain();
+        filter.doFilter(small, new MockHttpServletResponse(), passed);
+        assertThat(passed.getRequest()).isNotNull();
+    }
+
+    @Test
     void filterJudgesPathsAsSpringMvcRoutesThem() throws Exception {
         TrustProperties p = props();
         ClientRegistry clients = new ClientRegistry(p);

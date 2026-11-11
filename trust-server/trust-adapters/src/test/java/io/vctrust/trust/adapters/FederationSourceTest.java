@@ -124,4 +124,30 @@ class FederationSourceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> new OpenIdFederationSourceFactory().create(d, ctx).load())
                 .hasMessageContaining("signature");
     }
+
+    @Test
+    void oneResolutionMakesABoundedNumberOfRequests() throws Exception {
+        // An entity anyone may ask about, naming two hundred superiors, each of which names the same two hundred.
+        String spider = "https://spider.example";
+        var key = new ECKeyGenerator(Curve.P_256).keyID("spider").generate();
+        List<String> hints = new java.util.ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            hints.add("https://h" + i + ".spider.example");
+        }
+        ctx.http.respond(spider + "/.well-known/openid-federation", 200, "application/entity-statement+jwt",
+                sign(key, Map.of("iss", spider, "sub", spider, "jwks", jwks(key), "authority_hints", hints)).getBytes());
+        for (String hint : hints) {
+            ctx.http.respond(hint + "/.well-known/openid-federation", 200, "application/entity-statement+jwt",
+                    sign(key, Map.of("iss", hint, "sub", hint, "jwks", jwks(key), "authority_hints", hints,
+                            "metadata", Map.of("federation_entity", Map.of("federation_fetch_endpoint", hint + "/fetch")))).getBytes());
+            ctx.http.respond(hint + "/fetch?sub=" + java.net.URLEncoder.encode(spider, java.nio.charset.StandardCharsets.UTF_8), 200,
+                    "application/entity-statement+jwt", sign(key, Map.of("iss", hint, "sub", spider, "jwks", jwks(key))).getBytes());
+        }
+        var resolver = (OnDemandResolver) new OpenIdFederationSourceFactory().create(def(Map.of("crawl", false, "maxDepth", 10)), ctx);
+        ctx.http.requests.clear();
+        assertThat(resolver.resolve(Identifier.of(IdentifierType.FEDERATION_ENTITY, spider))).isEmpty();
+        assertThat(ctx.http.requests).hasSizeLessThanOrEqualTo(40);
+        // A chain that exists is still found.
+        assertThat(resolver.resolve(Identifier.of(IdentifierType.FEDERATION_ENTITY, LEAF))).isPresent();
+    }
 }

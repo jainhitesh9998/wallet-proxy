@@ -24,7 +24,14 @@ class VicalSourceTest {
     static final CBORMapper CBOR = CBORMapper.builder().build();
 
     static byte[] vical(TestPki.Issued signer, List<TestPki.Issued> iacas, boolean tamper) throws Exception {
+        return vical(signer, iacas, tamper, null);
+    }
+
+    static byte[] vical(TestPki.Issued signer, List<TestPki.Issued> iacas, boolean tamper, String nextUpdate) throws Exception {
         Map<String, Object> payload = new LinkedHashMap<>();
+        if (nextUpdate != null) {
+            payload.put("nextUpdate", nextUpdate);
+        }
         payload.put("version", "1.0");
         payload.put("vicalProvider", "Test VICAL Provider");
         payload.put("date", "2026-10-01T00:00:00Z");
@@ -89,5 +96,21 @@ class VicalSourceTest {
                 "signerCertificates", List.of(Certificates.toPem(other.certificate()))));
         assertThatThrownBy(() -> new VicalSourceFactory().create(def2, untrusted).load())
                 .isInstanceOf(TrustSourceException.class).hasMessageContaining("not trusted");
+    }
+
+    @Test
+    void aVicalPastItsNextUpdateIsNotLoaded() throws Exception {
+        var root = TestPki.rootCa("CN=VICAL Root,C=US");
+        var signer = TestPki.leaf("CN=VICAL Signer,C=US", root, List.of(), "1.0.18013.5.1.8");
+        var iaca = TestPki.rootCa("CN=Utopia IACA,C=UT");
+        var ctx = new TestContext().put("mem:vical", vical(signer, List.of(iaca), false, "2026-10-15T00:00:00Z"));
+        Map<String, Object> properties = Map.of("location", "mem:vical", "signerCertificates", List.of(Certificates.toPem(root.certificate())));
+        assertThatThrownBy(() -> new VicalSourceFactory().create(new SourceDefinition("v", "vical", "aamva", null, true, properties), ctx).load())
+                .isInstanceOf(TrustSourceException.class).hasMessageContaining("past its nextUpdate");
+        Map<String, Object> allowing = new LinkedHashMap<>(properties);
+        allowing.put("allowExpired", true);
+        var r = new VicalSourceFactory().create(new SourceDefinition("v", "vical", "aamva", null, true, allowing), ctx).load();
+        assertThat(r.anchors()).hasSize(1);
+        assertThat(r.warnings()).anyMatch(w -> w.contains("past its nextUpdate"));
     }
 }

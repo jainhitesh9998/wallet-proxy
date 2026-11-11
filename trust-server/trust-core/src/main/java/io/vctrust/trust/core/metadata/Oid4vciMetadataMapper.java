@@ -59,8 +59,11 @@ public final class Oid4vciMetadataMapper {
                 .map(c -> Json.object(c.get("credential_definition"))).filter(java.util.Objects::nonNull)
                 .flatMap(def -> def.get("@context") instanceof List<?> l ? l.stream() : java.util.stream.Stream.empty())
                 .filter(String.class::isInstance).map(String.class::cast).filter(u -> u.startsWith("https://") || u.startsWith("http://"))
-                .distinct().toList();
+                .distinct().limit(MAX_CONTEXTS).toList();
     }
+
+    /** The contexts taken from one issuer's metadata: the issuer chooses them, and each is something the service fetches. */
+    public static final int MAX_CONTEXTS = 20;
 
     /**
      * One authorization per credential configuration: format plus doctype / vct / most specific VC type. Only for

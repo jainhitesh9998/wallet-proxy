@@ -14,6 +14,9 @@ import java.util.Map;
  * {@code /actuator/health} component "trust": DOWN until every required source has loaded once (no snapshot is served
  * before that), then UP with each source's state. A required source that keeps failing after its first load shows as
  * an error while the service goes on serving its last good data.
+ *
+ * <p>The health endpoint is public and by default shows the status only ({@code management.endpoint.health.show-details});
+ * the same states are served to admin clients at {@code GET /admin/v1/sources}.
  */
 @Component("trust")
 public class TrustHealthIndicator implements HealthIndicator {

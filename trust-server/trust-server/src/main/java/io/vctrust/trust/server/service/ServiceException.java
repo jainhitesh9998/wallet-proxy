@@ -39,6 +39,10 @@ public class ServiceException extends RuntimeException {
         return new ServiceException(Kind.INVALID_REQUEST, code, message);
     }
 
+    public static ServiceException forbidden(String message) {
+        return new ServiceException(Kind.FORBIDDEN, "forbidden", message);
+    }
+
     public static ServiceException notFound(String message) {
         return new ServiceException(Kind.NOT_FOUND, "not_found", message);
     }

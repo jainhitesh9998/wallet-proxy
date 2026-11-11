@@ -14,18 +14,19 @@ import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustDomain;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.spi.ResourceLoader;
+import io.vctrust.trust.core.util.Enums;
 
 import java.io.IOException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
  * Parses the service's native entity / anchor document format (used by the static source and the admin API).
- * Shape: {@code {entities: [...], anchors: [...]}}; see {@code docs/configuration.md}.
+ * Shape: {@code {entities: [...], anchors: [...]}}; see {@code docs/configuration.md}. Entries take the framework
+ * of their source; a {@code framework} key is accepted only when it names that same framework.
  */
 public final class TrustedEntityParser {
 
@@ -33,23 +34,22 @@ public final class TrustedEntityParser {
     }
 
     @SuppressWarnings("unchecked")
-    public static TrustedEntity entity(Map<String, Object> m, String defaultFramework, Provenance provenance,
+    public static TrustedEntity entity(Map<String, Object> m, String sourceFramework, Provenance provenance,
                                        ResourceLoader loader) throws IOException {
         String id = Json.string(m, "id");
         if (id == null) {
             throw new IllegalArgumentException("Entity without id");
         }
-        TrustedEntity.Builder b = TrustedEntity.builder(id)
-                .framework(m.get("framework") != null ? String.valueOf(m.get("framework")) : defaultFramework)
+        TrustedEntity.Builder b = TrustedEntity.builder(id).framework(framework(m, "Entity " + id, sourceFramework))
                 .provenance(provenance);
         for (String r : Json.strings(m.get("roles"))) {
-            b.role(EntityRole.valueOf(r.trim().toUpperCase(Locale.ROOT)));
+            b.role(Enums.parse(EntityRole.class, r, "role"));
         }
         if (m.get("identifiers") instanceof List<?> ids) {
             for (Object o : ids) {
                 if (o instanceof Map<?, ?> im) {
                     Map<String, Object> idm = (Map<String, Object>) im;
-                    b.identifier(new Identifier(IdentifierType.valueOf(Json.string(idm, "type").toUpperCase(Locale.ROOT)),
+                    b.identifier(new Identifier(Enums.parse(IdentifierType.class, Json.string(idm, "type"), "identifier type"),
                             Json.string(idm, "value")));
                 } else if (o instanceof String s) {
                     b.identifier(guess(s));
@@ -73,7 +73,7 @@ public final class TrustedEntityParser {
             }
         }
         if (m.get("status") != null) {
-            b.status(EntityStatus.valueOf(String.valueOf(m.get("status")).toUpperCase(Locale.ROOT)));
+            b.status(Enums.parse(EntityStatus.class, String.valueOf(m.get("status")), "status"));
         }
         b.validFrom(AdapterSupport.instant(m.get("validFrom")));
         b.validUntil(AdapterSupport.instant(m.get("validUntil")));
@@ -112,7 +112,7 @@ public final class TrustedEntityParser {
         return b.build();
     }
 
-    public static List<TrustAnchor> anchors(Map<String, Object> m, String defaultFramework, Provenance provenance,
+    public static List<TrustAnchor> anchors(Map<String, Object> m, String sourceFramework, Provenance provenance,
                                             ResourceLoader loader) throws IOException {
         String domain = Json.string(m, "domain");
         if (domain == null) {
@@ -122,9 +122,9 @@ public final class TrustedEntityParser {
         if (certs.isEmpty()) {
             throw new IllegalArgumentException("Anchor in domain " + domain + " has no certificate");
         }
-        String framework = m.get("framework") != null ? String.valueOf(m.get("framework")) : defaultFramework;
+        String framework = framework(m, "Anchor in domain " + domain, sourceFramework);
         EntityStatus status = m.get("status") == null ? EntityStatus.ACTIVE
-                : EntityStatus.valueOf(String.valueOf(m.get("status")).toUpperCase(Locale.ROOT));
+                : Enums.parse(EntityStatus.class, String.valueOf(m.get("status")), "status");
         List<TrustAnchor> out = new ArrayList<>();
         for (int i = 0; i < certs.size(); i++) {
             String id = Json.string(m, "id");
@@ -132,6 +132,19 @@ public final class TrustedEntityParser {
                     certs.get(i), framework, Json.string(m, "entity"), status, Json.object(m.get("constraints")), provenance));
         }
         return out;
+    }
+
+    /**
+     * An entry belongs to the framework of the source that lists it. A document cannot place an entry in another
+     * one: whoever writes a list for one framework would otherwise decide what the clients of any framework trust.
+     */
+    private static String framework(Map<String, Object> m, String what, String sourceFramework) {
+        Object named = m.get("framework");
+        if (named != null && !String.valueOf(named).equals(sourceFramework)) {
+            throw new IllegalArgumentException(what + " names framework '" + named + "', but its source loads into "
+                    + (sourceFramework == null ? "no framework" : "'" + sourceFramework + "'"));
+        }
+        return sourceFramework;
     }
 
     /** Guesses the identifier type of a bare string. */

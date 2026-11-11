@@ -39,8 +39,10 @@ import io.vctrust.trust.server.service.SnapshotService;
 import io.vctrust.trust.server.signing.ServiceKeyManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -64,18 +66,29 @@ public class TrustCoreConfiguration {
         return Clock.systemUTC();
     }
 
+    /** For what clients ask the service to fetch: issuer metadata, DID documents, CRLs, status lists, JSON-LD contexts. */
     @Bean
+    @Primary
     HttpFetcher httpFetcher(TrustProperties props) {
         return new SafeHttpFetcher(props.getHttp());
     }
 
+    /**
+     * For the trust sources, under the same rules but with connections of its own: lists must still load and refresh
+     * while every connection of the lookups above is occupied, by whatever clients are asking for.
+     */
     @Bean
-    ResourceLoader trustResourceLoader(HttpFetcher http) {
+    HttpFetcher sourceHttpFetcher(TrustProperties props) {
+        return new SafeHttpFetcher(props.getHttp());
+    }
+
+    @Bean
+    ResourceLoader trustResourceLoader(@Qualifier("sourceHttpFetcher") HttpFetcher http) {
         return new TrustResourceLoader(http);
     }
 
     @Bean
-    SourceContext sourceContext(HttpFetcher http, ResourceLoader loader, Clock clock) {
+    SourceContext sourceContext(@Qualifier("sourceHttpFetcher") HttpFetcher http, ResourceLoader loader, Clock clock) {
         return new SourceContext() {
             @Override
             public HttpFetcher http() {
@@ -127,6 +140,11 @@ public class TrustCoreConfiguration {
             if (f == null) {
                 throw new IllegalArgumentException("Unknown trust source type '" + s.getType() + "' for source " + s.getId()
                         + "; available: " + factories.keySet());
+            }
+            if (s.getFramework() == null || s.getFramework().isBlank()) {
+                // What a source loads is visible to the clients of its framework; without one, to no client at all.
+                throw new IllegalArgumentException("Trust source '" + s.getId() + "' names no framework (trust.sources[].framework): "
+                        + "every source loads into exactly one");
             }
             @SuppressWarnings("unchecked")
             Map<String, Object> props2 = (Map<String, Object>) PropertyTrees.normalize(s.getProperties());

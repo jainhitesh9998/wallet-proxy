@@ -9,7 +9,13 @@ import { MemoryCacheStore, TrustClient } from '../src/index.js';
 import { checkTokenStatus, extractIssuerInfo, fetchIssuerMetadata, issuerTrustQuery, jwkThumbprint, publicKeyFromJwk, type Jwk } from '../src/primitives.js';
 import { LocalEvaluator } from '../src/evaluation/local.js';
 import { SnapshotManager } from '../src/snapshot/snapshot.js';
-import { fetchWithTimeout } from '../src/did/resolver.js';
+import { didWebUrl, fetchWithTimeout } from '../src/did/resolver.js';
+import { MAX_DID_LENGTH, parseDid } from '../src/did/did.js';
+import { readFileSync } from 'node:fs';
+import { ExpiringCache } from '../src/cache/store.js';
+import { CrlLookup } from '../src/lookups/crl.js';
+import type { LookupContext } from '../src/lookups/context.js';
+import { parseCrl } from '../src/x509/crl.js';
 
 const b64u = (s: string | Buffer) => Buffer.from(s).toString('base64url');
 const es256 = (header: object, payload: object, key: import('node:crypto').KeyObject) => {
@@ -103,6 +109,54 @@ describe('client hardening', () => {
     await expect(fetchWithTimeout(slow, 'https://x.example/a', {}, 100)).rejects.toThrow(/abort/);
     const ok = await fetchWithTimeout((async () => Response.json({ a: 1 })) as typeof fetch, 'https://x.example/a', {}, 1000);
     expect(await ok.json()).toEqual({ a: 1 });
+  });
+
+  it('reads a did:web as a host and plain path segments, like the service', () => {
+    // did:web:victim.example%2Fuploads%2Fx.json%3F would otherwise be read from https://victim.example/uploads/x.json?/...
+    for (const did of ['did:web:victim.example%2Fuploads%2Fx.json%3F', 'did:web:user%40victim.example', 'did:web:victim.example%23',
+      'did:web:victim.example%5Cx', 'did:web:victim.example%3A80%3A80', 'did:web:victim.example:a%2Fb', 'did:web:victim.example:..',
+      'did:web:victim.example:%2E%2E', 'did:web:victim.example::x', 'did:web:victim.example:a%3Fb', 'did:web:victim.example:a%20b']) {
+      expect(() => didWebUrl(did), did).toThrow();
+    }
+    expect(didWebUrl('did:web:example.com:dept%2Eone:alice')).toBe('https://example.com/dept.one/alice/did.json');
+    expect(didWebUrl('did:web:example.com%3A3000:user:alice')).toBe('https://example.com:3000/user/alice/did.json');
+  });
+
+  it('limits the length of a DID, like the service', () => {
+    expect(parseDid(`did:example:${'a'.repeat(MAX_DID_LENGTH - 12)}`).method).toBe('example');
+    expect(() => parseDid(`did:example:${'a'.repeat(200_000)}`)).toThrow(/longer than/);
+    for (const bad of ['did:example:', 'did:example:a:', 'did:example:a%3', 'did:example:a%zz', 'did:example:a b', 'did:Example:a', 'did::a']) {
+      expect(() => parseDid(bad), bad).toThrow();
+    }
+  });
+
+  it('keeps the CRL it holds when an older one is served later', async () => {
+    const current = new Uint8Array(readFileSync(new URL('../../../conformance/pki/iaca.crl', import.meta.url)));
+    // The same CRL dated a year earlier: what a CRL from before a revocation looks like to the device. Its signature
+    // no longer holds, which accept() below stands in for (callers verify against the issuing CA).
+    const earlier = Uint8Array.from(current);
+    const at = earlier.findIndex((b, i) => b === 0x17 && earlier[i + 1] === 0x0d);
+    earlier[at + 3]! -= 1;
+    expect(parseCrl(earlier).thisUpdate.getTime()).toBeLessThan(parseCrl(current).thisUpdate.getTime());
+
+    let now = parseCrl(current).thisUpdate.getTime() + 60_000;
+    let served = current;
+    const ctx = { transport: null, cache: new ExpiringCache(new MemoryCacheStore(), () => now), lookups: { crl: 'direct' },
+      fetch: async () => new Response(served), timeoutMs: 1000, insecureHosts: [], now: () => now } as unknown as LookupContext;
+    const lookup = new CrlLookup(ctx);
+    const url = 'http://crl.utopia.example/iaca.crl';
+    const first = await lookup.fetch([url], () => true);
+    expect(first.crls[0]!.source).toBe('direct');
+
+    now += 25 * 3600_000; // the copy is due for a refresh, and the distribution point (plain http) now answers with the old CRL
+    served = earlier;
+    const second = await lookup.fetch([url], () => true);
+    expect(second.crls).toHaveLength(1);
+    expect(second.crls[0]!.source).toBe('cache');
+    expect(second.crls[0]!.crl.thisUpdate).toEqual(first.crls[0]!.crl.thisUpdate);
+
+    served = current;
+    expect((await lookup.fetch([url], () => true)).crls[0]!.source).toBe('direct');
   });
 
   it('serves a cached DID document only after a transient failure, and never after the DID is gone', async () => {

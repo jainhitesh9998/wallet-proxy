@@ -17,6 +17,9 @@ import java.util.function.Supplier;
 /**
  * What an operator sees and triggers: the health of the trust sources and their reload, a summary of the registry,
  * the configured clients, and the emptying of the proxy caches. What changes the service's state is audited.
+ *
+ * <p>Every use case asks for the acting client and refuses one that is not an operator, whatever let the request
+ * through to here: the rule does not rest on how requests are routed.
  */
 public class AdministrationService {
 
@@ -40,11 +43,21 @@ public class AdministrationService {
         this.statusLists = statusLists;
     }
 
-    public List<SourceState> sourceStates() {
+    /** Refuses (and records) an operator action by a client that is not an operator. */
+    static void requireAdmin(ClientProfile client, String action) {
+        if (client == null || !client.admin()) {
+            AuditLog.refused(client, action);
+            throw ServiceException.forbidden("Admin client required");
+        }
+    }
+
+    public List<SourceState> sourceStates(ClientProfile admin) {
+        requireAdmin(admin, "list-sources");
         return sources.states();
     }
 
     public SourceState refreshSource(ClientProfile admin, String id) {
+        requireAdmin(admin, "refresh-source");
         try {
             AuditLog.sourceRefresh(admin, id);
             return sources.refresh(id);
@@ -53,7 +66,8 @@ public class AdministrationService {
         }
     }
 
-    public Map<String, Object> registrySummary() {
+    public Map<String, Object> registrySummary(ClientProfile admin) {
+        requireAdmin(admin, "registry-summary");
         RegistrySnapshot s = registry.snapshot();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("version", s.version());
@@ -71,7 +85,8 @@ public class AdministrationService {
         return out;
     }
 
-    public List<ClientProfile> clientProfiles() {
+    public List<ClientProfile> clientProfiles(ClientProfile admin) {
+        requireAdmin(admin, "list-clients");
         return List.copyOf(clients.get());
     }
 
@@ -81,6 +96,7 @@ public class AdministrationService {
      * @return the caches that were emptied
      */
     public List<String> clearCaches(ClientProfile admin) {
+        requireAdmin(admin, "clear-caches");
         dids.clear();
         metadata.clear();
         contexts.clear();

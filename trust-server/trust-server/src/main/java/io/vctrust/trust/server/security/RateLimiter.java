@@ -38,6 +38,13 @@ public class RateLimiter {
         return b.take(rate, burst, nanos.getAsLong());
     }
 
+    /** Whether {@code key} has no token left right now, without taking one. */
+    public boolean exhausted(String key, Integer perMinute) {
+        int rate = perMinute == null || perMinute <= 0 ? defaultPerMinute : perMinute;
+        Bucket b = buckets.getIfPresent(key);
+        return b != null && b.empty(rate, burst, nanos.getAsLong());
+    }
+
     private static final class Bucket {
         private double tokens;
         private long last;
@@ -45,6 +52,10 @@ public class RateLimiter {
         Bucket(int burst, long now) {
             this.tokens = burst;
             this.last = now;
+        }
+
+        synchronized boolean empty(int perMinute, int burst, long now) {
+            return Math.min(burst, tokens + (now - last) * (perMinute / 60e9)) < 1;
         }
 
         synchronized Optional<Duration> take(int perMinute, int burst, long now) {

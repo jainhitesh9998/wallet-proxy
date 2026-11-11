@@ -36,7 +36,8 @@ import java.util.Map;
  * constrained to its doctypes, linked to an issuing-authority entity.
  *
  * <p>Properties: {@code location}; {@code signerCertificates} / {@code signerCertificateLocation} (the VICAL
- * provider's root; required unless {@code allowUnverified: true}).
+ * provider's root; required unless {@code allowUnverified: true}); {@code allowExpired} (default false: a VICAL
+ * past its nextUpdate is not loaded).
  */
 public final class VicalSourceFactory implements TrustSourceFactory {
 
@@ -152,8 +153,17 @@ public final class VicalSourceFactory implements TrustSourceFactory {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("version", vical.path("version").asText(null));
         details.put("certificates", anchors.size());
+        Instant nextUpdate = parseDate(vical.path("nextUpdate").asText(null));
+        if (nextUpdate != null && nextUpdate.isBefore(now)) {
+            // An expired list may be one from before an IACA was taken off it, served again by whoever controls its location.
+            if (!def.bool("allowExpired", false)) {
+                throw new TrustSourceException("VICAL " + location + " is past its nextUpdate " + nextUpdate
+                        + " and is not loaded (allowExpired: true overrides)");
+            }
+            warnings.add("VICAL " + location + " is past its nextUpdate " + nextUpdate + " (allowExpired)");
+        }
         ListInfo li = new ListInfo(provider, vical.path("vicalIssueID").asText(null), parseDate(vical.path("date").asText(null)),
-                parseDate(vical.path("nextUpdate").asText(null)), sig, details);
+                nextUpdate, sig, details);
         return new SourceLoadResult(entities, anchors, li, warnings);
     }
 

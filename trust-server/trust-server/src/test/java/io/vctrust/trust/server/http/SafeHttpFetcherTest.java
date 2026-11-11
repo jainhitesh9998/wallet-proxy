@@ -71,7 +71,36 @@ class SafeHttpFetcherTest {
             ex.getResponseBody().write(new byte[4096]);
             ex.close();
         });
+        // A body that never ends: a chunk every 50 ms until the client goes away (or, as a backstop, for 20 s).
+        server.createContext("/endless", ex -> {
+            hits.incrementAndGet();
+            endless(ex, 200);
+        });
+        server.createContext("/endless-redirect", ex -> {
+            hits.incrementAndGet();
+            ex.getResponseHeaders().add("Location", "http://public.test:" + port + "/ok");
+            endless(ex, 302);
+        });
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "test-upstream");
+            t.setDaemon(true);
+            return t;
+        }));
         server.start();
+    }
+
+    static void endless(com.sun.net.httpserver.HttpExchange ex, int status) throws IOException {
+        ex.sendResponseHeaders(status, 0);
+        try (var out = ex.getResponseBody()) {
+            long end = System.nanoTime() + java.time.Duration.ofSeconds(20).toNanos();
+            while (System.nanoTime() < end) {
+                out.write(new byte[256]);
+                out.flush();
+                Thread.sleep(50);
+            }
+        } catch (IOException | InterruptedException gone) {
+            // the client dropped the connection
+        }
     }
 
     @AfterAll
@@ -101,7 +130,8 @@ class SafeHttpFetcherTest {
         try (SafeHttpFetcher fetcher = new SafeHttpFetcher(config(List.of()), LOOPBACK_DNS)) {
             assertThatThrownBy(() -> fetcher.get(url("rebind.test", "/ok"), null))
                     .isInstanceOf(SafeHttpFetcher.BlockedRequestException.class)
-                    .hasMessageContaining("non-public address 127.0.0.1");
+                    // which address it is stays in the log: the answer must not map the network for the caller
+                    .hasMessageContaining("non-public address").hasMessageNotContaining("127.0.0.1");
             assertThatThrownBy(() -> fetcher.get(url("127.0.0.1", "/ok"), null))
                     .isInstanceOf(HttpFetcher.BlockedException.class);
         }
@@ -162,6 +192,34 @@ class SafeHttpFetcherTest {
             assertThatThrownBy(() -> fetcher.get(url("public.test", "/big"), null))
                     .isInstanceOf(IOException.class)
                     .hasMessageContaining("exceeds 1024 bytes");
+        }
+    }
+
+    @Test
+    void theCapsEndTheFetchInsteadOfReadingOn() throws IOException {
+        TrustProperties.Http cfg = config(List.of("public.test"));
+        cfg.setTotalTimeout(java.time.Duration.ofMillis(700));
+        try (SafeHttpFetcher fetcher = new SafeHttpFetcher(cfg, LOOPBACK_DNS)) {
+            // Too large: refused at the limit, without reading the rest of a body that never ends.
+            long start = System.nanoTime();
+            assertThatThrownBy(() -> fetcher.get(url("public.test", "/endless"), null))
+                    .isInstanceOf(IOException.class).hasMessageContaining("exceeds 1024 bytes");
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(java.time.Duration.ofSeconds(3));
+
+            // Too slow: the total time holds although every single read succeeds.
+            cfg.setMaxResponseBytes(8 * 1024 * 1024);
+            start = System.nanoTime();
+            assertThatThrownBy(() -> fetcher.get(url("public.test", "/endless"), null))
+                    .isInstanceOf(IOException.class).hasMessageContaining("took longer than");
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(java.time.Duration.ofSeconds(3));
+
+            // A redirect with a body that never ends is followed without reading that body.
+            start = System.nanoTime();
+            assertThat(fetcher.get(url("public.test", "/endless-redirect"), null).bodyAsString()).isEqualTo("hello");
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(java.time.Duration.ofSeconds(3));
+
+            // The fetcher still works afterwards: no connection is left occupied.
+            assertThat(fetcher.get(url("public.test", "/ok"), null).bodyAsString()).isEqualTo("hello");
         }
     }
 

@@ -6,11 +6,13 @@ import io.vctrust.trust.core.spi.HttpFetcher;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * did:web (W3C CCG did:web). {@code did:web:host%3Aport:a:b} resolves to {@code https://host:port/a/b/did.json};
@@ -32,9 +34,17 @@ public final class DidWebDriver implements DidMethodDriver {
         return Set.of("web");
     }
 
+    /**
+     * The URL of the DID document (did:web, "Read"): a host with an optional port, then path segments. The first
+     * part of the identifier may decode to nothing else: a path, a query or userinfo there would let the DID name
+     * any resource of any host as its document. Client libraries apply the same rule.
+     */
     public URI documentUrl(Did did) {
-        String[] parts = did.methodSpecificId().split(":");
+        String[] parts = did.methodSpecificId().split(":", -1);
         String hostPort = URLDecoder.decode(parts[0], StandardCharsets.UTF_8);
+        if (!HOST_PORT.matcher(hostPort).matches()) {
+            throw new IllegalArgumentException("did:web host is not a host name with an optional port");
+        }
         String host = hostPort.contains(":") ? hostPort.substring(0, hostPort.indexOf(':')) : hostPort;
         String scheme = httpAllowedHosts.contains(host) ? "http" : "https";
         StringBuilder path = new StringBuilder();
@@ -42,12 +52,19 @@ public final class DidWebDriver implements DidMethodDriver {
             path.append("/.well-known/did.json");
         } else {
             for (int i = 1; i < parts.length; i++) {
-                path.append('/').append(URLDecoder.decode(parts[i], StandardCharsets.UTF_8));
+                String segment = URLDecoder.decode(parts[i], StandardCharsets.UTF_8);
+                if (segment.isEmpty() || segment.equals(".") || segment.equals("..") || NOT_IN_A_SEGMENT.matcher(segment).find()) {
+                    throw new IllegalArgumentException("did:web path segment is not a plain segment");
+                }
+                path.append('/').append(URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20"));
             }
             path.append("/did.json");
         }
         return URI.create(scheme + "://" + hostPort + path);
     }
+
+    private static final Pattern HOST_PORT = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?");
+    private static final Pattern NOT_IN_A_SEGMENT = Pattern.compile("[/?#\\\\\\s]");
 
     @Override
     public DidResolutionResult resolve(Did did) {

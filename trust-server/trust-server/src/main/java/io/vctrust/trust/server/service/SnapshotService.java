@@ -50,6 +50,7 @@ public class SnapshotService {
     }
 
     /**
+     * @param didResolutionDeadline how long a build waits for DID documents, and for JSON-LD contexts
      * @param maxCrlBytes     larger anchor CRLs are left out (clients fetch them per their lookup policy)
      * @param maxContextBytes JSON-LD context documents are embedded up to this total; past it only their digests are
      * @param recheck         how often a client's snapshot content is re-derived
@@ -138,7 +139,7 @@ public class SnapshotService {
             claims.put("didDocuments", didDocuments(visible));
         }
         if (contexts != null) {
-            claims.put("contexts", contexts.forSnapshot(visible, options.maxContextBytes()));
+            claims.put("contexts", contexts.forSnapshot(visible, options.maxContextBytes(), options.didResolutionDeadline()));
         }
         if (crls != null) {
             claims.put("crls", crls.snapshotClaims(a -> client.accepts(a.frameworkId()), options.maxCrlBytes()));

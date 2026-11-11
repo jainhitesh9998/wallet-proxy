@@ -10,6 +10,7 @@ import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.policy.ClientProfile;
 import io.vctrust.trust.core.registry.RegistrySnapshot;
 import io.vctrust.trust.core.registry.TrustRegistry;
+import io.vctrust.trust.core.util.Enums;
 import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.core.util.Hashes;
 
@@ -99,7 +100,7 @@ public class RegistryQueryService {
     public Answer<List<EntityView>> lookup(ClientProfile client, String identifier, String type, boolean onDemand) {
         RegistrySnapshot snap = registry.snapshot();
         List<Identifier> ids = type != null
-                ? List.of(Identifier.of(IdentifierType.valueOf(type.toUpperCase(Locale.ROOT)), identifier))
+                ? List.of(Identifier.of(Enums.parse(IdentifierType.class, type, "identifier type"), identifier))
                 : TrustEvaluator.identifiersFor(identifier);
         Set<TrustedEntity> found = new LinkedHashSet<>();
         ids.forEach(id -> snap.byIdentifier(id).stream().filter(e -> client.accepts(e.frameworkId())).forEach(found::add));
@@ -138,7 +139,7 @@ public class RegistryQueryService {
         List<EntityView> all = snap.find(p).stream()
                 .sorted(Comparator.comparing((TrustedEntity e) -> String.valueOf(e.frameworkId())).thenComparing(e -> e.displayName("en")))
                 .map(EntityView::of).toList();
-        int from = Math.min(page * size, all.size());
+        int from = (int) Math.min((long) page * size, all.size()); // page * size overflows an int for a large page
         int to = Math.min(from + size, all.size());
         return cacheable(snap, client, new Page<>(all.subList(from, to), all.size(), page, size, snap.version()));
     }

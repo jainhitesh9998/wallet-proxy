@@ -16,10 +16,13 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -37,6 +40,11 @@ import java.util.function.Predicate;
  * invalidate what was derived from it. The registry is {@link #ready()} once every required source has loaded;
  * before that it must not be served, because a registry missing a source looks like that source's parties being
  * delisted.
+ *
+ * <p>A source speaks for its own framework and for nothing else. Whatever it loads is placed in the framework it is
+ * configured for; entities of the same id are merged only within a framework; an anchor is tied to an entity only
+ * of its own framework. A source of one framework can therefore add nothing to, and take nothing from, what a
+ * client of another framework is told. A list that is older than the one already held is not loaded.
  */
 public class TrustSourceManager implements AutoCloseable {
 
@@ -49,6 +57,8 @@ public class TrustSourceManager implements AutoCloseable {
     private final Map<String, TrustSource> sources = new LinkedHashMap<>();
     private final Map<String, SourceLoadResult> results = new ConcurrentHashMap<>();
     private final Map<String, SourceState> states = new ConcurrentHashMap<>();
+    /** Per source, what the last registry build could not take from it as it was written. */
+    private volatile Map<String, List<String>> conflicts = Map.of();
     private final Clock clock;
     private final AtomicLong version = new AtomicLong();
     private final ScheduledExecutorService scheduler;
@@ -96,11 +106,24 @@ public class TrustSourceManager implements AutoCloseable {
         }
         loadQuietly(s);
         rebuild();
-        return states.get(sourceId);
+        return state(sourceId);
     }
 
     public List<SourceState> states() {
-        return sources.keySet().stream().map(states::get).toList();
+        return sources.keySet().stream().map(this::state).toList();
+    }
+
+    /** The state of a source, its warnings followed by what the registry could not take from it as written. */
+    private SourceState state(String sourceId) {
+        SourceState st = states.get(sourceId);
+        List<String> more = conflicts.getOrDefault(sourceId, List.of());
+        if (st == null || more.isEmpty()) {
+            return st;
+        }
+        List<String> warnings = new ArrayList<>(st.warnings());
+        warnings.addAll(more);
+        return new SourceState(st.id(), st.type(), st.frameworkId(), st.enabled(), st.lastAttempt(), st.lastSuccess(),
+                st.lastError(), st.entityCount(), st.anchorCount(), st.listInfo(), warnings, st.nextRefresh());
     }
 
     public Collection<TrustSource> sources() {
@@ -119,7 +142,7 @@ public class TrustSourceManager implements AutoCloseable {
             try {
                 Optional<TrustedEntity> e = r.resolve(identifier);
                 if (e.isPresent()) {
-                    return e;
+                    return e.map(found -> inFramework(found, found.id(), s.definition().frameworkId()));
                 }
             } catch (TrustSourceException e) {
                 log.debug("On-demand resolution of {} by {} failed: {}", identifier, s.id(), e.getMessage());
@@ -133,6 +156,13 @@ public class TrustSourceManager implements AutoCloseable {
         SourceState prev = states.get(s.id());
         try {
             SourceLoadResult r = s.load();
+            SourceLoadResult held = results.get(s.id());
+            if (held != null && r.listInfo().olderThan(held.listInfo())) {
+                // Whoever serves the list may serve an old one again, from before an entry was withdrawn.
+                throw new TrustSourceException("The list served (sequence " + r.listInfo().sequence() + ", issued "
+                        + r.listInfo().issuedAt() + ") is older than the one already loaded (sequence "
+                        + held.listInfo().sequence() + ", issued " + held.listInfo().issuedAt() + ")");
+            }
             results.put(s.id(), r);
             states.put(s.id(), new SourceState(s.id(), s.type(), s.definition().frameworkId(), true, start, clock.instant(),
                     null, r.entities().size(), r.anchors().size(), r.listInfo(), r.warnings(), null));
@@ -178,23 +208,81 @@ public class TrustSourceManager implements AutoCloseable {
     }
 
     private synchronized void rebuild() {
-        List<TrustedEntity> entities = new ArrayList<>();
-        List<TrustAnchor> anchors = new ArrayList<>();
-        for (String id : sources.keySet()) {
-            SourceLoadResult r = results.get(id);
-            if (r != null) {
-                entities.addAll(r.entities());
-                anchors.addAll(r.anchors());
+        Map<String, TrustedEntity> entities = new LinkedHashMap<>();
+        Map<String, List<String>> refused = new LinkedHashMap<>();
+        // (framework, id as the source wrote it) -> the id the entity has in the registry
+        Map<List<String>, String> placed = new HashMap<>();
+        for (TrustSource s : sources.values()) {
+            SourceLoadResult r = results.get(s.id());
+            if (r == null) {
+                continue;
+            }
+            String framework = s.definition().frameworkId();
+            for (TrustedEntity e : r.entities()) {
+                String id = placed.get(Arrays.asList(framework, e.id()));
+                if (id == null) {
+                    id = e.id();
+                    TrustedEntity other = entities.get(id);
+                    if (other != null && !Objects.equals(other.frameworkId(), framework)) {
+                        // The id is taken by an entity of another framework: the two are different parties.
+                        id = e.id() + "@" + framework;
+                        if (entities.containsKey(id)) {
+                            refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id()
+                                    + "' is not loaded: its id and '" + id + "' are both taken by entities of other frameworks");
+                            continue;
+                        }
+                        refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is listed as '" + id
+                                + "': framework '" + other.frameworkId() + "' already has an entity with that id");
+                    }
+                    placed.put(Arrays.asList(framework, e.id()), id);
+                }
+                entities.merge(id, inFramework(e, id, framework), RegistrySnapshot::merge);
             }
         }
-        List<TrustedEntity> merged = RegistrySnapshot.mergeById(entities);
+        Map<String, TrustAnchor> anchors = new LinkedHashMap<>();
+        for (TrustSource s : sources.values()) {
+            SourceLoadResult r = results.get(s.id());
+            if (r == null) {
+                continue;
+            }
+            String framework = s.definition().frameworkId();
+            for (TrustAnchor a : r.anchors()) {
+                String entityId = a.entityId();
+                if (entityId != null) {
+                    String own = placed.get(Arrays.asList(framework, entityId));
+                    if (own == null && entities.containsKey(entityId)) {
+                        refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Anchor '" + a.id() + "' is not tied to entity '"
+                                + entityId + "': that entity belongs to another framework");
+                    }
+                    entityId = own == null && entities.containsKey(entityId) ? null : own == null ? entityId : own;
+                }
+                String id = a.id();
+                TrustAnchor other = anchors.get(id);
+                if (other != null && !Objects.equals(other.frameworkId(), framework)) {
+                    id = a.id() + "@" + framework;
+                }
+                anchors.putIfAbsent(id, new TrustAnchor(id, a.domain(), a.certificate(), framework, entityId, a.status(),
+                        a.constraints(), a.provenance()));
+            }
+        }
+        if (!refused.equals(conflicts)) {
+            refused.forEach((source, messages) -> messages.forEach(m -> log.warn("Trust source '{}': {}", source, m)));
+            conflicts = refused;
+        }
+        List<TrustedEntity> merged = List.copyOf(entities.values());
+        List<TrustAnchor> anchored = List.copyOf(anchors.values());
         List<Object> content = List.of(merged.stream().map(TrustSourceManager::withoutRetrievalTime).toList(),
-                anchors.stream().map(TrustSourceManager::withoutRetrievalTime).toList());
+                anchored.stream().map(TrustSourceManager::withoutRetrievalTime).toList());
         if (content.equals(published)) {
             return;
         }
         published = content;
-        registry.publish(new RegistrySnapshot(version.incrementAndGet(), clock.instant(), frameworks, merged, anchors));
+        registry.publish(new RegistrySnapshot(version.incrementAndGet(), clock.instant(), frameworks, merged, anchored));
+    }
+
+    /** The entity as an entry of {@code framework} under {@code id}, whatever its source wrote. */
+    private static TrustedEntity inFramework(TrustedEntity e, String id, String framework) {
+        return e.id().equals(id) && Objects.equals(e.frameworkId(), framework) ? e : e.toBuilder().id(id).framework(framework).build();
     }
 
     /** What the last published registry held, for comparison; when something was fetched is not content. */

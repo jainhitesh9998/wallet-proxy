@@ -158,6 +158,39 @@ class CrlServiceTest {
     }
 
     @Test
+    void anOlderCrlDoesNotReplaceTheOneHeld() throws Exception {
+        var ca = TestPki.rootCa("CN=Replayed CRL,C=UT");
+        var ds = TestPki.documentSigner("CN=Revoked DS,C=UT", ca);
+        Instant now = clock.instant();
+        // Issued yesterday, before the revocation; and today's, which revokes the document signer. Both are genuine.
+        byte[] before = der(TestPki.crl(ca, now.minus(Duration.ofDays(1)), now.plus(Duration.ofDays(6)), List.of(), null, null));
+        byte[] current = der(TestPki.crl(ca, now.minus(Duration.ofHours(1)), now.plus(Duration.ofDays(7)), List.of(Revoked.of(ds, 1)), null, null));
+        var served = new java.util.concurrent.atomic.AtomicReference<>(current);
+        server.createContext("/replayed.crl", ex -> {
+            ex.getResponseHeaders().add("Content-Type", "application/pkix-crl");
+            ex.sendResponseHeaders(200, served.get().length);
+            ex.getResponseBody().write(served.get());
+            ex.close();
+        });
+        TrustRegistry registry = new TrustRegistry();
+        registry.publish(new RegistrySnapshot(1, Instant.now(), List.of(), List.of(), List.of(
+                anchor("replayed", ca, "fw-a", Map.of("crlUrls", List.of(base + "/replayed.crl"))))));
+        TrustProperties.Revocation cfg = new TrustProperties.Revocation();
+        cfg.setEnabled(false);
+        service = new CrlService(registry, fetcher(), cfg, new ResourceCache.Settings(1_000_000, Duration.ofSeconds(30), Duration.ofDays(1), false), clock);
+        service.refresh();
+        assertThat(service.heldFor(ca.certificate())).singleElement().satisfies(c -> assertThat(c.revokedCount()).isEqualTo(1));
+
+        // Whoever answers at the distribution point (plain http) now serves the CRL from before the revocation.
+        served.set(before);
+        clock.now = clock.now.plus(Duration.ofHours(2));
+        service.refresh();
+        assertThat(service.heldFor(ca.certificate())).singleElement().satisfies(c -> assertThat(c.revokedCount()).isEqualTo(1));
+        assertThat(service.listing(a -> true)).singleElement()
+                .satisfies(m -> assertThat((String) m.get("error")).contains("older than the one held"));
+    }
+
+    @Test
     void fetchesDistributionPointsOnDemandAndRelays() throws Exception {
         var inter = TestPki.rootCa("CN=Intermediate CRL,C=UT");
         serve("/inter.crl", der(TestPki.crl(inter)), "application/pkix-crl");

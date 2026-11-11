@@ -38,6 +38,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -45,6 +49,11 @@ import java.util.stream.Collectors;
  * (http for explicitly allowed development hosts, and for CRLs through {@link #allowingPlainHttp()}), no private /
  * loopback / link-local / CGNAT targets unless allowed, redirects re-validated hop by hop, response size and total
  * time capped.
+ * <p>
+ * The caps end the fetch. A response that is too large, too slow, or a redirect, is not read to its end: the
+ * connection is dropped (closing an unread response would read the rest of it first, for as long as the other side
+ * keeps sending). The total time is kept by a timer that drops the connection, so it holds while a read is blocked.
+ * A request that finds every connection in use fails after the connect timeout instead of queueing.
  * <p>
  * Host names are resolved exactly once per connection, by a {@link DnsResolver} that drops the request when any
  * address is internal. The socket then connects to the addresses that were checked, so a DNS answer that changes
@@ -60,6 +69,12 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
     private final TrustProperties.Http cfg;
     private final Set<String> httpHosts;
     private final Set<String> privateHosts;
+    /** Drops the connection of a fetch that has used up its total time. */
+    private final ScheduledThreadPoolExecutor deadlines = new ScheduledThreadPoolExecutor(1, r -> {
+        Thread t = new Thread(r, "outbound-http-deadline");
+        t.setDaemon(true);
+        return t;
+    });
 
     public SafeHttpFetcher(TrustProperties.Http cfg) {
         this(cfg, SystemDefaultDnsResolver.INSTANCE);
@@ -70,6 +85,7 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
         this.cfg = cfg;
         this.httpHosts = lower(cfg.getHttpAllowedHosts());
         this.privateHosts = lower(cfg.getAllowedPrivateHosts());
+        this.deadlines.setRemoveOnCancelPolicy(true);
         this.client = HttpClients.custom()
                 .setConnectionManager(PoolingHttpClientConnectionManagerBuilder.create()
                         .setDnsResolver(new GuardedDnsResolver(dns))
@@ -114,14 +130,27 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
         long deadline = System.nanoTime() + cfg.getTotalTimeout().toNanos();
         for (int hop = 0; hop <= cfg.getMaxRedirects(); hop++) {
             check(uri, plainHttp);
+            long left = deadline - System.nanoTime();
+            if (left <= 0) {
+                throw new IOException("Fetching " + request.uri() + " took longer than " + cfg.getTotalTimeout());
+            }
             HttpUriRequestBase req = "POST".equals(method) ? new HttpPost(uri) : new HttpGet(uri);
             request.headers().forEach(req::setHeader);
             if ("POST".equals(method) && request.body() != null) {
                 req.setEntity(new ByteArrayEntity(request.body(), null));
             }
             HttpClientContext context = HttpClientContext.create();
-            context.setRequestConfig(RequestConfig.custom().setResponseTimeout(Timeout.of(timeout)).setRedirectsEnabled(false).build());
-            try (ClassicHttpResponse r = client.executeOpen(null, req, context)) {
+            context.setRequestConfig(RequestConfig.custom().setResponseTimeout(Timeout.of(timeout))
+                    .setConnectionRequestTimeout(Timeout.of(cfg.getConnectTimeout())).setRedirectsEnabled(false).build());
+            AtomicBoolean outOfTime = new AtomicBoolean();
+            ScheduledFuture<?> timer = deadlines.schedule(() -> {
+                outOfTime.set(true);
+                req.abort();
+            }, left, TimeUnit.NANOSECONDS);
+            ClassicHttpResponse r = null;
+            boolean readToTheEnd = false;
+            try {
+                r = client.executeOpen(null, req, context);
                 int status = r.getCode();
                 Header location = r.getFirstHeader("Location");
                 if (status >= 300 && status < 400 && location != null) {
@@ -131,33 +160,55 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
                     }
                     continue;
                 }
-                byte[] body = read(r.getEntity(), uri, deadline);
+                byte[] body = read(r.getEntity(), uri);
+                readToTheEnd = true;
                 log.debug("{} {} -> {} ({} bytes)", method, uri, status, body.length);
                 return new Response(status, headers(r), body, uri);
             } catch (InternalAddressException e) {
                 throw new BlockedRequestException("Refusing to fetch " + uri + ": " + e.getMessage());
+            } catch (ResponseTooLargeException | UnknownHostException e) {
+                throw e;
+            } catch (IOException | RuntimeException e) {
+                if (outOfTime.get()) {
+                    throw new IOException("Response from " + uri + " took longer than " + cfg.getTotalTimeout());
+                }
+                // How exactly a connection failed (refused, reset, timed out, which TLS alert) stays in the log: told
+                // to callers it would let them probe hosts and ports from where the service stands.
+                log.debug("Fetching {} failed: {}", uri, e.toString());
+                throw new IOException("Could not connect to " + uri.getHost() + " or read its answer", e);
+            } finally {
+                timer.cancel(false);
+                if (!readToTheEnd) {
+                    // Drop the connection first: closing a response with an unread body reads that body to its end.
+                    req.abort();
+                }
+                if (r != null) {
+                    try {
+                        r.close();
+                    } catch (IOException | RuntimeException ignored) {
+                        // the connection is gone, which is what was asked for
+                    }
+                }
             }
         }
         throw new IOException("Too many redirects fetching " + request.uri());
     }
 
-    private byte[] read(HttpEntity entity, URI uri, long deadline) throws IOException {
+    private byte[] read(HttpEntity entity, URI uri) throws IOException {
         if (entity == null) {
             return new byte[0];
         }
         int max = cfg.getMaxResponseBytes();
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (InputStream in = entity.getContent()) {
-            byte[] buf = new byte[8192];
-            for (int n; (n = in.read(buf)) != -1; ) {
-                if (out.size() + n > max) {
-                    throw new IOException("Response from " + uri + " exceeds " + max + " bytes");
-                }
-                out.write(buf, 0, n);
-                if (System.nanoTime() > deadline) {
-                    throw new IOException("Response from " + uri + " took longer than " + cfg.getTotalTimeout());
-                }
+        // Not closed here: read to its end the stream releases the connection by itself, and after a failure the
+        // caller drops the connection, where a close would read on.
+        InputStream in = entity.getContent();
+        byte[] buf = new byte[8192];
+        for (int n; (n = in.read(buf)) != -1; ) {
+            if (out.size() + n > max) {
+                throw new ResponseTooLargeException("Response from " + uri + " exceeds " + max + " bytes");
             }
+            out.write(buf, 0, n);
         }
         return out.toByteArray();
     }
@@ -229,6 +280,7 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
 
     @Override
     public void close() throws IOException {
+        deadlines.shutdownNow();
         client.close();
     }
 
@@ -246,7 +298,9 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
             if (!privateAllowed(host)) {
                 for (InetAddress a : addresses) {
                     if (isInternal(a)) {
-                        throw new InternalAddressException(host + " resolves to non-public address " + a.getHostAddress());
+                        // The address stays in the log: told to the caller, it would map this network for them.
+                        log.debug("Refusing {}: it resolves to {}", host, a.getHostAddress());
+                        throw new InternalAddressException(host + " resolves to a non-public address");
                     }
                 }
             }
@@ -265,6 +319,13 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
         @Override
         public String resolveCanonicalHostname(String host) throws UnknownHostException {
             return delegate.resolveCanonicalHostname(host);
+        }
+    }
+
+    /** The answer is larger than this service reads. */
+    static final class ResponseTooLargeException extends IOException {
+        ResponseTooLargeException(String message) {
+            super(message);
         }
     }
 

@@ -6,6 +6,7 @@ import io.vctrust.trust.core.model.Provenance;
 import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.spi.ListInfo;
+import io.vctrust.trust.core.spi.ResourceLoader;
 import io.vctrust.trust.core.spi.SourceContext;
 import io.vctrust.trust.core.spi.SourceDefinition;
 import io.vctrust.trust.core.spi.SourceLoadResult;
@@ -42,20 +43,22 @@ public final class StaticTrustSourceFactory implements TrustSourceFactory {
                 String location = def.requireString("location");
                 try {
                     Map<String, Object> doc = AdapterSupport.parseYamlOrJson(ctx.resources().load(location));
+                    // What a registry fetched from elsewhere names is fetched from the web too, never read from this host.
+                    ResourceLoader named = ResourceLoader.isRemote(location) ? ResourceLoader.remoteOnly(ctx.resources()) : ctx.resources();
                     Provenance prov = Provenance.of(def.id(), type(), def.frameworkId(), location, ctx.clock().instant());
                     List<TrustedEntity> entities = new ArrayList<>();
                     List<TrustAnchor> anchors = new ArrayList<>();
                     List<String> warnings = new ArrayList<>();
                     for (Object o : (List<Object>) doc.getOrDefault("entities", List.of())) {
                         try {
-                            entities.add(TrustedEntityParser.entity((Map<String, Object>) o, def.frameworkId(), prov, ctx.resources()));
+                            entities.add(TrustedEntityParser.entity((Map<String, Object>) o, def.frameworkId(), prov, named));
                         } catch (Exception e) {
                             warnings.add("Skipped entity: " + e.getMessage());
                         }
                     }
                     for (Object o : (List<Object>) doc.getOrDefault("anchors", List.of())) {
                         try {
-                            anchors.addAll(TrustedEntityParser.anchors((Map<String, Object>) o, def.frameworkId(), prov, ctx.resources()));
+                            anchors.addAll(TrustedEntityParser.anchors((Map<String, Object>) o, def.frameworkId(), prov, named));
                         } catch (Exception e) {
                             warnings.add("Skipped anchor: " + e.getMessage());
                         }

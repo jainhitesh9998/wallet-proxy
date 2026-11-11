@@ -24,8 +24,31 @@ import java.util.Map;
 /**
  * Resolves and validates OpenID Federation 1.0 trust chains (§10) bottom-up from a leaf, towards a configured
  * Trust Anchor whose keys are pinned out of band.
+ *
+ * <p>Everything fetched on the way up is named by the entity being resolved or by the entities it names, which may
+ * be anyone's. One resolution therefore follows at most {@link #MAX_HINTS} authority hints of an entity, checks at
+ * most {@link #MAX_TRUST_MARKS} trust marks, and makes at most {@link #MAX_FETCHES} requests in all.
  */
 public class FederationResolver {
+
+    /** Authority hints followed per entity; a real entity has one superior, or a few. */
+    static final int MAX_HINTS = 5;
+    /** Trust marks of a leaf that are checked. */
+    static final int MAX_TRUST_MARKS = 10;
+    /** Requests one resolution may make. */
+    static final int MAX_FETCHES = 40;
+
+    /** What is left of the requests one resolution may make. */
+    private static final class Budget {
+        private int left = MAX_FETCHES;
+
+        void spend(URI url) throws FederationException {
+            if (left-- <= 0) {
+                throw new FederationException("invalid_trust_chain", "Resolution needs more than " + MAX_FETCHES
+                        + " requests; not fetching " + url);
+            }
+        }
+    }
 
     private final HttpFetcher http;
     private final Clock clock;
@@ -42,8 +65,12 @@ public class FederationResolver {
     }
 
     public EntityStatement entityConfiguration(String entityId) throws FederationException {
+        return entityConfiguration(entityId, new Budget());
+    }
+
+    private EntityStatement entityConfiguration(String entityId, Budget budget) throws FederationException {
         URI url = WellKnown.appended(entityId, WellKnown.OPENID_FEDERATION);
-        EntityStatement ec = EntityStatement.parse(get(url, "application/entity-statement+jwt"));
+        EntityStatement ec = EntityStatement.parse(get(url, "application/entity-statement+jwt", budget));
         if (!entityId.equals(ec.iss()) || !entityId.equals(ec.sub())) {
             throw new FederationException("invalid_trust_chain", "Entity configuration iss/sub do not equal " + entityId);
         }
@@ -52,13 +79,17 @@ public class FederationResolver {
     }
 
     public EntityStatement subordinateStatement(EntityStatement superior, String sub) throws FederationException {
+        return subordinateStatement(superior, sub, new Budget());
+    }
+
+    private EntityStatement subordinateStatement(EntityStatement superior, String sub, Budget budget) throws FederationException {
         String fetch = Json.string(superior.federationEntity(), "federation_fetch_endpoint");
         if (fetch == null) {
             throw new FederationException("invalid_trust_chain", superior.sub() + " has no federation_fetch_endpoint");
         }
         String sep = fetch.contains("?") ? "&" : "?";
         EntityStatement ss = EntityStatement.parse(get(URI.create(fetch + sep + "sub=" + URLEncoder.encode(sub, StandardCharsets.UTF_8)),
-                "application/entity-statement+jwt"));
+                "application/entity-statement+jwt", budget));
         if (!superior.sub().equals(ss.iss()) || !sub.equals(ss.sub())) {
             throw new FederationException("invalid_trust_chain", "Subordinate statement iss/sub mismatch for " + sub);
         }
@@ -81,10 +112,11 @@ public class FederationResolver {
 
     /** Resolves the leaf's chain up to the trust anchor (depth-first over authority_hints). */
     public TrustChain resolve(String leafId) throws FederationException {
-        EntityStatement leaf = entityConfiguration(leafId);
+        Budget budget = new Budget();
+        EntityStatement leaf = entityConfiguration(leafId, budget);
         List<EntityStatement> path = new ArrayList<>();
         path.add(leaf);
-        TrustChain chain = climb(leaf, path, 0);
+        TrustChain chain = climb(leaf, path, 0, budget);
         if (chain == null) {
             throw new FederationException("invalid_trust_chain", "No trust chain from " + leafId + " to " + trustAnchor);
         }
@@ -93,6 +125,10 @@ public class FederationResolver {
 
     /** Builds the chain for a subordinate already reached top-down (statements below the TA in hand). */
     public TrustChain validate(List<EntityStatement> statements) throws FederationException {
+        return validate(statements, new Budget());
+    }
+
+    private TrustChain validate(List<EntityStatement> statements, Budget budget) throws FederationException {
         Instant now = clock.instant();
         EntityStatement ta = statements.getLast();
         if (!trustAnchor.equals(ta.sub()) || !ta.isSelfSigned()) {
@@ -111,30 +147,34 @@ public class FederationResolver {
         EntityStatement leaf = statements.getFirst();
         Map<String, Map<String, Object>> metadata = resolveMetadata(statements);
         Instant exp = statements.stream().map(EntityStatement::exp).min(Instant::compareTo).orElse(now);
-        return new TrustChain(leaf.sub(), trustAnchor, List.copyOf(statements), metadata, exp, verifyTrustMarks(leaf, ta));
+        return new TrustChain(leaf.sub(), trustAnchor, List.copyOf(statements), metadata, exp, verifyTrustMarks(leaf, ta, budget));
     }
 
-    private TrustChain climb(EntityStatement current, List<EntityStatement> path, int depth) throws FederationException {
+    private TrustChain climb(EntityStatement current, List<EntityStatement> path, int depth, Budget budget) throws FederationException {
         if (depth > maxDepth) {
             return null;
         }
         FederationException last = null;
-        for (String hint : current.authorityHints()) {
+        List<String> hints = current.authorityHints();
+        for (String hint : hints.subList(0, Math.min(hints.size(), MAX_HINTS))) {
             try {
-                EntityStatement superiorEc = hint.equals(trustAnchor) && depth == 0 && false ? null : entityConfiguration(hint);
-                EntityStatement ss = subordinateStatement(superiorEc, current.sub());
+                EntityStatement superiorEc = entityConfiguration(hint, budget);
+                EntityStatement ss = subordinateStatement(superiorEc, current.sub(), budget);
                 List<EntityStatement> next = new ArrayList<>(path);
                 next.add(ss);
                 if (hint.equals(trustAnchor)) {
                     next.add(superiorEc);
-                    return validate(next);
+                    return validate(next, budget);
                 }
-                TrustChain c = climb(superiorEc, next, depth + 1);
+                TrustChain c = climb(superiorEc, next, depth + 1, budget);
                 if (c != null) {
                     return c;
                 }
             } catch (FederationException e) {
                 last = e;
+                if (budget.left <= 0) {
+                    throw e;
+                }
             }
         }
         if (last != null && depth == 0) {
@@ -197,14 +237,14 @@ public class FederationResolver {
     }
 
     /** Verifies trust marks in the leaf configuration whose issuer is accredited by the trust anchor. */
-    private List<Map<String, Object>> verifyTrustMarks(EntityStatement leaf, EntityStatement ta) {
+    private List<Map<String, Object>> verifyTrustMarks(EntityStatement leaf, EntityStatement ta, Budget budget) {
         List<Map<String, Object>> out = new ArrayList<>();
         Map<String, Object> issuers = Json.object(ta.claims().get("trust_mark_issuers"));
         List<Object> marks = Json.array(leaf.claims().get("trust_marks"));
         if (marks == null) {
             return out;
         }
-        for (Object o : marks) {
+        for (Object o : marks.subList(0, Math.min(marks.size(), MAX_TRUST_MARKS))) {
             Map<String, Object> m = Json.object(o);
             if (m == null) continue;
             String type = Json.string(m, "trust_mark_type");
@@ -219,7 +259,7 @@ public class FederationResolver {
                 List<String> allowed = issuers == null ? null : Json.strings(issuers.get(type));
                 boolean accredited = allowed != null && (allowed.isEmpty() || allowed.contains(iss));
                 if (accredited && leaf.sub().equals(c.get("sub")) && type != null && type.equals(c.get("trust_mark_type"))) {
-                    EntityStatement issuerEc = iss.equals(ta.sub()) ? ta : entityConfiguration(iss);
+                    EntityStatement issuerEc = iss.equals(ta.sub()) ? ta : entityConfiguration(iss, budget);
                     JWK key = issuerEc.jwks().getKeyByKeyId(tm.getHeader().getKeyID());
                     verified = key instanceof AsymmetricJWK a
                             && tm.verify(new DefaultJWSVerifierFactory().createJWSVerifier(tm.getHeader(), a.toPublicKey()));
@@ -233,7 +273,8 @@ public class FederationResolver {
         return out;
     }
 
-    private String get(URI url, String accept) throws FederationException {
+    private String get(URI url, String accept, Budget budget) throws FederationException {
+        budget.spend(url);
         try {
             HttpFetcher.Response r = http.execute(HttpFetcher.Request.get(url, accept));
             if (r.status() == 404) {

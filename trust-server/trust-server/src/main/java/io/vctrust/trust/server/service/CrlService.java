@@ -230,6 +230,12 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
                 throw new IllegalArgumentException("CRL from " + where + " is not issued and signed by the anchor "
                         + t.certificate().getSubjectX500Principal().getName());
             }
+            if (prev != null && prev.crl() != null && olderThan(crl, prev.crl())) {
+                // Verified, and older than the one held: a CRL from before a revocation, served again by whoever
+                // answers at that location (CRLs travel over plain http), would take the revocation back.
+                throw new IllegalArgumentException("CRL from " + where + " (issued " + crl.thisUpdate() + ") is older than the one held (issued "
+                        + prev.crl().thisUpdate() + ")");
+            }
             Instant nextFetch = t.url() == null ? now.plus(cfg.getRefresh()) : now.plus(refreshAfter(crl, now));
             log.debug("Loaded CRL {} for {} ({} entries)", where, t.issuer(), crl.revokedCount());
             return new AnchorCrl(t.issuer(), t.certificate(), t.anchors(), t.url(), crl, now, null, nextFetch);
@@ -242,6 +248,14 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
             return new AnchorCrl(t.issuer(), t.certificate(), t.anchors(), t.url(), keep,
                     keep != null ? prev.fetchedAt() : now, e.getMessage(), now.plus(retry.compareTo(MIN_REFRESH) < 0 ? MIN_REFRESH : retry));
         }
+    }
+
+    /** Whether a CRL was issued before another of the same issuer: an earlier thisUpdate, or a lower CRL number. */
+    static boolean olderThan(Crl crl, Crl held) {
+        if (crl.thisUpdate() != null && held.thisUpdate() != null && crl.thisUpdate().isBefore(held.thisUpdate())) {
+            return true;
+        }
+        return crl.crlNumber().isPresent() && held.crlNumber().isPresent() && crl.crlNumber().get().compareTo(held.crlNumber().get()) < 0;
     }
 
     /** One target per anchor certificate and CRL location. */

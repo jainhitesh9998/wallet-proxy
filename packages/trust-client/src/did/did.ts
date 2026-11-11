@@ -10,9 +10,13 @@ export interface ParsedDid {
 
 const DID_RE = /^did:([a-z0-9]+):((?:[A-Za-z0-9._\-]|%[0-9A-Fa-f]{2}|:)*(?:[A-Za-z0-9._\-]|%[0-9A-Fa-f]{2}))(?:[/?][^#]*)?(?:#(.*))?$/;
 
+/** Longer than any DID in use (a did:jwk of a large RSA key is about a thousand characters); the service applies the same limit. */
+export const MAX_DID_LENGTH = 4096;
+
 export function parseDid(didUrl: string): ParsedDid {
+  if (typeof didUrl !== 'string' || didUrl.length > MAX_DID_LENGTH) throw new Error(`Invalid DID: longer than ${MAX_DID_LENGTH} characters`);
   const m = DID_RE.exec(didUrl);
-  if (!m) throw new Error(`Invalid DID: ${didUrl}`);
+  if (!m) throw new Error(`Invalid DID: ${didUrl.slice(0, 120)}`);
   return { did: `did:${m[1]}:${m[2]}`, method: m[1]!, id: m[2]!, fragment: m[3] };
 }
 

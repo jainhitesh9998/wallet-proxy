@@ -124,17 +124,10 @@ public final class RegistrySnapshot {
     }
 
     /**
-     * Merges entities that share an id across sources: identifiers, roles, authorizations and metadata are
-     * unioned (earlier sources win on conflicts), the most restrictive status wins.
+     * Merges two entries for one entity, which {@link TrustSourceManager} does only for entries of the same id in
+     * the same framework: identifiers, roles, authorizations and metadata are unioned (the earlier source wins on
+     * conflicts), the most restrictive status wins.
      */
-    public static List<TrustedEntity> mergeById(List<TrustedEntity> all) {
-        Map<String, TrustedEntity> merged = new LinkedHashMap<>();
-        for (TrustedEntity e : all) {
-            merged.merge(e.id(), e, RegistrySnapshot::merge);
-        }
-        return new ArrayList<>(merged.values());
-    }
-
     static TrustedEntity merge(TrustedEntity a, TrustedEntity b) {
         TrustedEntity.Builder m = a.toBuilder();
         if (a.frameworkId() == null) {

@@ -6,6 +6,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.server.PathContainer;
 import org.springframework.http.server.RequestPath;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -17,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Resolves the calling client (see {@link ClientAuthenticator}): API key, OAuth access token, TLS client
@@ -27,7 +30,10 @@ import java.util.Optional;
  * ({@link #canonicalPath}). Paths whose meaning depends on who decodes them are refused with 400, so no spelling of a
  * protected path can slip past this filter and still reach its controller.
  * <p>
- * Optionally rate-limits each client, and anonymous callers per address ({@link ClientAuthenticator#clientAddress}).
+ * Optionally rate-limits each client, and anonymous callers per address ({@link ClientAuthenticator#clientAddress}):
+ * a rate of requests, and a number of requests in progress at once (one caller asking the proxy for many slow
+ * upstreams must not occupy the service). Credentials that are refused are counted per address, and an address that
+ * keeps presenting refused credentials is turned away before its next ones are looked at.
  */
 public class ClientAuthenticationFilter extends OncePerRequestFilter {
 
@@ -38,13 +44,30 @@ public class ClientAuthenticationFilter extends OncePerRequestFilter {
     private final ClientAuthenticator authenticator;
     private final ClientRegistry clients;
     private final RateLimiter rateLimiter;
+    private final RateLimiter failures;
+    private final int maxConcurrent;
     private final boolean exemptAdmin;
+    private final ConcurrentHashMap<String, Integer> inProgress = new ConcurrentHashMap<>();
+    /** The audit log (see the service layer's AuditLog): refused operator requests are recorded where they are refused. */
+    private static final Logger audit = LoggerFactory.getLogger("io.vctrust.trust.audit");
 
     /** @param rateLimiter null to disable rate limiting */
     public ClientAuthenticationFilter(ClientAuthenticator authenticator, ClientRegistry clients, RateLimiter rateLimiter, boolean exemptAdmin) {
+        this(authenticator, clients, rateLimiter, null, 0, exemptAdmin);
+    }
+
+    /**
+     * @param rateLimiter   requests per caller; null to disable
+     * @param failures      refused credentials per address; null to disable
+     * @param maxConcurrent requests one caller may have in progress; 0 for no limit
+     */
+    public ClientAuthenticationFilter(ClientAuthenticator authenticator, ClientRegistry clients, RateLimiter rateLimiter,
+                                      RateLimiter failures, int maxConcurrent, boolean exemptAdmin) {
         this.authenticator = authenticator;
         this.clients = clients;
         this.rateLimiter = rateLimiter;
+        this.failures = failures;
+        this.maxConcurrent = maxConcurrent;
         this.exemptAdmin = exemptAdmin;
     }
 
@@ -71,20 +94,35 @@ public class ClientAuthenticationFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
+        boolean presentsCredentials = request.getHeader("Authorization") != null || request.getHeader("X-API-Key") != null;
+        String failureKey = "refused:" + authenticator.clientAddress(request);
+        if (failures != null && presentsCredentials && failures.exhausted(failureKey, null)) {
+            response.setHeader("Retry-After", "60");
+            problem(response, 429, "rate_limited", "Too many refused credentials from this address", null);
+            return;
+        }
         ClientAuthenticator.Result result = authenticator.authenticate(request);
         if (result instanceof ClientAuthenticator.Rejected r) {
+            if (failures != null && presentsCredentials) {
+                failures.acquire(failureKey, null);
+            }
+            if (needsAdmin(path)) {
+                audit.warn("client=none action=operator-request refused=not-authenticated address={}", authenticator.clientAddress(request));
+            }
             problem(response, r.status(), r.code(), r.detail(), r.bearerError());
             return;
         }
         ClientAuthenticator.Authenticated a = (ClientAuthenticator.Authenticated) result;
         ClientProfile profile = a.client();
         if (needsAdmin(path) && !profile.admin()) {
+            audit.warn("client={} action=operator-request refused=not-an-admin address={}", profile.clientId(), authenticator.clientAddress(request));
             problem(response, 403, "forbidden", "Admin client required", null);
             return;
         }
-        if (rateLimiter != null && !(exemptAdmin && profile.admin())) {
-            boolean anonymous = "anonymous".equals(a.method());
-            String key = anonymous ? "anonymous:" + authenticator.clientAddress(request) : "client:" + profile.clientId();
+        boolean limited = !(exemptAdmin && profile.admin());
+        boolean anonymous = "anonymous".equals(a.method());
+        String key = anonymous ? "anonymous:" + authenticator.clientAddress(request) : "client:" + profile.clientId();
+        if (rateLimiter != null && limited) {
             Optional<Duration> wait = rateLimiter.acquire(key, anonymous ? null : clients.requestsPerMinute(profile.clientId()).orElse(null));
             if (wait.isPresent()) {
                 response.setHeader("Retry-After", String.valueOf(Math.max(1, (wait.get().toMillis() + 999) / 1000)));
@@ -94,7 +132,25 @@ public class ClientAuthenticationFilter extends OncePerRequestFilter {
         }
         request.setAttribute(ATTRIBUTE, profile);
         request.setAttribute(METHOD_ATTRIBUTE, a.method());
-        chain.doFilter(request, response);
+        if (maxConcurrent <= 0 || !limited) {
+            chain.doFilter(request, response);
+            return;
+        }
+        if (inProgress.merge(key, 1, Integer::sum) > maxConcurrent) {
+            done(key);
+            response.setHeader("Retry-After", "1");
+            problem(response, 429, "rate_limited", "Too many requests in progress", null);
+            return;
+        }
+        try {
+            chain.doFilter(request, response);
+        } finally {
+            done(key);
+        }
+    }
+
+    private void done(String key) {
+        inProgress.computeIfPresent(key, (k, n) -> n <= 1 ? null : n - 1);
     }
 
     /**

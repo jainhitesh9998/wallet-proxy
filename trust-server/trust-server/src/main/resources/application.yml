@@ -27,7 +27,9 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      show-details: always
+      # The health endpoint is public, for probes: it says UP or DOWN. What is behind that (sources and their errors,
+      # the database, the disk) is for operators: GET /admin/v1/sources, or set this to "always" on a private network.
+      show-details: never
 
 springdoc:
   api-docs:

@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -20,6 +21,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * The JSON-LD contexts of the parties the registry lists. Verifying a Data Integrity proof means loading every
@@ -62,11 +69,20 @@ public class ContextService {
                 e -> e instanceof IllegalArgumentException || (e instanceof HttpFetcher.HttpStatusException h && h.status() >= 400 && h.status() < 500), clock);
     }
 
+    /** Contexts taken from one entity, and in one snapshot: an entity's contexts may be an issuer's own choice. */
+    static final int MAX_PER_ENTITY = 20;
+    static final int MAX_PER_SNAPSHOT = 200;
+
     /**
      * The contexts of the given entities, by URL, for a snapshot. Documents are included while they fit
      * {@code maxBytes} in total; past that, and for contexts that cannot be served, only the digest is.
+     *
+     * <p>Contexts are fetched side by side, and the snapshot waits for them no longer than {@code deadline}: a
+     * listed issuer may name contexts on a host that never answers, and snapshots carry revocations and delistings
+     * that must not wait for it. A context that is not there in time is left out (clients load it by their own
+     * policy); its fetch goes on, and the next snapshot has it.
      */
-    public Map<String, Map<String, Object>> forSnapshot(Collection<TrustedEntity> entities, int maxBytes) {
+    public Map<String, Map<String, Object>> forSnapshot(Collection<TrustedEntity> entities, int maxBytes, Duration deadline) {
         Map<String, String> pins = new LinkedHashMap<>();
         Map<String, Map<String, Object>> out = new LinkedHashMap<>();
         for (TrustedEntity e : entities) {
@@ -74,12 +90,28 @@ public class ContextService {
                 m.forEach((k, v) -> pins.put(String.valueOf(k), String.valueOf(v)));
             }
         }
+        List<String> urls = entities.stream().flatMap(e -> urls(e).stream().limit(MAX_PER_ENTITY)).distinct()
+                .filter(url -> !WELL_KNOWN.contains(url)).limit(MAX_PER_SNAPSHOT).toList();
+        Map<String, Future<Context>> pending = new LinkedHashMap<>();
+        ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            urls.forEach(url -> pending.put(url, exec.submit(() -> context(url, pins.get(url)))));
+        } finally {
+            exec.shutdown(); // not shutdownNow: a fetch that misses the deadline still fills the cache
+        }
+        long end = System.nanoTime() + deadline.toNanos();
         int budget = maxBytes;
-        for (String url : entities.stream().flatMap(e -> urls(e).stream()).distinct().toList()) {
-            if (WELL_KNOWN.contains(url)) {
-                continue;
+        for (Map.Entry<String, Future<Context>> p : pending.entrySet()) {
+            String url = p.getKey();
+            Context c;
+            try {
+                c = p.getValue().get(Math.max(0, end - System.nanoTime()), TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (ExecutionException | TimeoutException e) {
+                c = pins.get(url) == null ? null : new Context(pins.get(url), null, 0);
             }
-            Context c = context(url, pins.get(url));
             if (c == null) {
                 continue;
             }
