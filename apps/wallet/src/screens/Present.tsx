@@ -1,4 +1,7 @@
-/** Present: OpenID4VP 1.0 request (paste / scan), verifier trust, DCQL matching with a candidate picker, share / decline. */
+/**
+ * Present: OpenID4VP 1.0 request (paste / scan), verifier trust, DCQL matching with a candidate picker, share / decline.
+ * Only what the verifier requires is shared by default; credentials it marked optional are shared when the user adds them.
+ */
 import React, { useCallback, useEffect, useState } from 'react';
 import { Linking, Platform, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
@@ -14,10 +17,12 @@ import { Button, colors, ErrorBox, Field, s, Section } from '../components/ui';
 type Result = { kind: 'shared' | 'declined'; status: number; redirectUri?: string; body?: unknown };
 
 export default function PresentScreen({ route, navigation }: NativeStackScreenProps<RootStack, 'Present'>) {
-  const { wallet, refresh } = useWallet();
+  const { wallet, refresh, refreshTrustStatus } = useWallet();
   const [input, setInput] = useState(route.params?.uri ?? '');
   const [session, setSession] = useState<PresentationSession>();
   const [choice, setChoice] = useState<Record<string, string>>({});
+  /** optional credentials (dcql.optional) the user chose to add; none by default */
+  const [include, setInclude] = useState<string[]>([]);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   /** a failed request the verifier may be told about, once the user chooses to (OpenID4VP §15.9.2) */
@@ -25,7 +30,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
   const [result, setResult] = useState<Result>();
 
   const load = useCallback(async (uri: string) => {
-    setSession(undefined); setResult(undefined); setError(undefined); setReportable(undefined); setChoice({});
+    setSession(undefined); setResult(undefined); setError(undefined); setReportable(undefined); setChoice({}); setInclude([]);
     if (!uri.trim()) return;
     setBusy('load');
     try {
@@ -37,8 +42,9 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
       if (e instanceof PresentationRequestError && e.reportTo) setReportable(e);
     } finally {
       setBusy(undefined);
+      void refreshTrustStatus();
     }
-  }, [wallet]);
+  }, [wallet, refreshTrustStatus]);
 
   useEffect(() => {
     if (route.params?.uri) { setInput(route.params.uri); load(route.params.uri); }
@@ -57,7 +63,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
   const share = async () => {
     if (!session) return;
     setBusy('share'); setError(undefined);
-    try { finish('shared', await session.respond(choice)); } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); void refresh(); }
+    try { finish('shared', await session.respond(choice, include)); } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); void refresh(); }
   };
   const decline = async () => {
     if (!session) return;
@@ -93,7 +99,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
       {session && v ? (
         <>
           <VerifierSection session={session} />
-          <RequestedCredentials session={session} choice={choice} setChoice={setChoice} />
+          <RequestedCredentials session={session} choice={choice} setChoice={setChoice} include={include} setInclude={setInclude} />
 
           {!result ? (
             <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -120,7 +126,7 @@ export default function PresentScreen({ route, navigation }: NativeStackScreenPr
           )}
           <ErrorBox message={error} testID="present-error" />
           <TrustEvidence trust={v.trust} title="Verifier trust evidence" testIDPrefix="verifier-evidence" />
-          {!result ? <Button title="Start over" kind="secondary" onPress={() => { setSession(undefined); setError(undefined); }} /> : null}
+          {!result ? <Button title="Start over" kind="secondary" onPress={() => { setSession(undefined); setError(undefined); setInclude([]); }} /> : null}
         </>
       ) : null}
     </ScrollView>

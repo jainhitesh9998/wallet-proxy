@@ -4,10 +4,11 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
-    "test:mosip": "MOSIP=1 playwright test tests/mosip.spec.ts",
+    "test:live": "LIVE=1 playwright test tests/animo.live.spec.ts",
     "report": "playwright show-report"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1"
-  }
+  },
+  "license": "MIT"
 }

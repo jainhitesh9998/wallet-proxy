@@ -20,13 +20,15 @@ export function hostOf(url: string): string {
 export function credentialView(c: StoredCredential) {
   const d = (c.display ?? {}) as Display;
   const entityName = c.report?.trust?.entity?.display?.[0]?.name;
+  // The display metadata is the issuer's own: its logo is shown (and fetched) only when the issuer is trusted.
+  const trusted = c.report?.trust?.decision === 'TRUSTED';
   return {
     title: d.name ?? c.report?.credentialType ?? c.configurationId,
     issuer: entityName ?? hostOf(c.credentialIssuer),
     description: d.description,
     background: d.background_color,
     textColor: d.text_color,
-    logo: d.logo?.uri ?? d.logo?.url,
+    logo: trusted ? d.logo?.uri ?? d.logo?.url : undefined,
     format: c.format,
     type: c.report?.credentialType,
   };

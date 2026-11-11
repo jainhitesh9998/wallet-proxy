@@ -6,7 +6,7 @@ import { instancesOf } from '@vctrust/wallet-core';
 import { useWallet } from '../wallet/WalletContext';
 import { claimGroups, claimNames, credentialView, humanize, imageUri, isBytes, nameFor, shortDate } from '../wallet/display';
 import { TrustEvidence } from '../components/TrustEvidence';
-import { Button, CheckRow, colors, ErrorBox, Info, KV, Logo, s, Section, TrustLine } from '../components/ui';
+import { Button, Checks, checkSummary, colors, ErrorBox, Info, KV, Logo, s, Section, TrustLine } from '../components/ui';
 
 function ClaimValue({ value, path, names, depth }: { value: unknown; path: (string | number)[]; names: Map<string, string>; depth: number }) {
   const img = imageUri(value);
@@ -66,7 +66,9 @@ export default function CredentialScreen({ route, navigation }: NativeStackScree
         <KV k="Issuer" v={c.credentialIssuer} mono />
         <KV k="Issued to wallet" v={shortDate(c.issuedAt)} />
         {report?.validFrom || report?.validUntil ? <KV k="Valid" v={`${shortDate(report?.validFrom)} – ${shortDate(report?.validUntil)}`} /> : null}
-        <KV k="Holder key" v={c.holderDid ?? c.holderKeyId} mono />
+        {c.unbound
+          ? <KV k="Holder key" v="none: the issuer does not bind this credential to a key of the wallet" testID="detail-unbound" />
+          : <KV k="Holder key" v={c.holderDid ?? c.holderKeyId} mono />}
         {c.instances?.length ? (() => {
           const all = instancesOf(c);
           const usable = all.filter((x) => x.report?.valid !== false);
@@ -87,7 +89,12 @@ export default function CredentialScreen({ route, navigation }: NativeStackScree
       </Section>
 
       <Section title="Verification checks" testID="checks">
-        {report?.checks.map((ch) => <CheckRow key={ch.id} check={ch} />) ?? <Info message="Not verified." />}
+        {report ? (
+          <>
+            <Text testID="checks-summary" style={[s.hint, { marginBottom: 4 }]}>{checkSummary(report)}</Text>
+            <Checks report={report} />
+          </>
+        ) : <Info message="Not verified." />}
       </Section>
 
       <TrustEvidence trust={report?.trust} />
@@ -117,7 +124,7 @@ export default function CredentialScreen({ route, navigation }: NativeStackScree
             try {
               const r = await wallet.reverify(c.id);
               await refresh();
-              setNote(`Re-verified: ${r.valid ? 'valid' : 'INVALID'}, issuer ${r.trust?.decision ?? 'not evaluated'} (${r.trust?.source ?? '-'}) at ${shortDate(new Date().toISOString())}`);
+              setNote(`Re-verified: ${r.valid ? 'valid' : 'INVALID'}, issuer ${r.trust?.decision ?? 'not evaluated'} (${r.trust?.source ?? '-'}), ${checkSummary(r)}, at ${shortDate(new Date().toISOString())}`);
             } catch (e) { setError((e as Error).message); } finally { setBusy(undefined); }
           }} />
         )}

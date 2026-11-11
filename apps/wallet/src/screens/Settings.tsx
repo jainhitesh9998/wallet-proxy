@@ -3,99 +3,138 @@ import { Platform, ScrollView, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStack } from '../navigation';
 import { useWallet } from '../wallet/WalletContext';
-import { DEFAULT_SETTINGS, type Tri } from '../wallet/settings';
+import { DEFAULT_SETTINGS, type Settings, type Tri } from '../wallet/settings';
+import { PINNED_TRUST_NOTE } from '../config/pinned';
 import { shortDate } from '../wallet/display';
 import { TrustStatusPill } from '../components/StatusPill';
 import { Button, colors, ErrorBox, Field, Info, KV, s, Section, Segmented, Toggle } from '../components/ui';
 
 const TRI: readonly Tri[] = ['auto', 'always', 'never'];
+const VIA = ['proxy', 'direct'] as const;
+
+type ServiceForm = Pick<Settings, 'trustUrl' | 'apiKey' | 'clientId' | 'serviceKeyThumbprint'>;
+const serviceForm = (x: Settings): ServiceForm => ({ trustUrl: x.trustUrl, apiKey: x.apiKey, clientId: x.clientId, serviceKeyThumbprint: x.serviceKeyThumbprint });
+
+/** TrustClient.status(), as it is: the service, the snapshot decisions are made from, and why it is not fresh when it is not. */
+function TrustStatusSection() {
+  const { trustStatus: t, statusReason, syncSnapshot, refreshTrustStatus } = useWallet();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string>();
+  const [err, setErr] = useState<string>();
+  const snap = t.snapshot;
+
+  useEffect(() => { void refreshTrustStatus(); }, [refreshTrustStatus]);
+
+  const sync = async () => {
+    setBusy(true); setErr(undefined); setMsg(undefined);
+    try {
+      const i = await syncSnapshot();
+      setMsg(`Snapshot of ${shortDate(i.issuedAt)} verified and stored.`);
+    } catch (e) {
+      setErr(`The snapshot could not be refreshed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title="Trust status" testID="trust-status-section">
+      <KV k="Trust service" testID="status-service" v={t.service === 'online' ? 'online' : t.service === 'offline' ? `offline${statusReason ? ` (${statusReason})` : ''}`
+        : t.service === 'unconfigured' ? 'not configured' : 'not contacted yet'} />
+      <KV k="Decisions" testID="status-degraded" v={!snap ? 'degraded: no usable snapshot, only pinned trust decides'
+        : snap.stale ? 'degraded: the snapshot has expired and is used within its grace period; decisions carry a warning' : 'from a current snapshot'} />
+      <View testID="snapshot-info">
+        {snap ? (
+          <>
+            <KV k="Snapshot" v={`${snap.id}${snap.stale ? ' (expired)' : ''}`} testID="snapshot-id" mono />
+            <KV k="Issued" v={shortDate(snap.issuedAt)} testID="snapshot-issued" />
+            <KV k="Expires" v={shortDate(snap.expiresAt)} testID="snapshot-expiry" />
+            <KV k="Contents" testID="snapshot-contents"
+              v={`${snap.entities} entities, ${snap.anchors} trust anchors, ${snap.didDocuments} DID documents, ${snap.contexts} JSON-LD contexts, ${snap.crls} CRLs`} />
+            <KV k="Policy" testID="snapshot-policy" v={`${snap.strictAuthorization ? 'strict' : 'lenient'} authorization, revocation status ${snap.requireRevocationStatus ? 'required' : 'checked when available'}`
+              + `${snap.requireSignedIssuerMetadata ? ', signed issuer metadata required' : ''}`} />
+          </>
+        ) : <Text testID="snapshot-none" style={[s.hint, { color: colors.amber }]}>No usable snapshot on this device.</Text>}
+      </View>
+      {t.lastSyncError ? <KV k="Last refresh" v={`failed: ${t.lastSyncError}`} testID="status-sync-error" /> : null}
+      <Text testID="pinned-note" style={[s.hint, { marginTop: 6 }]}>{PINNED_TRUST_NOTE}</Text>
+      <Button testID="settings-sync-snapshot" title="Refresh snapshot now" kind="secondary" busy={busy} style={{ marginTop: 8 }} onPress={sync} />
+      <Info message={msg} testID="sync-message" />
+      <ErrorBox message={err} testID="sync-error" />
+    </Section>
+  );
+}
 
 export default function SettingsScreen({ navigation }: NativeStackScreenProps<RootStack, 'Settings'>) {
-  const { settings, updateSettings, snapshot, syncSnapshot, refreshSnapshotInfo, wipe, status } = useWallet();
-  const [form, setForm] = useState({ trustUrl: settings.trustUrl, apiKey: settings.apiKey, clientId: settings.clientId, corsRelayUrl: settings.corsRelayUrl });
+  const { settings, updateSettings, wipe, configError } = useWallet();
+  const [form, setForm] = useState<ServiceForm>(serviceForm(settings));
   const [msg, setMsg] = useState<string>();
   const [err, setErr] = useState<string>();
   const [busy, setBusy] = useState<string>();
   const [confirmWipe, setConfirmWipe] = useState(false);
 
-  useEffect(() => { refreshSnapshotInfo(); }, [refreshSnapshotInfo]);
   useEffect(() => {
-    setForm({ trustUrl: settings.trustUrl, apiKey: settings.apiKey, clientId: settings.clientId, corsRelayUrl: settings.corsRelayUrl });
-  }, [settings.trustUrl, settings.apiKey, settings.clientId, settings.corsRelayUrl]);
+    setForm(serviceForm(settings));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.trustUrl, settings.apiKey, settings.clientId, settings.serviceKeyThumbprint]);
 
   const run = async (name: string, f: () => Promise<string | undefined>) => {
     setBusy(name); setErr(undefined); setMsg(undefined);
     try { setMsg(await f()); } catch (e) { setErr((e as Error).message); } finally { setBusy(undefined); }
   };
+  const tofu = !form.serviceKeyThumbprint.trim();
 
   return (
     <ScrollView contentContainerStyle={s.screen} keyboardShouldPersistTaps="handled" testID="settings-screen">
       <Section title="Trust service" right={<TrustStatusPill testID="settings-trust-status" />}>
         <Field testID="settings-trust-url" label="Trust service URL" value={form.trustUrl} onChangeText={(t) => setForm({ ...form, trustUrl: t })} keyboardType="url"
-          placeholder="http://192.168.1.10:8090" />
-        {Platform.OS !== 'web' ? <Info message="On a phone use your computer's LAN IP (not localhost)." /> : null}
+          placeholder="https://trust.example" />
+        <Text style={[s.hint, { marginBottom: 8 }]}>
+          https, or http for development: an http URL adds its host to the hosts this wallet reaches without TLS (otherwise only localhost, 127.0.0.1 and 10.0.2.2).
+          {Platform.OS !== 'web' ? ' On a phone use the LAN address of the machine running the service, not localhost.' : ''}
+        </Text>
         <Field testID="settings-api-key" label="API key" value={form.apiKey} onChangeText={(t) => setForm({ ...form, apiKey: t })} />
-        <Field testID="settings-client-id" label="Client id (snapshot audience)" value={form.clientId} onChangeText={(t) => setForm({ ...form, clientId: t })} />
-        {Platform.OS === 'web' ? (
-          <Field testID="settings-cors-relay" label="Dev CORS relay for MOSIP hosts (web only; node dev-cors-proxy.mjs)" value={form.corsRelayUrl}
-            onChangeText={(t) => setForm({ ...form, corsRelayUrl: t })} />
-        ) : null}
+        <Field testID="settings-client-id" label="Client id (the audience of what the service signs)" value={form.clientId} onChangeText={(t) => setForm({ ...form, clientId: t })} />
+        <Field testID="settings-service-key" label="Service key thumbprint" value={form.serviceKeyThumbprint} onChangeText={(t) => setForm({ ...form, serviceKeyThumbprint: t })}
+          placeholder="signing_key_thumbprint from /.well-known/trust-service" />
+        <Text testID="settings-service-key-mode" style={[s.hint, { marginBottom: 8 }, tofu && { color: colors.amber }]}>
+          {tofu ? 'Development only: no thumbprint is set, so the first key the service presents is trusted and pinned on this device (wiping the wallet forgets it).'
+            : 'Only snapshots and proxied documents signed with this key are accepted.'}
+        </Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <Button testID="settings-save" title="Save" style={{ flex: 2 }} busy={busy === 'save'}
-            onPress={() => run('save', async () => { await updateSettings({ ...form, trustUrl: form.trustUrl.trim().replace(/\/$/, '') }); return 'Saved. Trust client rebuilt.'; })} />
-          <Button title="Defaults" kind="secondary" style={{ flex: 1 }} onPress={() => setForm({ trustUrl: DEFAULT_SETTINGS.trustUrl, apiKey: DEFAULT_SETTINGS.apiKey,
-            clientId: DEFAULT_SETTINGS.clientId, corsRelayUrl: DEFAULT_SETTINGS.corsRelayUrl })} />
+            onPress={() => run('save', async () => {
+              await updateSettings({ trustUrl: form.trustUrl.trim().replace(/\/$/, ''), apiKey: form.apiKey.trim(), clientId: form.clientId.trim(),
+                serviceKeyThumbprint: form.serviceKeyThumbprint.trim() });
+              return 'Saved. The trust client was rebuilt.';
+            })} />
+          <Button title="Defaults" kind="secondary" style={{ flex: 1 }} onPress={() => setForm(serviceForm(DEFAULT_SETTINGS))} />
         </View>
         <Info message={msg} testID="settings-message" />
-        <ErrorBox message={err} testID="settings-error" />
+        <ErrorBox message={err ?? configError} testID="settings-error" />
       </Section>
 
-      <Section title="Trust decisions" testID="settings-decisions">
-        <Segmented testID="settings-decision-mode" label="Decide trust" options={['local', 'service'] as const} value={settings.decisions}
-          onChange={(v) => updateSettings({ decisions: v })} />
+      <TrustStatusSection />
+
+      <Section title="Lookups" testID="settings-lookups">
         <Text style={[s.hint, { marginBottom: 6 }]}>
-          {settings.decisions === 'local'
-            ? 'On this device, from the signed trust list. The trust service never learns which issuers or verifiers you use.'
-            : 'By the trust service (each issuer and verifier is sent to it). On this device only while it is unreachable.'}
+          Trust decisions are always made on this device. Documents about an issuer or verifier come through the trust service's proxy first, and from the party
+          itself when the proxy cannot serve them. A proxied lookup shows the service which party you deal with and hides this device from that party; a direct
+          one does the opposite. Either way the wallet verifies what it receives.
         </Text>
-        <Segmented testID="settings-lookups" label="Issuer metadata & DIDs" options={['direct', 'service'] as const} value={settings.lookups}
-          onChange={(v) => updateSettings({ lookups: v })} />
+        <Segmented testID="settings-metadata" label="Issuer metadata" options={VIA} value={settings.metadata} onChange={(v) => updateSettings({ metadata: v })} />
+        <Segmented testID="settings-did" label="DID documents" options={VIA} value={settings.did} onChange={(v) => updateSettings({ did: v })} />
+        <Segmented testID="settings-crl" label="CRLs not in the snapshot" options={['proxy', 'direct', 'none'] as const} value={settings.crl}
+          onChange={(v) => updateSettings({ crl: v })} />
+        <Segmented testID="settings-status-lists" label="Status lists" options={VIA} value={settings.statusLists} onChange={(v) => updateSettings({ statusLists: v })} />
+        <Text style={[s.hint, { marginBottom: 6 }]}>
+          With CRLs set to none, a certificate whose CRL is not in the snapshot has an unknown revocation status. OCSP is never used: it would reveal the exact certificate.
+        </Text>
         <Toggle testID="settings-unknown-parties" label="Ask the service about unlisted parties" value={settings.unknownParties}
           onChange={(v) => updateSettings({ unknownParties: v })}
-          hint="For issuers in registries too large for the trust list (OpenID Federation, EBSI). Sends that party's identifier to the service." />
-        <Segmented testID="settings-crls" label="Other CRLs" options={['direct', 'service', 'none'] as const} value={settings.crls}
-          onChange={(v) => updateSettings({ crls: v })} />
-        <Segmented testID="settings-status-lists" label="Status lists" options={['direct', 'service'] as const} value={settings.statusLists}
-          onChange={(v) => updateSettings({ statusLists: v })} />
-        <Text style={[s.hint, { marginBottom: 6 }]}>
-          Certificates are checked against the CRLs in the trust list. Other CRLs (CAs below a trust anchor) and credential status lists are
-          fetched directly, or through the trust service relay, which hides this device from the issuer but shows the service which list you check.
-          OCSP is never used: it would reveal the exact certificate.
-        </Text>
-        {settings.decisions === 'service' ? (
-          <Toggle testID="settings-fallback" label="Standards-based fallback" hint="When the trust service is unreachable, decide on this device from the trust list, with direct discovery / DID / X.509 validation."
-            value={settings.fallbackEnabled} onChange={(v) => updateSettings({ fallbackEnabled: v })} />
-        ) : null}
-        <Toggle testID="settings-outage" label="Simulate trust-service outage" hint="Rebuilds the trust client against an unreachable URL. The stored trust list is kept."
-          value={settings.simulateOutage} onChange={(v) => updateSettings({ simulateOutage: v })} />
-      </Section>
-
-      <Section title="Trust list (signed snapshot)">
-        <View testID="snapshot-info">
-          {snapshot ? (
-            <>
-              <KV k="Snapshot" v={`version ${snapshot.version}${snapshot.stale ? ' (EXPIRED, in grace period)' : ''}`} testID="snapshot-version" />
-              <KV k="Issued" v={shortDate(snapshot.issuedAt)} />
-              <KV k="Expires" v={shortDate(snapshot.expiresAt)} testID="snapshot-expiry" />
-              <KV k="Contents" v={`${snapshot.entities} entities, ${snapshot.anchors} trust anchors, ${snapshot.didDocuments} DID documents, ${snapshot.crls} CRLs`} testID="snapshot-contents" />
-              <KV testID="snapshot-policy" k="Policy" v={`${snapshot.strictAuthorization ? 'strict' : 'lenient'} authorization, revocation status ${snapshot.requireRevocationStatus ? 'required' : 'checked when available'}, `
-                + `${snapshot.allowRelaxedProfiles ? 'relaxed anchors honoured' : 'certificate profiles enforced'}${snapshot.requireSignedIssuerMetadata ? ', signed issuer metadata required' : ''}`} />
-            </>
-          ) : <Text testID="snapshot-none" style={s.hint}>No trust list stored yet.</Text>}
-        </View>
-        <Button testID="settings-sync-snapshot" title="Sync trust list" kind="secondary" busy={busy === 'sync'} style={{ marginTop: 8 }}
-          onPress={() => run('sync', async () => { const i = await syncSnapshot(); return i ? `Trust list version ${i.version} verified and stored.` : 'No trust list.'; })} />
-        {status === 'offline' ? <Info message="The trust service is offline, so syncing will fail; decisions use the stored trust list." /> : null}
+          hint="For registries too large for the snapshot (OpenID Federation, EBSI). Sends that party's identifier to the service. Off by default." />
+        <Toggle testID="settings-outage" label="Simulate trust-service outage" value={settings.simulateOutage} onChange={(v) => updateSettings({ simulateOutage: v })}
+          hint="Points the trust client at an address where nothing listens. The stored snapshot stays in use and lookups fall back to the party itself." />
       </Section>
 
       <Section title="HAIP">
@@ -110,7 +149,7 @@ export default function SettingsScreen({ navigation }: NativeStackScreenProps<Ro
       </Section>
 
       <Section title="Danger zone">
-        <Text style={[s.hint, { marginBottom: 8 }]}>Deletes all credentials, keys, cached trust data and the snapshot. Settings are kept.</Text>
+        <Text style={[s.hint, { marginBottom: 8 }]}>Deletes all credentials, keys, the snapshot, the pinned service key and cached documents. Settings are kept.</Text>
         <Button testID="settings-wipe" title={confirmWipe ? 'Tap again to wipe everything' : 'Wipe wallet'} kind="danger" busy={busy === 'wipe'}
           onPress={() => {
             if (!confirmWipe) { setConfirmWipe(true); return; }

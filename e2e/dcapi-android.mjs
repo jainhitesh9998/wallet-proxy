@@ -4,8 +4,10 @@
  * DC API activity shows the request and shares (or declines), and the verifier reports the result.
  *
  * Needs: an emulator with Chrome >= 141 and Play services >= 24.31 (e.g. system image android-37.2 google_apis), the
- * wallet's release build installed (scripts/android-dcapi.sh build), the trust service on :8090 (adb reverse), and
- * the wallet holding an mDL (mdl-mdoc-utopia) and a PID (eudi-pid-sd-jwt-utopia) from the playground.
+ * wallet's release build installed (scripts/android-dcapi.sh build), the trust service on the host's :8090
+ * (scripts/dev-up.sh), the internet (the Animo playground), and the wallet holding an mDL (mdl-mdoc-utopia) and a PID
+ * (eudi-pid-sd-jwt-utopia) from the playground. The script sets up adb reverse for the trust service (8090) and the
+ * reference issuer and verifier (8791, 8792), which the wallet reaches as localhost.
  *
  *   node e2e/dcapi-android.mjs issue [serial]  load the mDL and the PID into the wallet (pre-authorized offers, via its UI)
  *   node e2e/dcapi-android.mjs [serial]        run the scenarios (default emulator-5556; ANDROID_HOME defaults to ~/.local/tools/android-sdk)
@@ -27,6 +29,9 @@ const PLAYGROUND = 'https://playground.animo.id/';
 
 const adb = (...args) => execFileSync(ADB, ['-s', SERIAL, ...args], { encoding: 'utf8' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Host ports the wallet reaches as localhost: the trust service, the reference issuer, the reference verifier. */
+const HOST_PORTS = [8090, 8791, 8792];
+for (const port of HOST_PORTS) adb('reverse', `tcp:${port}`, `tcp:${port}`);
 
 /** The on-screen nodes: resource-id (React Native testID), text / content-desc, bounds centre. */
 function screen() {
@@ -53,7 +58,7 @@ async function tap(key, ms) {
   if (!n) throw new Error(`Not on screen: ${key}`);
   adb('shell', 'input', 'tap', String(n.x), String(n.y));
 }
-/** Scrolls the wallet's consent screen until {@code key} is well inside the visible area (not under the nav bar). */
+/** Scrolls the wallet's screen until {@code key} is well inside the visible area (not under the nav bar). */
 async function scrollTo(key) {
   for (let i = 0; i < 6; i++) {
     if (screen().some((x) => matches(x, key) && x.y < 2100)) return;
@@ -142,7 +147,10 @@ async function run(s) {
   return { ok, verdict, detail, protocol, checks: [...checks, `verifier ${trust}`] };
 }
 
-/** Pre-authorized offers from the playground, accepted in the wallet's Receive screen. */
+/**
+ * Pre-authorized offers from the playground, accepted in the wallet's Receive screen. The wallet shows Accept only
+ * for an issuer it trusts, so the trust service must list the playground (its default registry does).
+ */
 async function issue() {
   for (const id of ['mdl-mdoc-utopia', 'eudi-pid-sd-jwt-utopia']) {
     const r = await fetch(`${PLAYGROUND}api/offers/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -153,6 +161,7 @@ async function issue() {
     if (!(await waitFor('issued-section', 60000))) throw new Error(`${id} was not issued`);
     const trust = screen().find((n) => n.id === 'issued-trust-0-decision')?.text;
     console.log(`issued ${id}: issuer ${trust}`);
+    await scrollTo('receive-done');
     await tap('receive-done', 10000);
   }
 }
@@ -165,7 +174,7 @@ if (ISSUE) {
 // ---- a multi-signed request (HAIP §5.2), which Animo does not send: a local verifier page on http://localhost (a
 // secure context) through adb reverse, signed with the test PKI's relying-party key. No trust list contains that key,
 // so the wallet must authenticate the request, show it, and block sharing.
-const PKI = new URL('../packages/trust-client/test/fixtures/pki/', import.meta.url);
+const PKI = new URL('../conformance/pki/', import.meta.url);
 const LOCAL_PORT = 8799;
 const LOCAL = `http://localhost:${LOCAL_PORT}`;
 const b64u = (b) => Buffer.from(b).toString('base64url');

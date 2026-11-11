@@ -1,7 +1,7 @@
 /**
- * Android release builds refuse plain http. The demo trust service and CORS relay run on the developer's machine over
- * http, so allow cleartext to the loopback / emulator host addresses only (reach them with `adb reverse`); every other
- * host stays https-only.
+ * Android release builds refuse plain http. The demo trust service and the reference issuer and verifier run on the
+ * developer's machine over http, so allow cleartext to the loopback / emulator host addresses only (reach them with
+ * `adb reverse`); every other host stays https-only. The same hosts are the app's DEV_HTTP_HOSTS (src/config/defaults.ts).
  */
 const fs = require('fs');
 const path = require('path');

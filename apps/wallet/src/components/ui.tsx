@@ -3,7 +3,8 @@ import React from 'react';
 import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from 'react-native';
 import { SvgUri, SvgXml } from 'react-native-svg';
 import type { Decision, TrustDecision } from '@vctrust/trust-client';
-import type { Check } from '@vctrust/wallet-core';
+import type { Check, VerificationReport } from '@vctrust/wallet-core';
+import { shortDate } from '../wallet/display';
 
 export const colors = {
   bg: '#f4f5f7', card: '#ffffff', text: '#1d2330', muted: '#5f6b7a', border: '#dde1e7', primary: '#2f54eb',
@@ -43,7 +44,7 @@ export function Segmented<T extends string>({ label, options, value, onChange, t
       <Text style={[s.label, { flex: 1 }]}>{label}</Text>
       <View style={s.segment}>
         {options.map((o) => (
-          <Pressable key={o} testID={`${testID}-${o}`} accessibilityRole="button" accessibilityState={{ selected: o === value }} onPress={() => onChange(o)}
+          <Pressable key={o} testID={`${testID}-${o}`} accessibilityRole="radio" accessibilityState={{ checked: o === value }} aria-checked={o === value} onPress={() => onChange(o)}
             style={[s.segmentItem, o === value && s.segmentItemOn]}>
             <Text style={[s.segmentText, o === value && { color: '#fff' }]}>{o}</Text>
           </Pressable>
@@ -93,6 +94,16 @@ export function ErrorBox({ message, testID }: { message?: string; testID?: strin
   return <View style={[s.pill, { backgroundColor: colors.redBg, borderRadius: 8, padding: 10, marginVertical: 8 }]}><Text testID={testID} selectable style={{ color: colors.red }}>{message}</Text></View>;
 }
 
+/** Something the user has to know before going on; not an error. */
+export function WarningBox({ message, testID, children }: { message: string; testID?: string; children?: React.ReactNode }) {
+  return (
+    <View style={{ backgroundColor: colors.amberBg, borderRadius: 8, padding: 10, marginVertical: 8, gap: 8 }}>
+      <Text testID={testID} selectable style={{ color: colors.amber }}>{message}</Text>
+      {children}
+    </View>
+  );
+}
+
 export function Info({ message, testID }: { message?: string; testID?: string }) {
   if (!message) return null;
   return <Text testID={testID} style={[s.hint, { marginVertical: 6 }]}>{message}</Text>;
@@ -111,24 +122,30 @@ export function DecisionBadge({ decision, testID }: { decision?: Decision | null
   return <Pill testID={testID} text={decision ?? 'NOT EVALUATED'} color={c} bg={bg} />;
 }
 
+/** Where a document (issuer metadata, a DID document, a status list) came from. */
 export function SourcePill({ source, testID }: { source?: string; testID?: string }) {
   if (!source) return null;
-  // trust-service, the signed trust list and the party itself are normal paths; cache / fallback are degraded ones.
-  const normal = source === 'trust-service' || source === 'snapshot' || source === 'direct';
+  // The snapshot, the proxy and the party itself are the configured paths; 'fallback' (the proxy could not serve)
+  // and 'cache' are worth noticing.
+  const normal = source === 'proxy' || source === 'snapshot' || source === 'direct';
   return <Pill testID={testID} text={`source: ${source}`} color={normal ? colors.primary : colors.amber} bg={normal ? '#e8edff' : colors.amberBg} />;
 }
 
-/** Who made a trust decision: this device (from which trust list) or the trust service. */
+/**
+ * What a trust decision rests on. Decisions are always made on this device: from the trust snapshot, or, while no
+ * snapshot is usable, from the trust pinned in the app.
+ */
 export function decisionSourceLabel(trust: TrustDecision): string {
-  if (trust.source === 'trust-service') return 'trust service';
-  if (trust.source === 'snapshot') return `device · list v${trust.snapshot?.version ?? '?'}${trust.snapshot?.stale ? ' (expired)' : ''}`;
-  return 'device · no trust list';
+  if (trust.source === 'snapshot') return `device · snapshot of ${shortDate(trust.snapshot?.issuedAt)}${trust.snapshot?.stale ? ' (expired)' : ''}`;
+  if (trust.source === 'pinned') return 'device · pinned trust, no snapshot';
+  // A report stored by an earlier version of the app; re-verifying replaces it.
+  return `earlier app version (${String(trust.source)})`;
 }
 
 export function DecisionSourcePill({ trust, testID }: { trust?: TrustDecision | null; testID?: string }) {
   if (!trust) return null;
-  const normal = trust.source === 'trust-service' || (trust.source === 'snapshot' && !trust.snapshot?.stale);
-  return <Pill testID={testID} text={`decided by: ${decisionSourceLabel(trust)}`} color={normal ? colors.primary : colors.amber} bg={normal ? '#e8edff' : colors.amberBg} />;
+  const normal = trust.source === 'snapshot' && !trust.snapshot?.stale;
+  return <Pill testID={testID} text={`decided on: ${decisionSourceLabel(trust)}`} color={normal ? colors.primary : colors.amber} bg={normal ? '#e8edff' : colors.amberBg} />;
 }
 
 /** Decision + who decided + summary (and optionally a "valid signature" indicator). */
@@ -150,16 +167,38 @@ export function TrustLine({ trust, valid, testIDPrefix }: { trust?: TrustDecisio
 const checkStyle = { pass: [colors.green, '✓'], warn: [colors.amber, '!'], fail: [colors.red, '✗'], skip: [colors.grey, '–'] } as const;
 
 export function CheckRow({ check }: { check: Check }) {
-  const [c, icon] = checkStyle[check.status];
+  const [c, icon] = checkStyle[check.status] ?? checkStyle.skip;
   return (
     <View testID={`check-${check.id}`} style={s.check}>
       <Text style={[s.checkIcon, { color: c }]}>{icon}</Text>
       <View style={{ flex: 1 }}>
-        <Text style={s.label}>{check.label} <Text testID={`check-status-${check.id}`} style={{ color: c, fontWeight: '700' }}>{check.status.toUpperCase()}</Text></Text>
+        <Text style={s.label}>{check.label} <Text testID={`check-status-${check.id}`} style={{ color: c, fontWeight: '700' }}>{String(check.status).toUpperCase()}</Text></Text>
         {check.detail ? <Text selectable style={s.hint}>{check.detail}</Text> : null}
       </View>
     </View>
   );
+}
+
+/** How many checks of a report passed, warned, failed or were skipped. */
+export function checkCounts(report: Pick<VerificationReport, 'checks'>): Record<Check['status'], number> {
+  const n = { pass: 0, warn: 0, fail: 0, skip: 0 };
+  for (const c of report.checks) n[c.status] = (n[c.status] ?? 0) + 1;
+  return n;
+}
+
+export function checkSummary(report: Pick<VerificationReport, 'checks'>): string {
+  const n = checkCounts(report);
+  return `${report.checks.length} checks: ${n.pass} passed, ${n.warn} warning(s), ${n.fail} failed${n.skip ? `, ${n.skip} skipped` : ''}`;
+}
+
+/**
+ * Every check of a verification report as the verifier reported it: nothing is filtered or renamed here, so a new
+ * check shows up without a change to the app. {@code only} narrows the list (the warnings and failures of a summary).
+ */
+export function Checks({ report, only, testID }: { report: Pick<VerificationReport, 'checks'>; only?: readonly Check['status'][]; testID?: string }) {
+  const list = only ? report.checks.filter((c) => only.includes(c.status)) : report.checks;
+  if (list.length === 0) return null;
+  return <View testID={testID}>{list.map((c, i) => <CheckRow key={`${c.id}-${i}`} check={c} />)}</View>;
 }
 
 const SVG_DATA = /^data:image\/svg\+xml(;base64)?,/i;

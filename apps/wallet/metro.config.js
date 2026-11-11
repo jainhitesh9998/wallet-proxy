@@ -8,6 +8,7 @@ const config = getDefaultConfig(__dirname);
 const root = path.resolve(__dirname, '../..');
 const WORKSPACE_SOURCES = {
   '@vctrust/trust-client': path.join(root, 'packages/trust-client/src/index.ts'),
+  '@vctrust/trust-client/primitives': path.join(root, 'packages/trust-client/src/primitives.ts'),
   '@vctrust/wallet-core': path.join(root, 'packages/wallet-core/src/index.ts'),
 };
 const packagesDir = path.join(root, 'packages') + path.sep;

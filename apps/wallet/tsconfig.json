@@ -3,7 +3,12 @@
   "compilerOptions": {
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@vctrust/trust-client": ["../../packages/trust-client/src/index.ts"],
+      "@vctrust/trust-client/primitives": ["../../packages/trust-client/src/primitives.ts"],
+      "@vctrust/wallet-core": ["../../packages/wallet-core/src/index.ts"]
+    }
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules", "dist", "dist-android", "scripts"]

@@ -1,6 +1,7 @@
 {
   "name": "@vctrust/wallet-app",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -11,7 +12,6 @@
     "ios": "npm run gen:config && expo start --ios",
     "export:web": "npm run gen:config && expo export --platform web --output-dir dist",
     "export:android": "npm run gen:config && expo export --platform android --output-dir dist-android",
-    "cors-proxy": "node dev-cors-proxy.mjs",
     "typecheck": "npm run gen:config && tsc --noEmit"
   },
   "dependencies": {

@@ -1,123 +1,118 @@
 # VC Trust demo wallet (Expo)
 
-A throwaway demo UI over [`@vctrust/wallet-core`](../../packages/wallet-core) and [`@vctrust/trust-client`](../../packages/trust-client).
+A demo UI over [`@vctrust/wallet-core`](../../packages/wallet-core) and [`@vctrust/trust-client`](../../packages/trust-client).
 All protocol logic and credential verification live in those packages; this app only presents them. It runs in a browser
-(react-native-web) and on a phone through Expo Go.
+(react-native-web), in Expo Go, and as a native Android build.
+
+## How it uses the trust service
+
+- **Trust decisions are made on the device**, from the signed snapshot the trust service publishes for this client.
+- **Lookups go through the service's proxy first** (issuer metadata, DID documents, CRLs, status lists) and to the party
+  itself when the proxy cannot serve them. Settings can switch each kind to `direct`, and CRLs to `none`.
+- **While no snapshot is usable, only pinned trust decides.** The app pins the Animo playground root certificate
+  (`src/config/pinned.ts`) for mdoc issuers, SD-JWT VC issuers and verifiers. With a snapshot, nothing pinned is consulted.
+- **Service key.** Settings take the thumbprint of the service's signing key (`signing_key_thumbprint` at
+  `/.well-known/trust-service`). Left empty, the first key seen is trusted and pinned on the device: development only.
+- **https only.** Plain http is accepted for `localhost`, `127.0.0.1`, `10.0.2.2` and, when the trust service URL is
+  http, that URL's host. These are development addresses (the reference ecosystem runs on `http://localhost`).
 
 ## Run
 
 ```sh
-. ../../scripts/env.sh && cd ../.. && npm install && cd apps/wallet
-../../scripts/start-trust-server.sh     # trust service on :8090 (if not running)
-npm run web                             # http://localhost:8081
-npm run cors-proxy                      # only for MOSIP issuers on web: dev-only relay on 127.0.0.1:8787
-npm start                               # Expo Go: scan the QR. In Settings, set the trust URL to http://<LAN-IP>:8090
+. scripts/env.sh && npm install          # from the repository root
+scripts/dev-up.sh                        # trust service :8090, reference issuer :8791 and verifier :8792, registered
+cd apps/wallet
+npm run web                              # http://localhost:8081
+npm start                                # Expo Go: scan the QR. In Settings, set the trust URL to http://<LAN-IP>:8090
 ```
 
-**Android emulator** (no phone needed; tested on Apple Silicon):
+Defaults (Settings): trust service `http://localhost:8090`, client `demo-wallet`, API key `demo-wallet-key`, no key
+thumbprint, every lookup `proxy`, asking the service about unlisted parties off, HAIP options `auto`, three instances
+per credential from issuers with batch issuance.
+
+**Android emulator (Expo Go)**
 
 ```sh
-../../scripts/android.sh setup          # once: Android SDK, emulator, API 35 image and Expo Go (about 2 GB)
-npm start                               # Metro on :8081 (or keep `npm run web` running: it serves Android too)
-../../scripts/android.sh start          # boots a headless emulator (WINDOW=1 for a window) and opens the wallet
-../../scripts/android.sh open "openid-credential-offer://?credential_offer_uri=…"   # or an openid4vp:// request
+scripts/android.sh setup                 # once: Android SDK, emulator, API 35 image, Expo Go
+npm start -w @vctrust/wallet-app         # Metro on :8081
+scripts/android.sh start                 # boots the emulator and opens the wallet; adb reverse 8081, 8090, 8791, 8792
+scripts/android.sh open "openid-credential-offer://?credential_offer=…"   # or an openid4vp:// request
 ```
 
-The emulator reaches Metro, the trust service and the CORS relay on `localhost` through `adb reverse`, so the default
-trust URL works. Offers and requests arrive as Expo Go deep links (`exp://127.0.0.1:8081/--/receive?offer=…`).
-
-**Digital Credentials API (Android, native build).** A web page's `navigator.credentials.get({digital: …})` reaches the
-wallet through Android's Credential Manager. Expo Go cannot host the native module this needs (`modules/dc-api`), so
-build the app itself. Its JS is bundled, so no Metro is needed:
+**Digital Credentials API (Android, native build).** A page's `navigator.credentials.get({digital: …})` reaches the
+wallet through Android's Credential Manager (`modules/dc-api`), which Expo Go cannot host:
 
 ```sh
-../../scripts/android-dcapi.sh setup    # once: Android 37.2 image (Chrome 149, Play services 26.32) and AVD dcapi-37
-../../scripts/android-dcapi.sh start    # boots it headless, turns off Chrome's first-run screens, adb reverse :8090
-../../scripts/android-dcapi.sh build    # expo prebuild + release APK + install (about 7 min the first time)
-node ../../e2e/dcapi-android.mjs issue  # an mDL and a PID from the Animo playground
-node ../../e2e/dcapi-android.mjs        # six DC API scenarios: Animo's verifier, a decline, a local multi-signed request
+scripts/android-dcapi.sh setup           # once: Android 37.2 image and AVD dcapi-37
+scripts/android-dcapi.sh start           # boots it, turns off Chrome's first-run screens, adb reverse 8090, 8791, 8792
+scripts/android-dcapi.sh build           # expo prebuild + release APK + install
+node e2e/dcapi-android.mjs issue         # an mDL and a PID from the Animo playground (needs the internet)
+node e2e/dcapi-android.mjs               # DC API scenarios: Animo's verifier, a decline, a local multi-signed request
 ```
 
-By hand:
-1. Open `https://playground.animo.id/?tab=verify` in the emulator's Chrome.
-2. Choose *Digital Credentials API*, then *Verify Credential*.
-3. Chrome asks whether to share with the site, and Play services shows the wallet's matching credential.
-4. *Agree and continue* opens the wallet's screen. It shows the verifier, its origin, the request checks (signature, `x509_hash`, `expected_origins`), trust, and what will be shared.
-5. *Share* returns the response to the page. *Decline* cancels: Play services may show its picker again; closing it gives the page the same `NotAllowedError` as any other abort, so the verifier learns nothing else.
+The wallet registers its mdoc and SD-JWT VC credentials with Credential Manager whenever they change. JSON-LD
+credentials are presented through the redirect flow only.
 
-The wallet registers its mdoc and SD-JWT VC credentials with Credential Manager whenever they change. JSON-LD credentials
-are presented through the redirect flow only.
+## What the screens do
 
-Defaults (Settings):
-- trust service `http://localhost:8090`, API key `demo-wallet-key`, client id `demo-wallet`;
-- **Decide trust: `local`**. Decisions are made on this device from the signed trust list; the service never learns which issuers or verifiers you use.
-- Issuer metadata and DIDs: `direct`. Asking the service about unlisted parties: off.
-- HAIP options on `auto`.
-- *Instances per credential*: 3. From issuers with batch issuance (Animo advertises `batch_size` 10), each credential arrives as three instances, each bound to its own key. Each verifier gets an instance no verifier has seen; the credential detail shows how many are still unused. Once all have been shown, *Present* warns that the next presentation can be linked to an earlier one.
+**Receive.** Paste or scan an offer, or start from *Demo issuers*: the reference issuer (`http://localhost:8791`; the
+buttons ask its admin API `POST /api/offers` for an offer, see [test-ecosystem](../../test-ecosystem/README.md)) and
+the Animo playground (create an offer there and paste its link). The issuer's trust decision is shown before a token
+or credential is requested:
 
-The demo wallet-provider key that signs wallet and key attestations is generated into `src/config` by `npm run gen:config`.
-It is a demo key bundled in the app; keys live in AsyncStorage / localStorage, not hardware. Attestations bind a separate
-instance key per authorization server, so issuers cannot link the user through the attestation. *Simulated
-high-assurance key storage* (off by default) attests `iso_18045_high` for software keys; it exists only to try issuers
-that demand it.
+- **TRUSTED**: accept or authorize.
+- **UNKNOWN**: a warning; nothing can be requested until the user chooses *Continue with this unknown issuer*. Even
+  then a credential signed with a certificate that chains to no trusted anchor is refused.
+- **NOT_TRUSTED**: refused with the reason. There is no way around it.
 
-## Demo script (about 5 minutes)
+A logo is shown only for a TRUSTED party; images of unknown parties are not fetched. A refused credential is shown
+with its verification report.
 
-1. **Settings**
-   - Save, then press *Sync trust list*. The page shows the trust list (snapshot) version, verified with the service key. It also shows its contents: entities, trust anchors, DID documents and CRLs, and the policy.
-   - The status pill reads *Trust service: online* and *Decisions on this device · trust list vN*.
-2. **mDL from the Animo playground**
-   - Open https://playground.animo.id. Choose *Issue*, issuer *Utopia Government*, *Driving Licence*, `mso_mdoc`. Optionally enable DPoP and wallet attestation.
-   - Copy the offer link.
-   - In the wallet, choose *Receive*, paste the link, then *Load offer*. The issuer appears as **TRUSTED**, *decided by: device · list vN*, with the framework. *Metadata via: direct*, so the metadata came from the issuer, not the trust service.
-   - *Accept*. The new card shows TRUSTED and *✓ valid signature*.
-   - Open the card. The detail view shows these checks: COSE signature, 14 digests, validity, device key, issuer trust. It also shows the X.509 path to the Animo IACA.
-   - *Certificate 0 status: not revoked · CRL https://playground.animo.id/crl, next update …*. This is Animo's real IACA CRL, which the service fetched and put in the trust list; the wallet verified it against the IACA and needed no extra request.
-3. **Present to the Animo verifier**
-   - On the playground, choose *Verify*, *Driving Licence* (mdoc), response mode `direct_post.jwt`. Copy the `openid4vp://` link.
-   - In the wallet, choose *Present* and paste the link. The view shows:
-     - the verifier **TRUSTED** (`x509_hash` request checks, verifier-access CA, registry entry);
-     - the requested claims (only these are disclosed);
-     - the matching credential.
-   - *Share*. The playground shows the verified presentation.
-   - The candidate line reads *Instance 1 of 3, not shown to any verifier before*. Present again, and the next instance is used.
-   - A verifier whose certificate does not chain to a trusted verifier CA is shown with *Sharing is blocked*; only *Decline* is possible. A request the wallet rejects after authenticating it (for example one with `transaction_data`) offers *Tell the verifier*.
-4. **JSON-LD (VCDM 2.0) from MOSIP**
-   - *Receive*, then *From trusted issuers*, then *MOSIP Farmer Registry*, then `FarmerCredential_VCDM2.0`.
-   - Sign in with eSignet in the new tab: UIN `2154189532`, OTP `111111`.
-   - On web, paste the final `io.mosip.residentapp.inji://oauthredirect?...` URL into the wallet (the custom scheme cannot return to a web page).
-   - The credential shows the Ed25519Signature2020 checks, the issuer DID resolved through the trust service, and warnings for MOSIP's quirks.
-5. **Who decides**
-   - In Settings, switch *Decide trust* to `service` and *Issuer metadata & DIDs* to `service`, then load another offer. The badge now reads *decided by: trust service*, and the metadata comes through the proxy.
-   - Switch both back to `local`/`direct`. This is the privacy-preserving default.
-   - *Other CRLs* and *Status lists* choose between fetching from the CA or issuer (`direct`) and the trust service relay (`service`). The relay hides the device from the issuer, but the service then sees which list was checked. Either way the wallet verifies what it receives.
-6. **Trust service outage**
-   - In Settings, turn on *Simulate trust-service outage*. The pill turns *offline*.
-   - Receive another Animo offer. Nothing changes for the user: decisions are made on the device anyway, from the stored trust list. Only refreshing the list fails.
-   - After 24 h the list expires; decisions then carry a warning for up to 7 days.
-   - Without any trust list, the wallet would show **UNKNOWN**, never TRUSTED.
-7. **Deferred issuance**
-   - Create an offer whose issuance is deferred by a minute (the playground's deferral option, `deferBy: 1m` in its API). The wallet waits up to 30 s and then keeps the credential as pending.
-   - Open it and press *Check for the credential* once the minute is up. The wallet asks the issuer's deferred endpoint, using the DPoP-bound token it kept, then verifies and stores the credential.
+**Credential.** Claims, every check of the verification report as the verifier reported it (warnings included), the
+trust evidence (X.509 path with revocation, or DID), re-verification, and deferred retrieval.
 
-## Limitations
+**Present.** The verifier and its trust, the request checks, and what is asked for. Required credentials are shared;
+a credential the verifier marks optional is off until the user turns it on; nothing else is shared. A verifier whose
+certificate does not chain to a trusted verifier CA is blocked; an unknown one is marked as such.
 
-- Tested on the web (Playwright), in Expo Go on an Android emulator (API 35, Hermes) and as a native release build on an Android 37.2 emulator (DC API). iOS was not tested.
-- The Digital Credentials API works in the Android native build only (not on the web, in Expo Go or on iOS); everywhere else, presentations use the OpenID4VP redirect flow (`openid4vp://`).
-- MOSIP's registered redirect is Inji's custom scheme:
-  - On the web you paste the redirect URL into the wallet.
-  - On iOS, Expo Go's auth session catches it.
-  - Android needs a development build with the scheme in `app.json`.
-- Incoming `openid-credential-offer://` and `openid4vp://` deep links reach the app only in a development build. In Expo Go, wrap them as `exp://<host>/--/receive?offer=…` or `…/--/present?request=…` (what `scripts/android.sh open` does). The in-app QR scanner works everywhere.
-- The snapshot signing key is trusted on first use. Production clients should pin the thumbprint published at `/.well-known/trust-service` (`serviceKeys.thumbprints`).
-- The simulated outage points the client at `127.0.0.1:9`, so the browser console shows `ERR_UNSAFE_PORT`. This is expected.
+**Settings.** The trust service and its key, the trust status (`TrustClient.status()`: service online or offline, the
+snapshot's issue and expiry time, its contents, the last refresh error, whether decisions are degraded), where lookups
+go, *Simulate trust-service outage*, HAIP options, and *Wipe wallet*.
+
+*Simulate trust-service outage* points the trust client at an address where nothing listens. With a stored snapshot
+nothing changes for the user except that lookups come from the party itself (`Metadata via: fallback`). Wipe the wallet
+during the outage and there is no snapshot either: issuers are UNKNOWN unless a pinned anchor vouches for their key.
+
+## Demo keys
+
+The wallet-provider key that signs wallet and key attestations is generated into `src/config` by `npm run gen:config`
+and bundled with the app. Holder keys are software keys in AsyncStorage / localStorage. Attestations bind a separate
+instance key per authorization server. *Simulated high-assurance key storage* attests `iso_18045_high` for software
+keys; it exists only to try issuers that demand it.
 
 ## Tests
 
-From the repo root, `cd e2e && npm test` runs Playwright on the web build:
-1. Settings and trust list.
-2. Animo mDL issuance, then presentation; the verifier reports `ResponseVerified`.
-3. The same decision made by the service in `service` mode.
-4. An outage: decisions continue from the stored trust list.
+`npm test -w @vctrust/e2e` (Playwright, web build; `scripts/dev-up.sh` must be running, no internet needed):
 
-`npm run test:mosip` adds the MOSIP JSON-LD flow.
+1. Trust status, proxy-first defaults, the service key pin; settings stored by an earlier version.
+2. Each of the reference issuer's four configurations: issuer TRUSTED before anything is requested, issuance, the
+   verification report, a presentation the reference verifier verifies.
+3. The authorization code flow from the demo issuer list.
+4. An outage with a snapshot (fallback), and without one: unknown issuer, explicit confirmation, an mdoc still refused.
+5. An issuer the trust service lists as suspended: refused.
+6. An optional credential: shared only when the user adds it.
+
+`npm run test:live -w @vctrust/e2e` adds the Animo playground (issuance, presentation, and both again with pinned
+trust only).
+
+## Limitations
+
+- Tested on the web (Playwright) and as a native release build on an Android 37.2 emulator (`e2e/dcapi-android.mjs`:
+  issuance through the UI and six DC API scenarios). This version was not tested in Expo Go or on iOS.
+- The reference issuer's certificates and DID name `http://localhost:8791`, so it is reachable only where `localhost`
+  is the developer's machine: a browser there, or an emulator with `adb reverse`. A phone on the LAN can use the trust
+  service and public issuers, not the reference ecosystem.
+- The Digital Credentials API works in the Android native build only; elsewhere presentations use `openid4vp://`.
+- Incoming `openid-credential-offer://` and `openid4vp://` deep links reach the app only in a native build. In Expo Go,
+  wrap them as `exp://<host>/--/receive?offer=…` or `…/--/present?request=…` (what `scripts/android.sh open` does).
+- The simulated outage uses `127.0.0.1:9`, so a browser console shows `ERR_UNSAFE_PORT`. This is expected.

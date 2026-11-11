@@ -1,4 +1,4 @@
-/** Full trust evidence of a TrustDecision: decision, summary, source, framework, entity, reasons, X.509 path or DID. */
+/** Full trust evidence of a TrustDecision: decision, summary, what it rests on, framework, entity, reasons, X.509 path or DID. */
 import React from 'react';
 import { Text, View } from 'react-native';
 import type { CertificateRevocation, TrustDecision } from '@vctrust/trust-client';
@@ -13,7 +13,7 @@ export function TrustEvidence({ trust, title = 'Trust evidence', testIDPrefix = 
     <Section title={title} testID={testIDPrefix}>
       <TrustLine trust={trust} testIDPrefix={testIDPrefix} />
       <View style={{ marginTop: 8 }}>
-        <KV k="Decided by" v={`${decisionSourceLabel(trust)}${trust.snapshot ? ` (issued ${shortDate(trust.snapshot.issuedAt)})` : ''}`} testID={`${testIDPrefix}-source-text`} />
+        <KV k="Decided on" v={`${decisionSourceLabel(trust)}${trust.snapshot ? `, valid until ${shortDate(trust.snapshot.expiresAt)}` : ''}`} testID={`${testIDPrefix}-source-text`} />
         <KV k="Framework" v={trust.framework ? `${trust.framework.name} (${trust.framework.id})` : '—'} />
         <KV k="Entity" v={entity ? `${pickLocale(entity.display)?.name ?? entity.id} [${entity.id}, ${entity.status}]` : '—'} />
         {entity?.provenance?.sourceId ? <KV k="Registry source" v={`${entity.provenance.sourceId}${entity.provenance.sourceType ? ` (${entity.provenance.sourceType})` : ''}`} /> : null}
@@ -67,10 +67,10 @@ export function TrustEvidence({ trust, title = 'Trust evidence', testIDPrefix = 
   );
 }
 
-/** e.g. "not revoked · CRL from the trust list, next update 26 Oct 2027" */
+/** e.g. "not revoked · CRL https://ca.example/crl (snapshot), next update 2027-10-26 00:00:00Z" */
 function revocationText(r: CertificateRevocation): string {
-  const where = r.method === 'ocsp' ? 'OCSP' : r.crlUrl ? `CRL ${r.crlUrl}` : 'CRL from the trust list';
-  const via = r.source && r.source !== 'snapshot' ? ` (${r.source})` : '';
+  const where = r.method === 'ocsp' ? 'OCSP' : r.crlUrl ? `CRL ${r.crlUrl}` : 'CRL';
+  const via = r.source ? ` (${r.source})` : '';
   switch (r.status) {
     case 'GOOD': return `not revoked · ${where}${via}${r.nextUpdate ? `, next update ${shortDate(r.nextUpdate)}` : ''}`;
     case 'REVOKED': return `REVOKED ${r.revokedAt ? shortDate(r.revokedAt) : ''} (${r.reason ?? 'unspecified'}) · ${where}${via}`;

@@ -6,7 +6,8 @@
 #   scripts/android.sh open <uri>       # hand an openid-credential-offer:// or openid4vp:// URI to the wallet
 #
 # The wallet's Metro server must be running (cd apps/wallet && npx expo start). The emulator reaches Metro (8081),
-# the trust service (8090) and the dev CORS relay (8787) on localhost through adb reverse.
+# the trust service (8090) and the reference issuer and verifier (8791, 8792; scripts/dev-up.sh) on localhost through
+# adb reverse.
 set -euo pipefail
 cd "$(dirname "$0")/.." && . scripts/env.sh
 
@@ -42,7 +43,7 @@ start() {
   "$ADB" wait-for-device
   until [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 3; done
   "$ADB" shell pm list packages | grep -q host.exp.exponent || "$ADB" install -r "$APKS/expo-go-$EXPO_GO_SDK.apk" > /dev/null
-  for port in 8081 8090 8787; do "$ADB" reverse tcp:$port tcp:$port > /dev/null; done
+  for port in 8081 8090 8791 8792; do "$ADB" reverse tcp:$port tcp:$port > /dev/null; done
   "$ADB" shell am start -a android.intent.action.VIEW -d "exp://127.0.0.1:8081" host.exp.exponent > /dev/null
   echo "wallet opening in Expo Go (screenshot: $ADB exec-out screencap -p > shot.png)"
 }
@@ -61,5 +62,5 @@ case "${1:-}" in
   setup) setup ;;
   start) start ;;
   open) open_uri "${2:?usage: scripts/android.sh open <openid-credential-offer:// | openid4vp:// URI>}" ;;
-  *) sed -n '2,9p' "$0"; exit 1 ;;
+  *) sed -n '2,10p' "$0"; exit 1 ;;
 esac

@@ -27,7 +27,7 @@ export function routeIncoming(raw: string): boolean {
   const wrapped = /^(?:vctwallet:\/\/|exps?:\/\/[^?#]*\/--\/)(receive|present)\?(?:uri|offer|request)=(.+)$/.exec(url);
   if (wrapped) url = decodeURIComponent(wrapped[2]!);
   const nonce = Date.now();
-  if (/^(io\.mosip\.residentapp\.inji:\/\/|vctwallet:\/\/oauth-callback)/.test(url) || /[?&]code=.+[?&]state=|[?&]state=.+[?&]code=/.test(url) && !/credential_offer|request_uri/.test(url)) {
+  if (/^vctwallet:\/\/oauth-callback/.test(url) || /[?&]code=.+[?&]state=|[?&]state=.+[?&]code=/.test(url) && !/credential_offer|request_uri/.test(url)) {
     authCallbacks.emit(url);
     return true;
   }

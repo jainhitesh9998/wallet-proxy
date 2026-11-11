@@ -46,7 +46,7 @@ export default function HomeScreen({ navigation }: NativeStackScreenProps<RootSt
         <Button testID="nav-settings" title="Settings" kind="secondary" onPress={() => navigation.navigate('Settings')} style={{ flex: 1 }} />
       </View>
       {credentials.length === 0 && ready ? (
-        <Section><Text style={s.hint}>No credentials yet. Use Receive to paste or scan a credential offer, or pick a trusted issuer.</Text></Section>
+        <Section><Text style={s.hint}>No credentials yet. Use Receive to paste or scan a credential offer, or start from a demo issuer.</Text></Section>
       ) : null}
       {credentials.map((c, i) => (
         <CredentialCard key={c.id} c={c} index={i} onPress={() => navigation.navigate('Credential', { id: c.id })} />

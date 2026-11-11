@@ -30,6 +30,8 @@ function DcApiConsent({ requestJson, origin, selectionJson, token = '', error: l
   const [session, setSession] = useState<PresentationSession>();
   const [protocol, setProtocol] = useState<string>();
   const [choice, setChoice] = useState<Record<string, string>>({});
+  /** optional credentials (dcql.optional) the user chose to add; none by default */
+  const [include, setInclude] = useState<string[]>([]);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [reportable, setReportable] = useState<PresentationRequestError>();
@@ -65,7 +67,7 @@ function DcApiConsent({ requestJson, origin, selectionJson, token = '', error: l
     sharing.current = true;
     setBusy('share'); setError(undefined);
     try {
-      const r = await session.respond(choice);
+      const r = await session.respond(choice, include);
       if (!finish(token, protocol, r.dcApi!)) setError('This request is no longer open.');
       refresh().catch(() => undefined);              // the instance count; never in the way of the answer
     } catch (e) {
@@ -83,7 +85,7 @@ function DcApiConsent({ requestJson, origin, selectionJson, token = '', error: l
       {session ? (
         <>
           <VerifierSection session={session} />
-          <RequestedCredentials session={session} choice={choice} setChoice={setChoice} />
+          <RequestedCredentials session={session} choice={choice} setChoice={setChoice} include={include} setInclude={setInclude} />
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Button testID="dcapi-decline" title="Decline" kind="secondary" disabled={!!busy} onPress={() => cancel(token)} style={{ flex: 1 }} />
             <Button testID="dcapi-share" title="Share" busy={busy === 'share'} disabled={!session.dcql.satisfied || !!session.verifier.refusal || !!busy}
