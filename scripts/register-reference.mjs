@@ -2,7 +2,7 @@
 /**
  * Lists the reference issuer and verifier (test-ecosystem/) in a running trust service, the way an operator would
  * list any party: who they are, which certificates are theirs, which JSON-LD contexts their credentials use.
- * Entries go to the 'managed' source (admin API), in the 'reference' framework.
+ * Entries go through the admin API to the managed source of the 'reference' framework.
  *
  *   node scripts/register-reference.mjs            # register
  *   node scripts/register-reference.mjs --remove   # remove again

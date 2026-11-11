@@ -79,7 +79,7 @@ trust:
     registries:
       ebsi: https://api-pilot.ebsi.eu/did-registry/v5/identifiers/{did}
   auth:
-    api-keys: true                              # the demo clients below use API keys
+    api-keys: true                              # development; production uses the methods below and sets this to false
     # Production: OAuth 2.0 JWT access tokens and/or TLS client certificates.
     # oauth:
     #   enabled: true
@@ -93,83 +93,6 @@ trust:
     rate-limit: { enabled: true, requests-per-minute: 600, burst: 100 }
   # Requests without credentials are refused. To serve the public: anonymous: { enabled: true, frameworks: [...] }
 
-  # A client sees the frameworks it names ("*" for all) and nothing else.
-  clients:
-    - id: demo-wallet
-      name: Demo wallet
-      api-key: demo-wallet-key
-      frameworks: [animo-playground, reference, local]
-    - id: demo-verifier
-      name: Demo verifier
-      api-key: demo-verifier-key
-      frameworks: [animo-playground, reference, local]
-      strict-authorization: true
-      require-revocation-status: true
-    - id: admin
-      name: Operator
-      api-key: admin-key
-      admin: true
-
-  frameworks:
-    - id: animo-playground
-      name: Animo OpenID4VC Playground
-      description: Credo-based EUDI-style playground issuers and verifier (mdoc / SD-JWT VC, HAIP features)
-      governance-uri: https://playground.animo.id
-    - id: reference
-      name: Reference ecosystem
-      description: The local reference issuer and verifier (test-ecosystem/), registered through the admin API
-    - id: local
-      name: Locally managed
-      description: Entities and anchors maintained through the admin API
-    - id: eu-lotl
-      name: EU List of Trusted Lists
-      governance-uri: https://ec.europa.eu/tools/lotl/eu-lotl.xml
-    - id: ebsi-pilot
-      name: EBSI pilot network
-      governance-uri: https://api-pilot.ebsi.eu
-
-  # A source is required unless it says otherwise: no snapshot is served until every required source has loaded.
-  sources:
-    - id: demo-registry
-      type: static
-      framework: animo-playground
-      refresh: PT1H
-      properties:
-        location: classpath:trust/demo-registry.yaml
-    # What the playground's issuers say about themselves (display names, JSON-LD contexts). It describes the entity
-    # registered above and grants nothing; the sandbox being down does not hold the service back.
-    - id: animo-issuers
-      type: oid4vci-discovery
-      framework: animo-playground
-      required: false
-      refresh: PT30M
-      properties:
-        issuers:
-          - url: https://playground.animo.id/oid4vci/b39e71cf-9cf1-4723-a9cd-66f42a510b36
-            entityId: animo-playground
-    # Entities and anchors added at run time: PUT /admin/v1/managed/{entities|anchors}/{id}.
-    - id: managed
-      type: managed
-      framework: local
-      refresh: PT5M
-    # Real-world lists, off by default (large, network heavy). A list is loaded only when its signature verifies
-    # against pinned signer certificates.
-    - id: eu-lotl
-      type: etsi-tl
-      framework: eu-lotl
-      enabled: false
-      refresh: PT12H
-      properties:
-        location: https://ec.europa.eu/tools/lotl/eu-lotl.xml
-        # signerCertificates: [classpath:trust/certs/eu-lotl-signer.pem]   # from the Official Journal of the EU
-        territories: [AT, BE]
-        includeAllServiceTypes: false
-    # Asked on demand about did:ebsi issuers that are in no snapshot.
-    - id: ebsi-pilot
-      type: ebsi-tir
-      framework: ebsi-pilot
-      required: false
-      refresh: PT12H
-      properties:
-        baseUrl: https://api-pilot.ebsi.eu/trusted-issuers-registry/v5
-        crawl: false
+  # No clients, frameworks or sources are configured here: until an operator lists them, every API request is refused
+  # and the registry is empty. The demo configuration (clients with well-known API keys, the Animo playground, the
+  # reference ecosystem) is the "demo" profile, application-demo.yml: --spring.profiles.active=demo. Never in production.
