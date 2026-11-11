@@ -1,188 +1,131 @@
-# VC Trust Service
+# Wallet Proxy
 
-A spec-agnostic trust service for OpenID4VCI / OpenID4VP wallets and verifiers. It has three parts:
+A trust layer for OpenID4VCI / OpenID4VP wallets and verifiers.
 
-- **Server** (Java 21, Spring Boot 4.1).
-  - It ingests trust lists in many formats into one model.
-  - It compiles a signed **trust snapshot** per client: entities, trust anchors, evaluation policy, DID documents and metadata policies.
-  - It also answers "should I trust this party?" directly (`/evaluate`), for verifier backends and thin clients.
-  - It proxies and caches issuer metadata, X.509 chain validation and DID resolution.
-- **Client library** (TypeScript, `@vctrust/trust-client`). One API for wallets and verifiers.
-  - **By default it decides trust on the device**, from the signed snapshot, with the same rules as the server. The service never learns which issuers or verifiers a user deals with.
-  - Lookups that would disclose a counterparty (metadata proxy, DID proxy, on-demand registry lookups) are opt-in.
-- **Demo wallet**. A platform-neutral `@vctrust/wallet-core` (OpenID4VCI 1.0, OpenID4VP 1.0, HAIP 1.0) and an Expo React Native app (`apps/wallet`), which on Android also answers Digital Credentials API requests through Credential Manager. It is tested against live issuers: Animo playground (mDL mdoc, SD-JWT VC) and MOSIP collab (W3C VCDM 2.0 JSON-LD, mDL, SD-JWT VC).
+A **trust service** compiles trust lists of any kind (X.509 trust anchors for ISO mdoc / mDL, ETSI trusted lists,
+OpenID Federation, EBSI, a plain registry) into one registry, signs a snapshot of it for each client, and proxies the
+lookups a wallet needs about the parties it deals with: issuer metadata, DID documents, certificate revocation lists,
+credential status lists, JSON-LD contexts.
 
-Design document: https://claude.ai/artifact/RViVpaEWce3S8yctArPdvk (also in `docs/DESIGN.md`). Configuration reference: [`docs/configuration.md`](docs/configuration.md).
+A **client library** (`@vctrust/trust-client`) is how an app consumes it. Trust decisions are made on the device,
+from the signed snapshot. Lookups go through the proxy first and fall back to the standard mechanism of each
+specification when the proxy cannot serve. Without the service, only trust pinned in the app decides.
 
+```mermaid
+flowchart LR
+  Lists[Trust lists] --> Service[Trust service]
+  Service -- "signed snapshot" --> Lib[Client library]
+  Lib -- "lookups: proxy first" --> Service
+  Service --> Parties[Issuers, verifiers, CAs, DID hosts]
+  Lib -. "fallback: standard mechanism" .-> Parties
+  Wallet[Wallet] --> Lib
 ```
-trust-server/          Maven: trust-core (model, SPIs, evaluator, X.509, DID, metadata) ← trust-adapters ← trust-server (Spring Boot)
-packages/trust-client  @vctrust/trust-client — TS client with fallback (Node, browser, React Native)
-packages/wallet-core   @vctrust/wallet-core  — OID4VCI / OID4VP / HAIP holder logic + credential verification
-apps/wallet            Expo demo wallet (web, Expo Go; Android release build with the Digital Credentials API)
-e2e/                   Playwright UI tests of the wallet web build
-tools/mosip-issuance   Headless eSignet login helper used by the MOSIP live tests
-scripts/               build / start / test helpers
-```
+
+- [Architecture](docs/architecture.md): the registry, the snapshot, how a decision is made, the proxy, what happens
+  when things fail, the security model, the evidence of conformance.
+- [Configuration guide](docs/configuration.md): the service, the client library, the wallet core.
+- [API description](docs/openapi.json) (also served at `/swagger-ui.html`).
+
+## Repository
+
+| Path | What |
+| --- | --- |
+| [`trust-server/`](trust-server) | The trust service: `trust-core` (registry, evaluator, X.509, DID), `trust-adapters` (trust list formats), `trust-server` (Spring Boot API). Java 21, Maven |
+| [`packages/trust-client/`](packages/trust-client) | **The client library**, `@vctrust/trust-client`. TypeScript; Node, browsers, React Native. No platform crypto dependencies |
+| [`packages/wallet-core/`](packages/wallet-core) | `@vctrust/wallet-core`: OpenID4VCI 1.0, OpenID4VP 1.0 and HAIP wallet logic with credential verification, on top of the library |
+| [`apps/wallet/`](apps/wallet) | A demo wallet (Expo: Android, iOS, web) |
+| [`test-ecosystem/`](test-ecosystem) | A reference issuer and verifier built on third-party implementations, to test against |
+| [`conformance/`](conformance) | Shared test PKI, evaluation vectors both evaluators must agree on, credentials from real issuers |
+| [`e2e/`](e2e), [`scripts/`](scripts) | UI tests; build, run and test helpers |
 
 ## Quick start
 
-Toolchains are user-local in `~/.local/tools` (JDK 21, Maven 3.9, Node 22). Load them with `. scripts/env.sh`; to make
-them permanent, add `source ~/.local/tools/env.sh` to your shell profile.
+Needs JDK 21, Maven 3.9 and Node 22 (`. scripts/env.sh` loads a user-local toolchain from `~/.local/tools` when
+there is one).
 
 ```sh
-scripts/build.sh                 # mvn install (124 tests) + npm install + TS builds
-scripts/start-trust-server.sh    # http://localhost:8090 — loads live sources (Animo, MOSIP collab, EBSI on demand)
-open http://localhost:8090/swagger-ui.html
-curl -H 'Authorization: Bearer demo-wallet-key' 'localhost:8090/api/v1/issuers?format=mso_mdoc'
-scripts/test-all.sh              # unit + integration + live end-to-end (needs internet); --offline for unit only
-scripts/android.sh setup && scripts/android.sh start   # the wallet in Expo Go on an Android emulator
-scripts/android-dcapi.sh setup && scripts/android-dcapi.sh start && scripts/android-dcapi.sh build   # native build, DC API
-node e2e/dcapi-android.mjs issue && node e2e/dcapi-android.mjs   # DC API end to end: Chrome → picker → wallet → Animo
+scripts/build.sh            # builds and tests the service; installs and builds the TypeScript packages
+scripts/dev-up.sh           # trust service :8090, reference issuer :8791 and verifier :8792, listed in the service
 ```
 
-CI (`.github/workflows/ci.yml`) runs the offline suites, typechecks and the web and Android bundles.
+Look at what a wallet gets:
 
-Demo API keys (from `application.yml`): `demo-wallet-key` (wallet profile), `demo-verifier-key` (strict verifier
-profile: strict authorization, revocation status required, relaxed anchors refused) and `admin-key` (admin API).
-Production deployments use OAuth 2.0 access tokens or mTLS client certificates instead, with rate limits, and keep the
-signing key in a PKCS#11 HSM; see the configuration reference.
-
-## Where trust is decided
-
-```
- trust lists (ETSI TL/LoTE, VICAL, OpenID Federation, EBSI, X.509 bundles, OID4VCI discovery, static, admin)
-        │  ingest, verify list signatures, normalize
-        ▼
- trust service ── per client profile ──► signed trust snapshot (trust-snapshot+jwt)
-        │                                  entities · anchors · policy · DID documents · metadata policies · anchor CRLs
-        │ /evaluate (verifier backends, thin clients)          │ GET /api/v1/snapshot (the only call a wallet makes)
-        ▼                                                       ▼
-   decision by the service                       wallet: verify snapshot (pinned key, audience, no rollback)
-                                                  → evaluate on the device (same rules as the service)
+```sh
+curl -s localhost:8090/.well-known/trust-service                       # endpoints, the signing key thumbprint to pin
+curl -s -H 'Authorization: Bearer demo-wallet-key' -H 'Accept: application/jwt' localhost:8090/api/v1/snapshot
+curl -s -H 'Authorization: Bearer demo-wallet-key' 'localhost:8090/api/v1/issuers'
 ```
 
-- **`decisions: 'local'`** (default; wallets): the service compiles, the device decides.
-  - Live test (`privacy.live.test.ts`): during real mDL issuance and presentation and JSON-LD issuance, the trust service receives only `GET /api/v1/snapshot` and `GET /.well-known/jwks.json`.
-  - The parity test (`parity.live.test.ts`) asserts that the device and `/evaluate` agree, under a lenient and a strict client profile: same decision, same error reasons, same entity.
-- **`decisions: 'service'`**: the service decides, and the device takes over only while the service is unreachable.
+Run the demo wallet and give it a credential offer from the reference issuer:
 
-### Revocation
-- **Certificates:** every certificate below the trust anchor is checked against a CRL its issuer signed.
-  - The service fetches the anchors' CRLs and puts them in the snapshot. An anchor gets its CRL from its own distribution point (Animo's IACA publishes one), `crlUrls`, or a CRL pushed through the admin API.
-  - The device verifies every CRL again, so neither the service nor a cache is trusted with revocation.
-  - Other CRLs are fetched directly from the CA, or through the service's CRL relay.
-- **No OCSP on the device**, because an OCSP request names the exact certificate. A verifier backend can turn OCSP on in the service.
-- **Credential status** (in the client library, so verifiers get it too: `checkTokenStatus`, `checkBitstringStatus`):
-  - Token Status List: JWT for SD-JWT VC, CWT for ISO mdoc via the MSO `status`.
-  - W3C Bitstring Status List.
-  - Lists are fetched from the issuer, or through the service's status list relay (opt-in), and are verified on the device either way: signature, signer, subject, expiry, and for Bitstring lists the list credential's proof and issuer. A verified list is reused for its `ttl` (at most 1 h).
+```sh
+npm run web -w @vctrust/wallet-app
+curl -s localhost:8791/api/offers -H 'Content-Type: application/json' -d '{"configurationIds":["mDL_mso_mdoc"]}'
+```
 
-## What the server does
+`scripts/dev-down.sh` stops everything.
 
-| Capability | Endpoint |
-| --- | --- |
-| Trusted issuers and verifiers with metadata, filterable by format and type | `GET /api/v1/issuers`, `/verifiers`, `/entities/{id}`, `/entities/lookup` |
-| Spec-agnostic trust decision (issuer, verifier, wallet provider; identifier, x5c, kid, JWK; DCQL `trusted_authorities`) | `POST /api/v1/evaluate`, `/evaluate/batch` |
-| OpenID4VCI metadata proxy: validated, cached, policy-curated, with a trust decision | `GET /api/v1/issuers/metadata?credential_issuer=` |
-| X.509 path validation per trust domain (ISO 18013-5 DS profile, verifier access, ...) and anchor export | `POST /api/v1/x509/validate`, `GET /api/v1/x509/anchors` |
-| DID resolution proxy (did:web, did:key, did:jwk native; EBSI registry; Universal Resolver) | `GET /api/v1/did/{did}`, `GET /1.0/identifiers/{did}` |
-| Signed trust snapshot: everything a client needs to decide on the device, including the anchors' CRLs | `GET /api/v1/snapshot` (`trust-snapshot+jwt`) |
-| CRL relay and status list relay (signed objects, passed through and cached; verified by the client); anchor CRL status | `GET /api/v1/revocation/crl?url=`, `/revocation/status-list?uri=`, `/revocation/crls` |
-| On-demand registry lookup for parties absent from the snapshot (opt-in, signed) | `GET /api/v1/entities/lookup?identifier=&onDemand=true` |
-| Client authentication: API keys, OAuth 2.0 JWT access tokens (RFC 9068), mTLS (RFC 8705 bound tokens), per-client rate limits | `Authorization`, TLS client certificate; methods listed in discovery |
-| ToIP Trust Registry Query Protocol v2 | `POST /trqp/authorization`, `/trqp/recognition` |
-| Operator API | `/admin/v1/sources`, `/registry`, `/managed/{entities,anchors}/{id}` |
-
-Sources (adapters):
-- `static` and `managed` (admin API);
-- `x509-bundle`;
-- `oid4vci-discovery`;
-- `etsi-tl` (ETSI TS 119 612, EU LOTL);
-- `etsi-lote` (ETSI TS 119 602);
-- `vical` (ISO 18013-5);
-- `openid-federation` (1.0);
-- `ebsi-tir` (v5).
-
-A new format is one `TrustSourceFactory` (see the configuration reference). Any JSON endpoint returns a service-signed JWT
-when called with `Accept: application/jwt`.
-
-## Client library
+## Using the library
 
 ```ts
-import { createTrustClient, KeyValueCacheStore } from '@vctrust/trust-client';
+import { createTrustClient } from '@vctrust/trust-client';
 
 const trust = createTrustClient({
-  baseUrl: 'http://localhost:8090', apiKey: 'demo-wallet-key', clientId: 'demo-wallet',
-  serviceKeys: { thumbprints: ['<signing_key_thumbprint from /.well-known/trust-service>'] },   // required to accept snapshots
-  // decisions: 'local' (default) | 'service'
-  // lookups: { metadata: 'direct', did: 'direct', unknownParties: false, crl: 'direct', statusLists: 'direct' }
-  // issuerMetadata: { signed: 'off' | 'verify' | 'require' }   // a client profile can require signed metadata
-  fallback: { localAnchors: [{ domain: 'mdoc-iaca', certificate: IACA_PEM }] },   // optional app-bundled anchors
+  service: { url: 'https://trust.example.org', clientId: 'wallet-app', apiKey: '...', keys: { thumbprints: ['...'] } },
 });
-const md = await trust.getIssuerMetadata(credentialIssuer);         // from the issuer, registry metadata policy applied
-const { decision } = await trust.evaluateCredential(credential, 'mso_mdoc', { credentialIssuer });   // decided on the device
+
+// Decided on this device, from the signed snapshot:
+const issuer = await trust.evaluateIssuer({ credentialIssuer: 'https://issuer.example.org', format: 'mso_mdoc', type: 'org.iso.18013.5.1.mDL' });
+const signer = await trust.evaluate({ role: 'issuer', subject: { x5c }, context: { credentialFormat: 'mso_mdoc', credentialType: 'org.iso.18013.5.1.mDL' } });
 const verifier = await trust.evaluateVerifier({ clientId, x5c, responseUri });
-const status = await trust.checkTokenStatus(statusRef, { signerX5c: x5c, decision, form: 'cwt' });   // mdoc MSO status
+
+// Through the proxy, with the standard mechanism as fallback:
+const metadata = await trust.getIssuerMetadata('https://issuer.example.org');
+const did = await trust.resolveDid('did:web:issuer.example.org#key-1');
+const status = await trust.checkTokenStatus({ idx, uri }, { signerX5c: x5c });
 ```
 
-Every decision says who decided (`source`: `trust-service`, `snapshot` = this device from the signed snapshot, or
-`fallback` = this device with app-pinned anchors only) and from which snapshot version.
-- The snapshot is refreshed in the background, never rolled back, and usable for 7 days past its expiry, with a warning.
-- Without a verified snapshot or a pinned anchor, a decision is `UNKNOWN`, never `TRUSTED`.
-- See [`packages/trust-client/README.md`](packages/trust-client/README.md).
+See [`packages/trust-client/README.md`](packages/trust-client/README.md).
 
-## Demo wallet
+### Where the library lives
 
-See [`apps/wallet/README.md`](apps/wallet/README.md) for running it on the web and in Expo Go. The wallet core works on its own too:
+The library is [`packages/trust-client`](packages/trust-client) of this repository: it is developed next to the
+service because the two share their rules and are tested against each other
+([`conformance/`](conformance)). It has no dependency on the rest of the repository at run time.
 
-```ts
-const wallet = new Wallet({ trust, keyStore: new SoftwareKeyStore(), credentials: new MemoryCredentialStore(), redirectUri });
-const session = await wallet.receive('openid-credential-offer://?credential_offer_uri=...');   // issuer trust: session.issuerTrust
-const [cred] = await wallet.store(await session.acceptPreAuthorized(txCode));   // refused if invalid; stored → credential_accepted
-const p = await wallet.startPresentation('openid4vp://?client_id=x509_hash:...&request_uri=...');  // p.verifier.trust, p.dcql
-await p.respond();                         // refused unless an x509 verifier is TRUSTED; discloses only the requested claims
-// Digital Credentials API (Android): the platform passes the request and the verifier's Origin
-const dc = await wallet.startDcApiPresentation(pickDcApiRequest(requestJson, origin)!);
-const { dcApi } = await dc.respond();      // {vp_token} or {response: JWE}, bound to origin:<origin>; returned through the platform
+- Inside this repository it is an npm workspace: `@vctrust/trust-client`, and `@vctrust/trust-client/primitives` for
+  its building blocks.
+- For another project: `npm pack -w @vctrust/trust-client` builds an installable tarball. Pushing a tag
+  `trust-client-v<version>` makes the `Release client library` workflow test, pack and attach that tarball to a
+  GitHub release, from where it installs by URL. Publishing to a registry (`npm publish -w @vctrust/trust-client`)
+  needs the `@vctrust` scope, or a rename to a scope you own.
+- React Native (Metro) resolves the package through its `react-native` export condition, to the TypeScript sources.
+
+## Tests
+
+```sh
+scripts/test-all.sh --offline     # everything that needs no network
+scripts/test-all.sh               # plus the live suites (needs the internet and scripts/dev-up.sh)
 ```
 
-## Tested end to end against live services
+| Suite | What it covers | Needs |
+| --- | --- | --- |
+| `trust-server` (JUnit) | Evaluator, X.509 and CRLs, DID drivers, list adapters, API, authentication, caches; generates and checks the evaluation vectors | nothing |
+| `packages/trust-client` (Vitest) | The client: snapshot handling, proxy and fallback, strict parsers, the evaluation vectors | nothing |
+| `packages/trust-client`, x509-limbo | X.509 path validation against the C2SP limbo suite | `LIMBO_JSON=$(sh packages/trust-client/scripts/fetch-limbo.sh)` |
+| `test-ecosystem` (Vitest) | The reference issuer and verifier against their own third-party clients | nothing |
+| `packages/wallet-core` (Vitest) | Strict credential verification, OpenID4VCI / OpenID4VP flows, the wallet against the reference ecosystem, credentials real issuers issued | nothing |
+| `packages/wallet-core`, live | The wallet through the running trust service: reference ecosystem end to end; Animo playground; walt.id demo issuer (mDL, EUDI PID) | internet, `scripts/dev-up.sh` |
+| `packages/trust-client`, live | Service and device decide alike, over HTTP | `scripts/dev-up.sh` |
+| `e2e` (Playwright) | The demo wallet's UI | `scripts/dev-up.sh` |
 
-| Scenario | Result |
-| --- | --- |
-| Animo mDL (mdoc), pre-authorized code | valid + TRUSTED (DS `credo dcs` → Animo IACA, 14 digests, device key) |
-| Animo mDL with DPoP, PIN (`tx_code`), and DPoP + wallet attestation + key attestation (HAIP) | valid + TRUSTED |
-| Animo mDL, authorization code flow: PAR + PKCE + DPoP + wallet attestation, RFC 9207 `iss` (HAIP mandatory flow) | valid + TRUSTED |
-| Animo mDL with deferred issuance (`202` + `transaction_id`, deferred endpoint polled with DPoP), and stored as pending then retrieved later | valid + TRUSTED after about 60 s |
-| Animo mDL and EUDI PID SD-JWT, batch issuance of 3 (also with one key attestation for all keys) | 3 instances, each valid + TRUSTED; consecutive presentations use different instances, both `ResponseVerified` |
-| Key attestation demanding `iso_18045_high` when the wallet attests less | correctly refused before the request |
-| Animo EUDI PID SD-JWT VC issuance | valid + TRUSTED (x5c chain) |
-| OpenID4VP to Animo verifier: `x509_hash`, `request_uri`, DCQL, `direct_post.jwt` (mdoc DeviceResponse and SD-JWT+KB) | verifier TRUSTED; verifier reports `ResponseVerified` |
-| MOSIP Farmer VCDM 2.0 JSON-LD (eSignet authorization code + PKCE) | valid + TRUSTED (Ed25519Signature2020 over RDFC-1.0, did:web) |
-| MOSIP Land VCDM 2.0 JSON-LD | **refused**: signature invalid (issuer defect, confirmed with Digital Bazaar's reference library); the issuer is sent `credential_failure` |
-| MOSIP mock mDL | valid + TRUSTED under a `relaxProfile` anchor for the wallet profile, with ISO deviations reported; the strict verifier profile refuses it |
-| MOSIP mock identity SD-JWT VC | valid + TRUSTED under a `relaxProfile` anchor (the issuer's published root), with warnings for the signing certificate's key usage, `cnf.kid` instead of `cnf.jwk`, and `expirationDate` instead of `exp` |
-| Decisions on the device (default): mDL issue + present to Animo, MOSIP JSON-LD issue | TRUSTED from the snapshot; the trust service saw only snapshot/JWKS requests; MOSIP DID document from the snapshot |
-| Parity: 37 queries (including revoked / on-hold / CRL-covered Document Signers, a relaxed sandbox anchor, `origin:` verifiers and a URL written differently) × lenient and strict client profiles, service `/evaluate` vs device, the device asking on demand where the service does | identical decisions, error reasons, entities and per-certificate revocation status |
-| Revocation, live: Animo mDL Document Signer against the Animo IACA CRL (`https://playground.animo.id/crl`) | `GOOD`; the CRL comes from the snapshot, with no other request to the service or to Animo |
-| Relays, live: the Animo CRL and a MOSIP status list fetched through the service | verified on the device; MOSIP's list is signed with a key missing from its DID document, so its status is reported as unknown |
-| Trust service outage, `service` mode with a synced snapshot (mDL issue + present, JSON-LD issue) | works; trust from `snapshot`; recovers afterwards |
-| Trust service outage without a snapshot | credential verified; trust `UNKNOWN` (`fallback`) |
-| Wallet in Expo Go on an Android emulator: Animo mDL (pre-authorized; DPoP + wallet attestation), presentation to the Animo verifier | TRUSTED, *not revoked*; verifier reports `ResponseVerified` |
-| Digital Credentials API, native release build on an Android 37.2 emulator: Animo's verifier in Chrome, the Play services picker, the wallet's consent screen. PID (SD-JWT) and mDL (mdoc) with signed `x509_hash` requests and `dc_api.jwt`; mDL unsigned + `dc_api.jwt`; PID unsigned + `dc_api`; a decline; a multi-signed request from a local page signed by an untrusted verifier | *Verification Successful* for all four presentations, verifier TRUSTED (unsigned: by origin); the decline reaches the page as `NotAllowedError`; the multi-signed request is authenticated and sharing blocked |
-| HAIP details no live issuer exercises (offline, in-memory issuer): credential request/response encryption, attestation proofs, refusal and notifications, minimal disclosure, holder binding, verifier trust enforcement, error responses | pass |
+## Status
 
-### Findings about the live issuers
+This is a working reference implementation with a demonstration wallet (software keys, no user authentication). The
+service and the library are written to be deployed; read the [production checklist](docs/configuration.md#production-checklist)
+first. The specifications it implements, and what is checked against what, are listed in the
+[architecture guide](docs/architecture.md#conformance).
 
-Draft defect reports for MOSIP are in [`docs/upstream-reports.md`](docs/upstream-reports.md); nothing has been filed.
+## License
 
-- **MOSIP Land `LandStatementCredential_VCDM2.0`:** the signature does not verify with standard RDFC-1.0 / Ed25519Signature2020 (our verifier and `jsonld-signatures` agree). The credential subject carries native JSON doubles, which points at a Java-side canonicalization difference in Inji Certify.
-- **MOSIP Farmer:** uses terms that its contexts do not define, so they are not covered by the signature. The wallet reports this as a warning; strict libraries reject the credential.
-- **MOSIP collab issuers in general:**
-  - The signing key's DID (`did:web:inji.github.io:...`) differs from `issuer`, and `assertionMethod` lists the bare DID. Both are reported as warnings; key equivalence is checked.
-  - The pre-authorized flow is broken on collab: tokens from `/v1/certify/oauth/token` are rejected by the credential endpoint, and `credential_offer_uri` is not a URL.
-  - The mDL is not ISO-conformant: `{docType, issuerSigned}` wrapper, MSO not tag-24 wrapped, no DS EKU, CA leaf.
-  - The mock identity issuer's SD-JWT VC breaks HAIP §6.1 twice. It names the holder key by reference (`cnf.kid`, a `did:jwk`) instead of in `cnf.jwk`. It states its expiry as `expirationDate` rather than `exp` (or a status). Its Ed25519 signing certificate allows only `keyEncipherment` and names no issuer (no SAN). The wallet resolves the `did:jwk` and checks it is its own key (a `cnf.kid` it cannot read is refused), and reports each deviation. The issuer has no Mimoto entry; it accepts a token from the Land client's eSignet login.
-- **MOSIP status lists:** the Land credential's Bitstring Status List credential is signed with `#0B6e9kc5…`, which is not in `did:web:inji.github.io:inji-config:collab:landregistry`. The wallet reports the status as unknown instead of trusting the bit.
-- **Animo playground:** publishes a real IACA CRL (empty, `nextUpdate` 2027-10-26) covering its Document Signer. The DS certificate has no CRL distribution point, which is allowed because the IACA's complete CRL covers it. mDLs and SD-JWTs carry no status list reference.
-- **Animo playground:** the verifier requires fully specified `ESP256 (-9)` for device authentication. Metadata mixes the 1.0 `credential_metadata` layout with top-level `display`/`claims`; the wallet accepts both.
+[MIT](LICENSE).

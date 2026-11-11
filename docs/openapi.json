@@ -1,1427 +1,972 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "OpenAPI definition",
-    "version": "v0"
-  },
-  "servers": [
-    {
-      "url": "http://localhost:8090",
-      "description": "Generated server url"
-    }
-  ],
-  "paths": {
-    "/admin/v1/managed/{kind}/{id}": {
-      "put": {
-        "tags": [
-          "admin-controller"
-        ],
-        "operationId": "putManaged",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              }
-            }
-          }
-        }
+ "components": {
+  "schemas": {
+   "ClientProfile": {
+    "properties": {
+     "admin": {
+      "type": "boolean"
+     },
+     "allowUnregisteredMetadata": {
+      "type": "boolean"
+     },
+     "clientId": {
+      "type": "string"
+     },
+     "frameworks": {
+      "items": {
+       "type": "string"
       },
-      "delete": {
-        "tags": [
-          "admin-controller"
-        ],
-        "operationId": "deleteManaged",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
+      "type": "array",
+      "uniqueItems": true
+     },
+     "name": {
+      "type": "string"
+     },
+     "requireRevocationStatus": {
+      "type": "boolean"
+     },
+     "requireSignedIssuerMetadata": {
+      "type": "boolean"
+     },
+     "strictAuthorization": {
+      "type": "boolean"
+     }
     },
-    "/trqp/recognition": {
-      "post": {
-        "tags": [
-          "trqp-controller"
-        ],
-        "operationId": "recognition",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/trqp/authorization": {
-      "post": {
-        "tags": [
-          "trqp-controller"
-        ],
-        "operationId": "authorization",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/x509/validate": {
-      "post": {
-        "tags": [
-          "x-509-controller"
-        ],
-        "operationId": "validate",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/X509ValidateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/evaluate": {
-      "post": {
-        "tags": [
-          "evaluation-controller"
-        ],
-        "operationId": "evaluate",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EvaluateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/evaluate/batch": {
-      "post": {
-        "tags": [
-          "evaluation-controller"
-        ],
-        "operationId": "batch",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BatchEvaluateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/sources/{id}/refresh": {
-      "post": {
-        "tags": [
-          "admin-controller"
-        ],
-        "operationId": "refresh",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/SourceState"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/cache/clear": {
-      "post": {
-        "tags": [
-          "admin-controller"
-        ],
-        "operationId": "clearCaches",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/x509/anchors": {
-      "get": {
-        "tags": [
-          "x-509-controller"
-        ],
-        "operationId": "anchors",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "domain",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "framework",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "format",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "json"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/verifiers": {
-      "get": {
-        "tags": [
-          "registry-controller"
-        ],
-        "operationId": "verifiers",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "framework",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "default": 0
-            }
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "default": 100
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/snapshot": {
-      "get": {
-        "tags": [
-          "snapshot-controller"
-        ],
-        "operationId": "snapshot",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/revocation/status-list": {
-      "get": {
-        "tags": [
-          "revocation-controller"
-        ],
-        "operationId": "statusList",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "uri",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "string",
-                  "format": "byte"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/revocation/crls": {
-      "get": {
-        "tags": [
-          "revocation-controller"
-        ],
-        "operationId": "crls",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": {}
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/revocation/crl": {
-      "get": {
-        "tags": [
-          "revocation-controller"
-        ],
-        "operationId": "crl",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "url",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "string",
-                  "format": "byte"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/issuers": {
-      "get": {
-        "tags": [
-          "registry-controller"
-        ],
-        "operationId": "issuers",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "framework",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "format",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "default": 0
-            }
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "default": 100
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/issuers/metadata": {
-      "get": {
-        "tags": [
-          "metadata-controller"
-        ],
-        "operationId": "issuerMetadata",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "credential_issuer",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/frameworks": {
-      "get": {
-        "tags": [
-          "registry-controller"
-        ],
-        "operationId": "frameworks",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities": {
-      "get": {
-        "tags": [
-          "registry-controller"
-        ],
-        "operationId": "entities",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "role",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "framework",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "format",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "default": 0
-            }
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "default": 100
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/{id}": {
-      "get": {
-        "tags": [
-          "registry-controller"
-        ],
-        "operationId": "byId",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/lookup": {
-      "get": {
-        "tags": [
-          "registry-controller"
-        ],
-        "operationId": "lookup",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "identifier",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "onDemand",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/by-id": {
-      "get": {
-        "tags": [
-          "registry-controller"
-        ],
-        "operationId": "byIdParam",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          },
-          {
-            "name": "id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/did/**": {
-      "get": {
-        "tags": [
-          "did-controller"
-        ],
-        "operationId": "resolve",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/sources": {
-      "get": {
-        "tags": [
-          "admin-controller"
-        ],
-        "operationId": "sourceStates",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SourceState"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/registry": {
-      "get": {
-        "tags": [
-          "admin-controller"
-        ],
-        "operationId": "registrySummary",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/managed/{kind}": {
-      "get": {
-        "tags": [
-          "admin-controller"
-        ],
-        "operationId": "listManaged",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": {}
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/v1/clients": {
-      "get": {
-        "tags": [
-          "admin-controller"
-        ],
-        "operationId": "clientProfiles",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ClientProfile"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/1.0/identifiers/**": {
-      "get": {
-        "tags": [
-          "did-controller"
-        ],
-        "operationId": "universal",
-        "parameters": [
-          {
-            "name": "client",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ClientProfile"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/.well-known/trust-service": {
-      "get": {
-        "tags": [
-          "discovery-controller"
-        ],
-        "operationId": "discovery",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/.well-known/jwks.json": {
-      "get": {
-        "tags": [
-          "discovery-controller"
-        ],
-        "operationId": "jwks",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/jwk-set+json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {}
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "ClientProfile": {
-        "type": "object",
-        "properties": {
-          "clientId": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "frameworks": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "uniqueItems": true
-          },
-          "strictAuthorization": {
-            "type": "boolean"
-          },
-          "allowUnregisteredMetadata": {
-            "type": "boolean"
-          },
-          "admin": {
-            "type": "boolean"
-          },
-          "requireRevocationStatus": {
-            "type": "boolean"
-          },
-          "requireSignedIssuerMetadata": {
-            "type": "boolean"
-          },
-          "allowRelaxedProfiles": {
-            "type": "boolean"
-          }
-        }
+    "type": "object"
+   },
+   "Context": {
+    "properties": {
+     "credentialFormat": {
+      "type": "string"
+     },
+     "credentialType": {
+      "type": "string"
+     },
+     "credentialTypes": {
+      "items": {
+       "type": "string"
       },
-      "X509ValidateRequest": {
-        "type": "object",
-        "properties": {
-          "chain": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "domain": {
-            "type": "string"
-          },
-          "time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "expectedDnsName": {
-            "type": "string"
-          },
-          "docType": {
-            "type": "string"
-          },
-          "framework": {
-            "type": "string"
-          }
-        }
+      "type": "array"
+     },
+     "protocol": {
+      "type": "string"
+     },
+     "responseUri": {
+      "type": "string"
+     },
+     "time": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "trustedAuthorities": {
+      "items": {
+       "$ref": "#/components/schemas/TrustedAuthority"
       },
-      "Context": {
-        "type": "object",
-        "properties": {
-          "protocol": {
-            "type": "string"
-          },
-          "credentialFormat": {
-            "type": "string"
-          },
-          "credentialType": {
-            "type": "string"
-          },
-          "time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "responseUri": {
-            "type": "string"
-          },
-          "trustedAuthorities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TrustedAuthority"
-            }
-          },
-          "credentialTypes": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
+      "type": "array"
+     }
+    },
+    "type": "object"
+   },
+   "EvaluateRequest": {
+    "properties": {
+     "context": {
+      "$ref": "#/components/schemas/Context"
+     },
+     "role": {
+      "type": "string"
+     },
+     "subject": {
+      "$ref": "#/components/schemas/Subject"
+     }
+    },
+    "type": "object"
+   },
+   "ListInfo": {
+    "properties": {
+     "details": {
+      "additionalProperties": {},
+      "type": "object"
+     },
+     "issuedAt": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "issuer": {
+      "type": "string"
+     },
+     "nextUpdate": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "sequence": {
+      "type": "string"
+     },
+     "signature": {
+      "enum": [
+       "VERIFIED",
+       "NOT_SIGNED",
+       "NOT_CHECKED",
+       "INVALID"
+      ],
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "SourceState": {
+    "properties": {
+     "anchorCount": {
+      "format": "int32",
+      "type": "integer"
+     },
+     "enabled": {
+      "type": "boolean"
+     },
+     "entityCount": {
+      "format": "int32",
+      "type": "integer"
+     },
+     "frameworkId": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "lastAttempt": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "lastError": {
+      "type": "string"
+     },
+     "lastSuccess": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "listInfo": {
+      "$ref": "#/components/schemas/ListInfo"
+     },
+     "nextRefresh": {
+      "format": "date-time",
+      "type": "string"
+     },
+     "type": {
+      "type": "string"
+     },
+     "warnings": {
+      "items": {
+       "type": "string"
       },
-      "EvaluateRequest": {
-        "type": "object",
-        "properties": {
-          "role": {
-            "type": "string"
-          },
-          "subject": {
-            "$ref": "#/components/schemas/Subject"
-          },
-          "context": {
-            "$ref": "#/components/schemas/Context"
-          }
-        }
+      "type": "array"
+     }
+    },
+    "type": "object"
+   },
+   "Subject": {
+    "properties": {
+     "identifier": {
+      "type": "string"
+     },
+     "jwk": {
+      "additionalProperties": {},
+      "type": "object"
+     },
+     "kid": {
+      "type": "string"
+     },
+     "x5c": {
+      "items": {
+       "type": "string"
       },
-      "Subject": {
-        "type": "object",
-        "properties": {
-          "identifier": {
-            "type": "string"
-          },
-          "x5c": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "jwk": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "kid": {
-            "type": "string"
-          }
-        }
+      "type": "array"
+     }
+    },
+    "type": "object"
+   },
+   "TrustedAuthority": {
+    "properties": {
+     "type": {
+      "type": "string"
+     },
+     "values": {
+      "items": {
+       "type": "string"
       },
-      "TrustedAuthority": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string"
-          },
-          "values": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "BatchEvaluateRequest": {
-        "type": "object",
-        "properties": {
-          "queries": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EvaluateRequest"
-            }
-          }
-        }
-      },
-      "ListInfo": {
-        "type": "object",
-        "properties": {
-          "issuer": {
-            "type": "string"
-          },
-          "sequence": {
-            "type": "string"
-          },
-          "issuedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "nextUpdate": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "signature": {
-            "type": "string",
-            "enum": [
-              "VERIFIED",
-              "NOT_SIGNED",
-              "NOT_CHECKED",
-              "INVALID"
-            ]
-          },
-          "details": {
-            "type": "object",
-            "additionalProperties": {}
-          }
-        }
-      },
-      "SourceState": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "frameworkId": {
-            "type": "string"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "lastAttempt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "lastSuccess": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "lastError": {
-            "type": "string"
-          },
-          "entityCount": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "anchorCount": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "listInfo": {
-            "$ref": "#/components/schemas/ListInfo"
-          },
-          "warnings": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "nextRefresh": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      }
-    }
+      "type": "array"
+     }
+    },
+    "type": "object"
+   }
   }
+ },
+ "info": {
+  "description": "Signed trust snapshots for wallets and verifiers, and a proxy for the lookups they need about issuers and verifiers: issuer metadata, DID documents, CRLs and credential status lists. See docs/architecture.md.",
+  "title": "Wallet Proxy trust service",
+  "version": "1"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/.well-known/jwks.json": {
+   "get": {
+    "operationId": "jwks",
+    "responses": {
+     "200": {
+      "content": {
+       "application/jwk-set+json": {
+        "schema": {
+         "additionalProperties": {},
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "discovery-controller"
+    ]
+   }
+  },
+  "/.well-known/trust-service": {
+   "get": {
+    "operationId": "discovery",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": {},
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "discovery-controller"
+    ]
+   }
+  },
+  "/admin/v1/cache/clear": {
+   "post": {
+    "operationId": "clearCaches",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "admin",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "additionalProperties": {},
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "admin-controller"
+    ]
+   }
+  },
+  "/admin/v1/clients": {
+   "get": {
+    "operationId": "clientProfiles",
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/ClientProfile"
+         },
+         "type": "array"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "admin-controller"
+    ]
+   }
+  },
+  "/admin/v1/managed/{kind}": {
+   "get": {
+    "operationId": "listManaged",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "kind",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "items": {
+          "additionalProperties": {},
+          "type": "object"
+         },
+         "type": "array"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "admin-controller"
+    ]
+   }
+  },
+  "/admin/v1/managed/{kind}/{id}": {
+   "delete": {
+    "operationId": "deleteManaged",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "admin",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "path",
+      "name": "kind",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "admin-controller"
+    ]
+   },
+   "put": {
+    "operationId": "putManaged",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "admin",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "path",
+      "name": "kind",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "additionalProperties": {},
+        "type": "object"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "additionalProperties": {},
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "admin-controller"
+    ]
+   }
+  },
+  "/admin/v1/registry": {
+   "get": {
+    "operationId": "registrySummary",
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "additionalProperties": {},
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "admin-controller"
+    ]
+   }
+  },
+  "/admin/v1/sources": {
+   "get": {
+    "operationId": "sourceStates",
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/SourceState"
+         },
+         "type": "array"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "admin-controller"
+    ]
+   }
+  },
+  "/admin/v1/sources/{id}/refresh": {
+   "post": {
+    "operationId": "refresh",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "admin",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "$ref": "#/components/schemas/SourceState"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "admin-controller"
+    ]
+   }
+  },
+  "/api/v1/entities/lookup": {
+   "get": {
+    "operationId": "lookup",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "query",
+      "name": "identifier",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "type",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "onDemand",
+      "required": false,
+      "schema": {
+       "default": false,
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "registry-controller"
+    ]
+   }
+  },
+  "/api/v1/evaluate": {
+   "post": {
+    "operationId": "evaluate",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/EvaluateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "evaluation-controller"
+    ]
+   }
+  },
+  "/api/v1/frameworks": {
+   "get": {
+    "operationId": "frameworks",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "registry-controller"
+    ]
+   }
+  },
+  "/api/v1/issuers": {
+   "get": {
+    "operationId": "issuers",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "query",
+      "name": "framework",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "format",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "type",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "q",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "format": "int32",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "size",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "format": "int32",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "registry-controller"
+    ]
+   }
+  },
+  "/api/v1/proxy/crl": {
+   "get": {
+    "operationId": "crl",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "query",
+      "name": "url",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "format": "byte",
+         "type": "string"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "proxy-controller"
+    ]
+   }
+  },
+  "/api/v1/proxy/did/**": {
+   "get": {
+    "operationId": "did",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "proxy-controller"
+    ]
+   }
+  },
+  "/api/v1/proxy/issuer-metadata": {
+   "get": {
+    "operationId": "issuerMetadata",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "query",
+      "name": "issuer",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "proxy-controller"
+    ]
+   }
+  },
+  "/api/v1/proxy/status-list": {
+   "get": {
+    "operationId": "statusList",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "query",
+      "name": "uri",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "format": "byte",
+         "type": "string"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "proxy-controller"
+    ]
+   }
+  },
+  "/api/v1/snapshot": {
+   "get": {
+    "operationId": "snapshot",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "type": "string"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "snapshot-controller"
+    ]
+   }
+  },
+  "/api/v1/verifiers": {
+   "get": {
+    "operationId": "verifiers",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "client",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/ClientProfile"
+      }
+     },
+     {
+      "in": "query",
+      "name": "framework",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "q",
+      "required": false,
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+       "default": 0,
+       "format": "int32",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "size",
+      "required": false,
+      "schema": {
+       "default": 100,
+       "format": "int32",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "registry-controller"
+    ]
+   }
+  }
+ },
+ "servers": [
+  {
+   "description": "Generated server url",
+   "url": "http://localhost:8090"
+  }
+ ]
 }

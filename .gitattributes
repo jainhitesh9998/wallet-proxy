@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.der binary
+*.crl binary
+*.png binary
+*.jar binary
+package-lock.json linguist-generated=true
+conformance/evaluation/vectors.json linguist-generated=true
+docs/openapi.json linguist-generated=true
+packages/wallet-core/src/verify/contexts.ts linguist-generated=true

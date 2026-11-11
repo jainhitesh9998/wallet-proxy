@@ -1,16 +1,20 @@
-# Offline suites only. The live end-to-end tests need the Animo playground, MOSIP collab and a running trust
-# server; run them with scripts/test-all.sh.
-name: ci
+name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  trust-server:
+  service:
+    name: Trust service (Java)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,11 +23,12 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Build and test (core, adapters, server)
+      # Unit and integration tests; EvaluationVectorsTest fails when conformance/evaluation/vectors.json is stale.
+      - run: mvn --batch-mode --no-transfer-progress verify
         working-directory: trust-server
-        run: mvn -B -ntp install
 
-  typescript:
+  packages:
+    name: Client library, reference ecosystem, wallet core (Node)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,14 +37,9 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Build the libraries
-        run: npm run build -w @vctrust/trust-client -w @vctrust/wallet-core
-      - name: Typecheck (libraries and wallet app)
-        run: npm run typecheck -w @vctrust/trust-client -w @vctrust/wallet-core -w apps/wallet
-      - name: trust-client
-        run: npm test -w @vctrust/trust-client
-      - name: wallet-core (offline)
-        run: npm test -w @vctrust/wallet-core
-      - name: Wallet bundles (web, Android)
-        working-directory: apps/wallet
-        run: npm run export:web && npm run export:android
+      - run: npm run build -w @vctrust/trust-client -w @vctrust/wallet-core
+      - run: npm run typecheck --workspaces --if-present
+      - run: npm test -w @vctrust/trust-client
+      - run: npm test -w @vctrust/reference-ecosystem
+      # Includes the wallet against the reference issuer and verifier, started as a child process.
+      - run: npm test -w @vctrust/wallet-core
