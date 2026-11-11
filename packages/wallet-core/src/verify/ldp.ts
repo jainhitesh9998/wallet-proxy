@@ -16,7 +16,7 @@ import { bytes, decodeMultibase, didError, extractIssuerInfo, findVerificationMe
 import { BUNDLED_CONTEXTS } from './contexts.js';
 import { canonize, createDocumentLoader, notCompact, type DocumentLoader, type LoaderStats } from './jsonld.js';
 import { didPublicKey } from '../crypto/did-key.js';
-import { Checks, finish, type VerificationReport } from './report.js';
+import { Checks, CLOCK_SKEW_MS, finish, type VerificationReport } from './report.js';
 
 const V2 = 'https://www.w3.org/ns/credentials/v2';
 const V1 = 'https://www.w3.org/2018/credentials/v1';
@@ -187,7 +187,7 @@ export async function verifyLdpVc(vcIn: Record<string, unknown> | string, opts: 
   }
 
   const span = `${model.from?.toISOString() ?? 'no start'} – ${model.until?.toISOString() ?? 'no expiry'}`;
-  if (model.from && model.from > now) checks.fail('ldp.validity', 'Validity period', `Not valid before ${model.from.toISOString()}`);
+  if (model.from && model.from.getTime() > now.getTime() + CLOCK_SKEW_MS) checks.fail('ldp.validity', 'Validity period', `Not valid before ${model.from.toISOString()}`);
   else if (model.until && model.until < now) checks.fail('ldp.validity', 'Validity period', `Expired ${model.until.toISOString()}`);
   else checks.pass('ldp.validity', 'Validity period', span);
 

@@ -146,6 +146,8 @@ describe('SD-JWT VC and HAIP rules', () => {
   it('enforces exp and nbf', async () => {
     expect(await failures(sdJwt({ payload: { exp: seconds() - 1 } }))).toEqual([expect.stringMatching(/^sdjwt\.validity: Expired/)]);
     expect(await failures(sdJwt({ payload: { nbf: seconds() + 600 } }))).toEqual([expect.stringMatching(/^sdjwt\.validity: Not valid before/)]);
+    // An issuer whose clock runs a little ahead of this device's: what it just issued is not refused for that.
+    expect(await failures(sdJwt({ payload: { nbf: seconds() + 30 } }))).toEqual([]);
     expect(await failures(sdJwt({ payload: { exp: 'tomorrow' } }))).toEqual(['sdjwt.validity: exp / nbf are not numbers']);
     expect((await verify(sdJwt({ payload: { exp: undefined } }))).valid).toBe(true);
   });

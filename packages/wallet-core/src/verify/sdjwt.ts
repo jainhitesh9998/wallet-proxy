@@ -11,7 +11,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import type { Jwk, TrustClient, TrustDecision } from '@vctrust/trust-client';
 import { bytes, decodeJws, extractIssuerInfo, issuerTrustQuery, jwkThumbprint, parseCertificate, verifyJws, verifyX509Signature,
   type IssuerInfo, type PublicKey } from '@vctrust/trust-client/primitives';
-import { Checks, finish, type VerificationReport } from './report.js';
+import { Checks, CLOCK_SKEW_MS, finish, type VerificationReport } from './report.js';
 
 export interface ParsedSdJwt {
   issuerJwt: string;
@@ -199,7 +199,7 @@ export async function verifySdJwtVc(credential: string, opts: SdJwtVerifyOptions
     const { exp, nbf } = jws.payload;
     if ((exp !== undefined && typeof exp !== 'number') || (nbf !== undefined && typeof nbf !== 'number')) checks.fail('sdjwt.validity', 'Validity period', 'exp / nbf are not numbers');
     else if (typeof exp === 'number' && nowS >= exp) checks.fail('sdjwt.validity', 'Validity period', `Expired ${new Date(exp * 1000).toISOString()}`);
-    else if (typeof nbf === 'number' && nowS < nbf) checks.fail('sdjwt.validity', 'Validity period', `Not valid before ${new Date(nbf * 1000).toISOString()}`);
+    else if (typeof nbf === 'number' && nowS + CLOCK_SKEW_MS / 1000 < nbf) checks.fail('sdjwt.validity', 'Validity period', `Not valid before ${new Date(nbf * 1000).toISOString()}`);
     else checks.pass('sdjwt.validity', 'Validity period', typeof exp === 'number' ? `until ${new Date(exp * 1000).toISOString()}` : 'no expiry');
     if (typeof exp === 'number') validUntil = new Date(exp * 1000).toISOString();
 

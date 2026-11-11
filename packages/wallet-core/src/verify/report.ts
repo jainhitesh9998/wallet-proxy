@@ -3,6 +3,13 @@ import type { IssuerInfo } from '@vctrust/trust-client/primitives';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip';
 
+/**
+ * How far an issuer's or a verifier's clock may run ahead of this device's before what it just produced counts as
+ * not yet valid (RFC 7519 §4.1.5 allows for such leeway). Without it a credential issued a moment ago by a server
+ * whose clock is a second ahead is refused. It applies to "not before" only: what has expired has expired.
+ */
+export const CLOCK_SKEW_MS = 300_000;
+
 export interface Check {
   id: string;
   label: string;

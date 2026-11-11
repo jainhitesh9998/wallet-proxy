@@ -122,6 +122,10 @@ describe('a signed W3C credential, altered', () => {
 
   it('verifies as issued', async () => {
     expect(await check(vc)).toEqual({ valid: true, failed: '' });
+    // Also by a device whose clock is a little behind the issuer's; not by one for which the credential lies ahead.
+    const from = Date.parse(String(vc.validFrom));
+    expect(await check(vc, { now: new Date(from - 30_000) })).toEqual({ valid: true, failed: '' });
+    expect((await check(vc, { now: new Date(from - 3_600_000) })).failed).toMatch(/ldp\.validity: Not valid before/);
   });
 
   it('is refused with a claim that no context defines: such a claim would not be covered by the signature', async () => {

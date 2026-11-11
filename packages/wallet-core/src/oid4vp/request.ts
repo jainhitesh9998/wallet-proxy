@@ -7,6 +7,7 @@ import type { Jwk, TrustClient, TrustDecision } from '@vctrust/trust-client';
 import { decodeJws, verifyJws, parseCertificate, findVerificationMethod, verificationMethodPublicKey } from '@vctrust/trust-client/primitives';
 import { randomId } from '../crypto/jwt.js';
 import { requireHttps } from '../net.js';
+import { CLOCK_SKEW_MS } from '../verify/report.js';
 import { dcqlProblem } from './dcql.js';
 
 export interface DcqlClaim { id?: string; path: (string | number | null)[]; values?: unknown[]; intent_to_retain?: boolean }
@@ -87,7 +88,7 @@ export function dcApiError(err: PresentationRequestError): { error: string } {
   return { error: err.code };
 }
 
-const SKEW_S = 300;
+const SKEW_S = CLOCK_SKEW_MS / 1000;
 
 const PREFIXES = new Set(['redirect_uri', 'x509_san_dns', 'x509_hash', 'decentralized_identifier', 'verifier_attestation', 'openid_federation', 'origin']);
 

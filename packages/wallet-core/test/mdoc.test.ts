@@ -69,6 +69,11 @@ describe('ISO 18013-5 and OpenID4VCI A.2.4: an mdoc that must be refused', () =>
     });
   }
 
+  it('accepts an mdoc whose validity begins a moment from now: the issuer\'s clock may run ahead', async () => {
+    const soon = mdoc({ mso: validity({ signed: tdate(new Date()), validFrom: tdate(new Date(Date.now() + 30_000)), validUntil: tdate(new Date(Date.now() + 1e6)) }) });
+    expect(await failures(soon)).toEqual([]);
+  });
+
   it('a signature that the Document Signer certificate does not verify', async () => {
     // Signed by the rogue key, presented with the genuine Document Signer certificate.
     const forged = (() => {

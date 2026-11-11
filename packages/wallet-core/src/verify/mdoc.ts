@@ -11,7 +11,7 @@
 import type { Jwk, TrustClient, TrustDecision } from '@vctrust/trust-client';
 import { cbor, bytes, coseAlgToJose, digest, extractIssuerInfo, issuerTrustQuery, jwkThumbprint, parseCertificate, parseCoseSign1, coseX5chain,
   verifySignature, type IssuerInfo } from '@vctrust/trust-client/primitives';
-import { Checks, finish, type VerificationReport } from './report.js';
+import { Checks, CLOCK_SKEW_MS, finish, type VerificationReport } from './report.js';
 
 const { Tagged, mapGet } = cbor;
 
@@ -169,7 +169,7 @@ export async function verifyMdoc(credential: string, opts: MdocVerifyOptions): P
     else if (validFrom < signed || validUntil <= validFrom) checks.fail('mdoc.validity', 'Validity period', 'validFrom is before signed, or validUntil is not after validFrom (ISO 18013-5 §9.1.2.4)');
     // ISO 18013-5 §9.3.1: the MSO was signed while the Document Signer certificate was valid.
     else if (signed < ds.notBefore || signed > ds.notAfter) checks.fail('mdoc.validity', 'Validity period', `Signed ${signed.toISOString()}, outside the validity of the Document Signer certificate`);
-    else if (now < validFrom || now > validUntil) checks.fail('mdoc.validity', 'Validity period', `Not valid now (${validFrom.toISOString()} – ${validUntil.toISOString()})`);
+    else if (now.getTime() + CLOCK_SKEW_MS < validFrom.getTime() || now > validUntil) checks.fail('mdoc.validity', 'Validity period', `Not valid now (${validFrom.toISOString()} – ${validUntil.toISOString()})`);
     else checks.pass('mdoc.validity', 'Validity period', `${validFrom.toISOString()} – ${validUntil.toISOString()}`);
 
     const deviceKey = coseKeyToJwk(mapGet(mapGet(mso, 'deviceKeyInfo'), 'deviceKey'));
