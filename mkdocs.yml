@@ -1,0 +1,68 @@
+# The documentation site (GitHub Pages). Its pages are assembled by scripts/site-pages.mjs from the READMEs and docs/;
+# scripts/build-site.sh builds everything, including the API references.
+site_name: Wallet Proxy
+site_description: A trust layer for OpenID4VCI / OpenID4VP wallets and verifiers
+repo_url: https://github.com/jainhitesh9998/wallet-proxy
+repo_name: jainhitesh9998/wallet-proxy
+docs_dir: build/site-src
+# Pages are flat files, so a relative link works the same from every page (also to the API references below).
+use_directory_urls: false
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle: { icon: material/brightness-7, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle: { icon: material/brightness-4, name: Light mode }
+
+nav:
+  - Overview: index.md
+  - Guides:
+      - Architecture: architecture.md
+      - Configuration: configuration.md
+  - Components:
+      - Trust service: service.md
+      - Client library: library.md
+      - Wallet core: wallet-core.md
+      - Demo wallet: wallet-app.md
+      - Reference issuer and verifier: reference-ecosystem.md
+  - Conformance:
+      - Vectors and test PKI: conformance.md
+      - Credentials from real issuers: real-world-credentials.md
+  - API reference:
+      - REST API (OpenAPI): api/rest/index.html
+      - TypeScript API: api/typescript/index.html
+      - Java API: api/java/index.html
+  - Project:
+      - Contributing: contributing.md
+      - Security: security.md
+
+markdown_extensions:
+  - tables
+  - admonition
+  - attr_list
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+# The API references are added to the built site by scripts/build-site.sh; MkDocs does not see them.
+validation:
+  nav:
+    not_found: ignore
+  links:
+    not_found: ignore

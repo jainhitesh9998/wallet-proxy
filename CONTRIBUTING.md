@@ -10,7 +10,16 @@ scripts/dev-up.sh                # trust service, reference issuer and verifier,
 scripts/test-all.sh              # everything, including the live suites
 ```
 
-CI runs the offline suites on every pull request.
+CI runs the offline suites on every pull request; the conformance workflow adds the x509-limbo suite and, weekly,
+the live issuers. `scripts/build-site.sh` builds the documentation site (needs `pip install mkdocs-material`).
+
+## Releasing
+
+1. Set the version in `packages/trust-client/package.json` and `packages/wallet-core/package.json` (and the
+   dependency of the second on the first), run `npm install --package-lock-only`, commit.
+2. Tag the commit `v<version>` and push the tag: the release workflow tests, packs and creates the GitHub release.
+3. Publishing the release starts the publish workflow, which uploads the npm packages and the Maven artifacts to
+   GitHub Packages with the repository's own token.
 
 ## The rules of the house
 

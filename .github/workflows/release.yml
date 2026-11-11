@@ -1,0 +1,65 @@
+name: Release
+
+# Pushing a tag v<version> (the version in the package.json files, e.g. v0.1.0) builds and tests everything and
+# creates a GitHub release with:
+#   - the trust service as a runnable jar
+#   - @vctrust/trust-client and @vctrust/wallet-core as npm tarballs (installable by URL)
+#   - the OpenAPI description
+# and then publishes the npm packages and the Maven artifacts to GitHub Packages (publish.yml).
+on:
+  push:
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: The tag names the version of the packages
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for p in packages/trust-client packages/wallet-core; do
+            test "$(node -p "require('./$p/package.json').version")" = "$version" || { echo "$p is not at $version"; exit 1; }
+          done
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build and test the trust service
+        run: mvn --batch-mode --no-transfer-progress verify
+        working-directory: trust-server
+      - run: npm ci
+      - name: Test the packages
+        run: |
+          npm test -w @vctrust/trust-client
+          npm test -w @vctrust/reference-ecosystem
+          npm test -w @vctrust/wallet-core
+      - name: Pack
+        run: |
+          mkdir -p release
+          npm pack -w @vctrust/trust-client -w @vctrust/wallet-core --pack-destination release
+          cp trust-server/trust-server/target/trust-server.jar "release/wallet-proxy-trust-service-$VERSION.jar"
+          cp docs/openapi.json "release/wallet-proxy-openapi-$VERSION.json"
+          (cd release && sha256sum * > SHA256SUMS)
+      - name: Create the release
+        run: gh release create "$GITHUB_REF_NAME" release/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  publish:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: ${{ github.ref_name }}

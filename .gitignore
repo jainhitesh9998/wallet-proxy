@@ -15,3 +15,4 @@ dist-android/
 apps/wallet/src/config/*.generated.ts
 apps/wallet/android/
 apps/wallet/ios/
+/site/

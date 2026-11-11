@@ -1,0 +1,13 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "Wallet Proxy: TypeScript API",
+  "entryPointStrategy": "packages",
+  "entryPoints": ["packages/trust-client", "packages/wallet-core"],
+  "includeVersion": true,
+  "readme": "none",
+  "githubPages": true,
+  "navigationLinks": {
+    "Guides": "../../",
+    "REST API": "../rest/"
+  }
+}

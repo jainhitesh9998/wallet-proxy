@@ -1,0 +1,121 @@
+name: Conformance
+
+# What the claims in docs/architecture.md ("Conformance") rest on, each as a job of its own:
+#   vectors   the service and the client library reach the same trust decisions (conformance/evaluation)
+#   x509      the library's X.509 path validation against the C2SP x509-limbo suite
+#   interop   the wallet against the reference issuer and verifier, and credentials real issuers issued
+#   live      the wallet through a running trust service against public sandbox issuers (scheduled, or on request)
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'conformance/**'
+      - 'trust-server/**'
+      - 'packages/**'
+      - 'test-ecosystem/**'
+      - '.github/workflows/conformance.yml'
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vectors:
+    name: Service and library decide alike
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      # The service regenerates the vectors from the cases and fails when the checked-in file differs.
+      - name: The service decides as the vectors say
+        run: mvn --batch-mode --no-transfer-progress test -Dtest=EvaluationVectorsTest,NameRenderingTest -Dsurefire.failIfNoSpecifiedTests=false
+        working-directory: trust-server
+      - run: npm ci
+      # The library decides the same from the snapshots in the vectors, also with the registry listed backwards.
+      - name: The library decides as the vectors say
+        run: npx vitest run test/vectors.test.ts test/names.test.ts
+        working-directory: packages/trust-client
+
+  x509:
+    name: X.509 path validation (x509-limbo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: packages/trust-client/.cache
+          key: x509-limbo-${{ hashFiles('packages/trust-client/scripts/fetch-limbo.sh') }}
+      - name: Run the limbo cases in scope
+        run: LIMBO_JSON="$(sh scripts/fetch-limbo.sh)" npx vitest run test/x509-limbo.conformance.test.ts --reporter=default
+        working-directory: packages/trust-client
+
+  interop:
+    name: Wallet against the reference ecosystem and real credentials
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test -w @vctrust/reference-ecosystem
+      - run: npx vitest run test/interop.test.ts test/real-world.test.ts test/sdjwt.test.ts test/mdoc.test.ts
+        working-directory: packages/wallet-core
+
+  live:
+    name: Public sandbox issuers through the trust service
+    # Sandboxes come and go: this runs weekly and on request, and does not gate pull requests.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: mvn --batch-mode --no-transfer-progress -DskipTests install
+        working-directory: trust-server
+      - name: Start the trust service and the reference ecosystem
+        run: scripts/dev-up.sh
+      - name: Service and device decide alike, over HTTP
+        run: LIVE=1 npx vitest run test/parity.live.test.ts
+        working-directory: packages/trust-client
+      - name: Reference ecosystem end to end, including the service going away
+        run: LIVE=1 npx vitest run test/proxy.live.test.ts
+        working-directory: packages/wallet-core
+      - name: walt.id demo issuer (mDL, EUDI PID as mdoc and SD-JWT VC)
+        run: LIVE=1 npx vitest run test/waltid.live.test.ts
+        working-directory: packages/wallet-core
+      - name: Animo playground (pre-authorized code flows, presentation)
+        run: LIVE=1 npx vitest run test/animo.live.test.ts test/animo-sdjwt.live.test.ts test/animo-present.live.test.ts test/animo-deferred.live.test.ts test/animo-batch.live.test.ts
+        working-directory: packages/wallet-core
+      - name: Service log
+        if: failure()
+        run: tail -n 200 .runtime/trust-server.log .runtime/reference-ecosystem.log

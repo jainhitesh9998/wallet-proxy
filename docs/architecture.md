@@ -271,6 +271,45 @@ Where the two evaluators differ, the device is the stricter one: it also refuses
 extensions, prefers the newest CRL, and limits the age of status lists that state no expiry. The vectors define the
 behaviour both must share.
 
+## Code map
+
+Where to look for what. Dependencies point downwards within each list: a later entry may use an earlier one, not
+the other way round.
+
+**Trust service** (`trust-server/`, package `io.vctrust.trust`)
+
+| Module / package | Holds |
+| --- | --- |
+| `trust-core` `model`, `policy` | The registry's records (`TrustedEntity`, `TrustAnchor`, `Identifier`), queries and decisions, client profiles |
+| `trust-core` `x509`, `did`, `metadata` | Path validation and certificate profiles, CRLs, the canonical name form; DID drivers; OpenID4VCI metadata discovery and metadata policy |
+| `trust-core` `spi`, `registry` | What a trust list adapter implements (`TrustSourceFactory`, `OnDemandResolver`); loading, merging and publishing sources (`TrustSourceManager`) |
+| `trust-core` `evaluation` | `TrustEvaluator`: the rules, in the steps of [How a decision is made](#how-a-decision-is-made) |
+| `trust-adapters` | One package per list format, each a `TrustSourceFactory` |
+| `trust-server` `signing`, `security`, `http`, `cache` | The signing key (file, keystore, PKCS#11); client authentication and rate limiting; the guarded outbound HTTP client; `ResourceCache` |
+| `trust-server` `service` | Snapshots, the metadata / DID / CRL / status list proxies, JSON-LD contexts |
+| `trust-server` `api`, `config`, `managed` | REST controllers and DTOs; configuration properties and wiring; the admin-managed source |
+
+**Client library** (`packages/trust-client/src`)
+
+| Directory | Holds |
+| --- | --- |
+| `util`, `encoding`, `crypto`, `jose` | Bytes and URLs; DER and CBOR; signature verification and keys; JWS |
+| `x509`, `did`, `status`, `credential`, `metadata` | Certificates, path validation, CRLs; DID documents and local resolution; status lists; reading issuer material out of credentials; issuer metadata discovery and policy |
+| `evaluation` | `LocalEvaluator`: the same rules as the service, in the same steps |
+| `snapshot`, `transport`, `cache` | Snapshot verification and storage; requests to the service (retries, circuit breaker); stored documents |
+| `client.ts`, `lookups` | `TrustClient`: configuration, status, decisions, and each lookup with its proxy route and its fallback |
+| `index.ts`, `primitives.ts` | The two entry points: the supported surface, and the building blocks |
+
+**Wallet core** (`packages/wallet-core/src`)
+
+| Directory | Holds |
+| --- | --- |
+| `crypto`, `oauth`, `net.ts` | Holder keys, JWT and JWE; PKCE, DPoP, wallet and key attestation; the guarded fetch |
+| `verify` | Verification of mdoc, SD-JWT VC and W3C credentials; JSON-LD loading and canonicalization; the report |
+| `oid4vci` | Credential offers and the issuance session: grants, proofs, encryption, deferred issuance, acceptance of what was issued |
+| `oid4vp` | Request authentication, DCQL, presentations and responses, the Digital Credentials API |
+| `store`, `wallet.ts` | Credential storage; the `Wallet` facade |
+
 ## Limits
 
 - The library validates X.509 itself (there is no platform validator in React Native). It handles name constraints

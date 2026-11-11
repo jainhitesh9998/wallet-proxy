@@ -1,0 +1,85 @@
+name: Publish packages
+
+# Publishes to GitHub Packages, with the repository's own token, for a released tag:
+#   npm     @<owner>/trust-client and @<owner>/wallet-core (GitHub's npm registry takes only packages scoped to the
+#           repository owner; scripts/github-packages.mjs renames them from @vctrust/* for the upload)
+#   Maven   io.vctrust:trust-core, trust-adapters and trust-server
+#
+# To install the npm packages, a project needs an .npmrc with
+#   @<owner>:registry=https://npm.pkg.github.com
+#   //npm.pkg.github.com/:_authToken=<a token with read:packages>
+on:
+  # Started by the release workflow (a release created by a workflow does not start other workflows by itself) ...
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to publish (e.g. v0.1.0)
+        required: true
+        type: string
+  # ... by a release published by hand ...
+  release:
+    types: [published]
+  # ... or on request.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to publish (e.g. v0.1.0)
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
+jobs:
+  npm:
+    name: npm packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+      - run: npm ci
+      - run: npm test -w @vctrust/trust-client
+      - run: npm run build -w @vctrust/trust-client -w @vctrust/wallet-core
+      - name: Name the packages after the repository owner
+        run: node scripts/github-packages.mjs "$GITHUB_REPOSITORY_OWNER"
+      # The library first: the wallet core depends on that exact version.
+      - run: npm publish
+        working-directory: packages/trust-client
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+      - run: npm publish
+        working-directory: packages/wallet-core
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+
+  maven:
+    name: Maven artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+      - name: Set the version to the tag
+        run: mvn --batch-mode --no-transfer-progress versions:set -DnewVersion="${TAG#v}" -DgenerateBackupPoms=false
+        working-directory: trust-server
+      - run: mvn --batch-mode --no-transfer-progress deploy -DskipTests -DaltDeploymentRepository="github::https://maven.pkg.github.com/${GITHUB_REPOSITORY}"
+        working-directory: trust-server
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

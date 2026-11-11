@@ -1,6 +1,13 @@
 # Wallet Proxy
 
+[![CI](https://github.com/jainhitesh9998/wallet-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/jainhitesh9998/wallet-proxy/actions/workflows/ci.yml)
+[![Conformance](https://github.com/jainhitesh9998/wallet-proxy/actions/workflows/conformance.yml/badge.svg)](https://github.com/jainhitesh9998/wallet-proxy/actions/workflows/conformance.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A trust layer for OpenID4VCI / OpenID4VP wallets and verifiers.
+
+Documentation: <https://jainhitesh9998.github.io/wallet-proxy/> (guides, REST API, TypeScript and Java API
+references).
 
 A **trust service** compiles trust lists of any kind (X.509 trust anchors for ISO mdoc / mDL, ETSI trusted lists,
 OpenID Federation, EBSI, a plain registry) into one registry, signs a snapshot of it for each client, and proxies the
@@ -95,10 +102,15 @@ service because the two share their rules and are tested against each other
 
 - Inside this repository it is an npm workspace: `@vctrust/trust-client`, and `@vctrust/trust-client/primitives` for
   its building blocks.
-- For another project: `npm pack -w @vctrust/trust-client` builds an installable tarball. Pushing a tag
-  `trust-client-v<version>` makes the `Release client library` workflow test, pack and attach that tarball to a
-  GitHub release, from where it installs by URL. Publishing to a registry (`npm publish -w @vctrust/trust-client`)
-  needs the `@vctrust` scope, or a rename to a scope you own.
+- For another project: every GitHub release (tag `v<version>`) carries the library as an npm tarball, which installs
+  by URL: `npm install https://github.com/jainhitesh9998/wallet-proxy/releases/download/v0.1.0/vctrust-trust-client-0.1.0.tgz`.
+  Locally, `npm pack -w @vctrust/trust-client` builds the same tarball.
+- The `Publish packages` workflow publishes it to GitHub Packages when a release is published, as
+  `@jainhitesh9998/trust-client` (GitHub's npm registry takes only packages scoped to the repository owner, so the
+  workflow renames `@vctrust/*` for the upload). A project that installs it needs an `.npmrc` with
+  `@jainhitesh9998:registry=https://npm.pkg.github.com` and a token that may read packages. The wallet core is
+  published the same way and installs the library under the name `@vctrust/trust-client`. The Java modules are
+  published there as Maven artifacts (`io.vctrust`).
 - React Native (Metro) resolves the package through its `react-native` export condition, to the TypeScript sources.
 
 ## Tests
@@ -118,6 +130,16 @@ scripts/test-all.sh               # plus the live suites (needs the internet and
 | `packages/wallet-core`, live | The wallet through the running trust service: reference ecosystem end to end; Animo playground; walt.id demo issuer (mDL, EUDI PID) | internet, `scripts/dev-up.sh` |
 | `packages/trust-client`, live | Service and device decide alike, over HTTP | `scripts/dev-up.sh` |
 | `e2e` (Playwright) | The demo wallet's UI | `scripts/dev-up.sh` |
+
+## Automation
+
+| Workflow | When | Does |
+| --- | --- | --- |
+| [`ci.yml`](.github/workflows/ci.yml) | every push and pull request | Builds and tests the service; type-checks and tests the packages |
+| [`conformance.yml`](.github/workflows/conformance.yml) | pushes, pull requests, weekly | Service and library decide alike (vectors); x509-limbo; the wallet against the reference ecosystem and real credentials; weekly and on request, the live issuers through a running service |
+| [`pages.yml`](.github/workflows/pages.yml) | changes to docs or public APIs | Builds and publishes the documentation site |
+| [`release.yml`](.github/workflows/release.yml) | a tag `v<version>` | Tests everything and creates a GitHub release with the service jar, the npm tarballs and the OpenAPI description |
+| [`publish.yml`](.github/workflows/publish.yml) | a published release | Publishes the npm packages and the Maven artifacts to GitHub Packages |
 
 ## Status
 
