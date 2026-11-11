@@ -197,10 +197,23 @@
     },
     "type": "object"
    }
+  },
+  "securitySchemes": {
+   "apiKey": {
+    "description": "An API key (development, or behind another gateway)",
+    "in": "header",
+    "name": "X-API-Key",
+    "type": "apiKey"
+   },
+   "bearer": {
+    "description": "An OAuth 2.0 JWT access token (RFC 9068) of the operator's authorization server, or an API key where those are enabled",
+    "scheme": "bearer",
+    "type": "http"
+   }
   }
  },
  "info": {
-  "description": "Signed trust snapshots for wallets and verifiers, and a proxy for the lookups they need about issuers and verifiers: issuer metadata, DID documents, CRLs and credential status lists. See docs/architecture.md.",
+  "description": "Signed trust snapshots for wallets and verifiers, and a proxy for the lookups they need about issuers and verifiers: issuer metadata, DID documents, CRLs and credential status lists. See docs/architecture.md. Every operation needs a client, except discovery (/.well-known/**).",
   "title": "Wallet Proxy trust service",
   "version": "1"
  },
@@ -251,16 +264,6 @@
   "/admin/v1/cache/clear": {
    "post": {
     "operationId": "clearCaches",
-    "parameters": [
-     {
-      "in": "query",
-      "name": "admin",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     }
-    ],
     "responses": {
      "200": {
       "content": {
@@ -341,14 +344,6 @@
     "operationId": "deleteManaged",
     "parameters": [
      {
-      "in": "query",
-      "name": "admin",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
-     {
       "in": "path",
       "name": "kind",
       "required": true,
@@ -377,14 +372,6 @@
    "put": {
     "operationId": "putManaged",
     "parameters": [
-     {
-      "in": "query",
-      "name": "admin",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
      {
       "in": "path",
       "name": "kind",
@@ -480,14 +467,6 @@
     "operationId": "refresh",
     "parameters": [
      {
-      "in": "query",
-      "name": "admin",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
-     {
       "in": "path",
       "name": "id",
       "required": true,
@@ -517,14 +496,6 @@
    "get": {
     "operationId": "lookup",
     "parameters": [
-     {
-      "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
      {
       "in": "query",
       "name": "identifier",
@@ -571,16 +542,6 @@
   "/api/v1/evaluate": {
    "post": {
     "operationId": "evaluate",
-    "parameters": [
-     {
-      "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     }
-    ],
     "requestBody": {
      "content": {
       "application/json": {
@@ -611,16 +572,6 @@
   "/api/v1/frameworks": {
    "get": {
     "operationId": "frameworks",
-    "parameters": [
-     {
-      "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     }
-    ],
     "responses": {
      "200": {
       "content": {
@@ -642,14 +593,6 @@
    "get": {
     "operationId": "issuers",
     "parameters": [
-     {
-      "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
      {
       "in": "query",
       "name": "framework",
@@ -726,14 +669,6 @@
     "parameters": [
      {
       "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
-     {
-      "in": "query",
       "name": "url",
       "required": true,
       "schema": {
@@ -762,16 +697,6 @@
   "/api/v1/proxy/did/**": {
    "get": {
     "operationId": "did",
-    "parameters": [
-     {
-      "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     }
-    ],
     "responses": {
      "200": {
       "content": {
@@ -793,14 +718,6 @@
    "get": {
     "operationId": "issuerMetadata",
     "parameters": [
-     {
-      "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
      {
       "in": "query",
       "name": "issuer",
@@ -833,14 +750,6 @@
     "parameters": [
      {
       "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
-     {
-      "in": "query",
       "name": "uri",
       "required": true,
       "schema": {
@@ -869,16 +778,6 @@
   "/api/v1/snapshot": {
    "get": {
     "operationId": "snapshot",
-    "parameters": [
-     {
-      "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     }
-    ],
     "responses": {
      "200": {
       "content": {
@@ -900,14 +799,6 @@
    "get": {
     "operationId": "verifiers",
     "parameters": [
-     {
-      "in": "query",
-      "name": "client",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/ClientProfile"
-      }
-     },
      {
       "in": "query",
       "name": "framework",
@@ -963,6 +854,14 @@
    }
   }
  },
+ "security": [
+  {
+   "bearer": []
+  },
+  {
+   "apiKey": []
+  }
+ ],
  "servers": [
   {
    "description": "Generated server url",
