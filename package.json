@@ -1,10 +1,12 @@
 {
-  "name": "vc-trust-workspace",
+  "name": "wallet-proxy",
   "private": true,
+  "license": "MIT",
   "workspaces": [
     "packages/*",
     "apps/wallet",
-    "e2e"
+    "e2e",
+    "test-ecosystem"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
