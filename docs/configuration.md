@@ -14,16 +14,23 @@ the parts do; this guide says how to set them up.
 ## Trust service
 
 All settings live under `trust.*`. The shipped
-[`application.yml`](../trust-server/trust-server/src/main/resources/application.yml) is a documented demo
-configuration; override it with an external `application.yml`, environment variables (`TRUST_SERVICE_ISSUER=...`) or
-arguments (`--trust.service.issuer=...`), as with any Spring Boot application.
+[`application.yml`](../trust-server/trust-server/src/main/resources/application.yml) holds the defaults and lists no
+clients, frameworks or sources: started as it is, the service refuses every API request and its registry is empty.
+Configure it with an external `application.yml`, environment variables (`TRUST_SERVICE_ISSUER=...`) or arguments
+(`--trust.service.issuer=...`), as with any Spring Boot application.
+
+The demo configuration is a profile,
+[`application-demo.yml`](../trust-server/trust-server/src/main/resources/application-demo.yml)
+(`--spring.profiles.active=demo`; `scripts/start-trust-server.sh` and `scripts/dev-up.sh` use it): a wallet, a verifier
+and an operator client with API keys that are published in this repository, the Animo playground's registry and a
+managed source. It is for development on a machine of your own; the service says so in its log when it starts.
 
 ### Quick start
 
 ```sh
 . scripts/env.sh
 scripts/build.sh                    # builds and tests the service and the TypeScript packages
-scripts/start-trust-server.sh       # http://localhost:8090, data and logs in .runtime/
+scripts/start-trust-server.sh       # http://localhost:8090 with the demo profile, data and logs in .runtime/
 curl -s localhost:8090/.well-known/trust-service
 curl -s -H 'Authorization: Bearer demo-wallet-key' -H 'Accept: application/jwt' localhost:8090/api/v1/snapshot
 ```
@@ -31,9 +38,10 @@ curl -s -H 'Authorization: Bearer demo-wallet-key' -H 'Accept: application/jwt' 
 `scripts/dev-up.sh` additionally starts the reference issuer and verifier on loopback and lists them in the
 service; see [Development setup](#development-setup).
 
-The defaults are closed: requests without credentials are refused, a client sees only the frameworks its profile
-names, rate limiting is on, the metadata proxy serves only registered issuers, lists that cannot be authenticated
-are not loaded, and nothing is fetched from private addresses or over plain http.
+The defaults are closed: no client exists until one is configured, requests without credentials are refused, a
+client sees only the frameworks its profile names, rate limiting is on, the metadata proxy serves only registered
+issuers, a signed list is loaded only when its signature verifies (see [Frameworks and sources](#frameworks-and-sources)
+for what authenticates each kind of source), and nothing is fetched from private addresses or over plain http.
 
 ### Service and signing key
 
@@ -45,8 +53,9 @@ are not loaded, and nothing is fetched from private addresses or over plain http
 | `trust.service.signed-response-ttl` | `PT10M` | Validity of signed proxy responses |
 | `trust.service.decision-ttl` | `PT1H` | Validity of the service's own decisions (`POST /api/v1/evaluate`) |
 | `trust.service.snapshot-did-documents` | `true` | Resolve the listed DIDs and ship their documents in the snapshot |
-| `trust.service.snapshot-max-did-documents` / `snapshot-did-deadline` | `200` / `PT5S` | Bounds on that; a document not ready in time is left out and clients look it up |
-| `trust.service.snapshot-max-context-bytes` | `262144` | JSON-LD context documents are shipped up to this total; past it only their digests are |
+| `trust.service.snapshot-max-did-documents` / `snapshot-did-deadline` | `200` / `PT5S` | Bounds on that; a document not ready in time is left out and clients look it up. The deadline also bounds the wait for JSON-LD contexts |
+| `trust.service.snapshot-max-context-bytes` | `262144` | JSON-LD context documents are shipped up to this total; past it only their digests are. At most 20 contexts are taken from one entity and 200 into one snapshot |
+| `trust.service.max-request-bytes` | `2097152` | Largest request body accepted (`413` beyond it). A decision request is small; an entry sent to the admin API may carry certificates and a CRL. One `x5c` is read up to 10 certificates |
 | `trust.cors-origins` | `["*"]` | CORS origins for `/api/**` and `/.well-known/**` |
 
 The service signs snapshots and proxy responses with one ES256 (P-256) key. Clients pin its RFC 7638 thumbprint,
@@ -128,6 +137,8 @@ combined; `/.well-known/trust-service` lists the enabled ones.
 | `trust.auth.mtls.enabled` | `false` | A TLS client certificate alone authenticates its client |
 | `trust.auth.mtls.certificate-header` / `trusted-proxies` | none / `[]` | Header with the URL-encoded PEM certificate (nginx `$ssl_client_escaped_cert`), and the proxies allowed to set it |
 | `trust.auth.rate-limit.enabled`, `requests-per-minute`, `burst`, `exempt-admin` | `true`, `600`, `100`, `true` | Token bucket per client (anonymous callers: per address); `429` with `Retry-After` |
+| `trust.auth.rate-limit.max-concurrent` | `32` | Requests one client (or anonymous address) may have in progress at once; more get `429`. One caller asking the proxy for many slow upstreams cannot occupy the service. `0`: no limit |
+| `trust.auth.rate-limit.refused-per-minute` | `60` | Refused credentials per address; past it, credentials from that address are turned away unseen (`429`) until the rate allows. `0`: no limit |
 | `trust.auth.trusted-proxies` | `[]` | Reverse proxies whose `X-Forwarded-For` names the caller, for per-address limits |
 
 Failures are RFC 9457 problem details: `401` (`unauthorized`, `invalid_token`) with `WWW-Authenticate`, `403`
@@ -154,17 +165,40 @@ trust:
 | `type` | Properties | Produces |
 | --- | --- | --- |
 | `static` | `location` (`classpath:`, `file:`, `https:`) | Entities and anchors in the [registry format](#registry-format) |
-| `managed` | none | Entities and anchors maintained through the [admin API](#admin-api), kept in the database |
+| `managed` | none | Entities and anchors maintained through the [admin API](#admin-api), kept in the database. One per framework that is managed this way: a source loads the entries written for its framework |
 | `x509-bundle` | `domain`, `certificateLocation`, optional `certificateJsonField`, `entity`, `docTypes`; `sha256` (pins: hex with or without colons, or base64url) or `allowUnpinned: true` for a remote location | Anchors from a PEM / DER bundle. A bundle fetched over the network is loaded only when every certificate matches a pin |
-| `vical` | `location`, `signerCertificates` / `signerCertificateLocation`, `allowUnverified` | ISO 18013-5 VICAL: IACA anchors constrained to their doctypes, issuing authorities as entities |
-| `etsi-tl` | `location`, `signerCertificates` / `signerCertificateLocation`, `followPointers`, `territories`, `serviceTypeDomains`, `includeAllServiceTypes`, `allowUnverified` | ETSI TS 119 612 trusted lists and the EU LOTL: providers as entities, service certificates as anchors |
+| `vical` | `location`, `signerCertificates` / `signerCertificateLocation`, `allowExpired`, `allowUnverified` | ISO 18013-5 VICAL: IACA anchors constrained to their doctypes, issuing authorities as entities |
+| `etsi-tl` | `location`, `signerCertificates` / `signerCertificateLocation`, `followPointers`, `territories`, `serviceTypeDomains`, `includeAllServiceTypes`, `allowExpired`, `allowUnverified` | ETSI TS 119 612 trusted lists and the EU LOTL: providers as entities, service certificates as anchors |
 | `etsi-lote` | `location`, `signerCertificates`, `serviceTypeDomains`, `allowExpired`, `allowUnverified` | ETSI TS 119 602 lists of trusted entities (PID, EAA, wallet, access and registration certificate providers) |
 | `openid-federation` | `trustAnchor`, `trustAnchorJwks` / `trustAnchorJwksLocation`, `crawl`, `maxDepth`, `maxEntities` | Entities from validated trust chains (metadata policy applied, trust marks verified); asked on demand about unknown entity identifiers |
 | `ebsi-tir` | `baseUrl`, `crawl`, `maxIssuers`, `pageSize` | EBSI Trusted Issuers Registry entries; asked on demand about `did:ebsi` issuers |
 | `oid4vci-discovery` | `issuers: [url \| {url, entityId}]` | What listed issuers say about themselves (display names, the JSON-LD contexts of their credentials). It describes entities registered elsewhere and authorizes nothing |
 
-A signed list is loaded only when its signature verifies against the pinned signer certificates. `allowUnverified`
-(and `allowUnpinned`) exist for test environments and say so in the log on every load.
+What makes a source's content authentic differs by type:
+
+| Sources | Authenticated by |
+| --- | --- |
+| `vical`, `etsi-tl`, `etsi-lote` | The list's signature, verified against the pinned signer certificates (national lists behind the EU LOTL: against the certificates the LOTL names for them). An ETSI trusted list's signature counts only as the list's own enveloped signature: directly under the root element, with a reference to that root |
+| `openid-federation` | Trust chains ending at the pinned trust anchor keys |
+| `x509-bundle` from the network | The pinned `sha256` of every certificate |
+| `static` from an `https:` location, `ebsi-tir`, `oid4vci-discovery` | TLS to the configured host only: whoever controls that host, or its certificate, controls the content |
+| `static` from `classpath:` or `file:`, `managed` | The operator: the deployment, or an admin client |
+
+`allowUnverified` (and `allowUnpinned`) drop a list to the transport level too; they exist for test environments and
+say so in the log on every load.
+
+A list past its next update is not loaded (`allowExpired: true` loads it with a warning): an expired list may be
+one from before an entry was withdrawn, served again by whoever controls its location. For the same reason a list
+that is older than the one already loaded (issued earlier, or with a lower sequence number) is refused, for as long
+as the service runs. A source that fails to load keeps its last good content; its state (`GET /admin/v1/sources`)
+shows the error.
+
+**A source speaks for its own framework only.** Everything it loads is placed in the framework it is configured
+for. Entities with the same id are merged when they come from sources of the same framework, so several sources may
+describe one party together; an id that an entity of another framework already has is listed as `<id>@<framework>`
+instead, and an anchor is tied only to an entity of its own framework. A source of one framework therefore adds
+nothing to what the clients of another framework are told. Put sources that should not vouch for each other's
+entries into different frameworks.
 
 ### Registry format
 
@@ -172,8 +206,7 @@ Used by `static` sources and, per entry, by the admin API.
 
 ```yaml
 entities:
-  - id: example-issuer                    # entities with the same id across sources are merged
-    framework: eu-pid                     # defaults to the source's framework
+  - id: example-issuer                    # entries with the same id from sources of one framework are merged
     roles: [CREDENTIAL_ISSUER]            # VERIFIER, WALLET_PROVIDER, AUTHORIZATION_SERVER, STATUS_LIST_PROVIDER, ...
     name: Example Issuer                  # or display: [{locale, name, description, logoUri}]
     identifiers:                          # typed, or a bare DID / URL
@@ -196,14 +229,18 @@ entities:
 anchors:
   - id: example-iaca
     domain: mdoc-iaca                     # credential-issuer, verifier-access, wallet-provider, status-list
-    framework: eu-pid
     entity: example-issuer                # a chain to this anchor is this entity; omit for a CA shared by many parties
-    certificate: "<PEM>"                  # or certificateLocation
+    certificate: "<PEM>"                  # or certificateLocation (see below)
     constraints:
       docTypes: [org.iso.18013.5.1.mDL]   # the doctypes this IACA may sign
       crlUrls: ["https://pki.example.org/iaca.crl"]   # where the CA publishes its CRL (default: the anchor's own distribution point)
       crl: "<base64 DER>"                 # or a CRL pushed by the operator; verified against the anchor
 ```
+
+Entries belong to the framework of their source; a `framework` key is accepted only when it names that framework,
+and an entry naming another one is skipped with a warning. `certificateLocation` may name a `classpath:` or `file:`
+location only in a registry that is itself a local file; in a registry fetched over the network and in entries sent
+to the admin API it must be an `https:` URL.
 
 **How to list a party so that its credentials are attributed to it.** An entity is found through what a signing key
 proves, never through what a credential claims. List at least one of:
@@ -238,7 +275,9 @@ else, is refused (`identifier.unbound`).
 Everything the service fetches goes through one guarded client: https only (plain http for `http-allowed-hosts`
 and for CRL distribution points, whose content is signed); a host is resolved once per connection and refused if
 any address is loopback, private, link-local, CGNAT, unique-local, multicast or reserved, including IPv4 embedded in
-NAT64 or 6to4 addresses; the socket connects only to the addresses that passed; proxy settings are ignored.
+NAT64 or 6to4 addresses; the socket connects only to the addresses that passed; proxy settings are ignored. The
+size and time caps end a fetch: a response that is too large or too slow is dropped, not read to its end, and a
+refusal does not say which address a host resolved to.
 
 ### Revocation
 
@@ -264,7 +303,10 @@ For an admin client, under `/admin/v1`:
 | `DELETE /managed/{entities\|anchors}/{id}` | Remove one |
 | `POST /cache/clear` | Empty the proxy caches |
 
-Changes are written to the audit log (logger `io.vctrust.trust.audit`).
+Changes are written to the audit log (logger `io.vctrust.trust.audit`), as are operator requests that were refused
+(no credentials, or a client that is not an admin). Values a caller chose are logged as quoted JSON strings. An entry's
+id is 1 to 128 letters, digits or `. _ : @ ~ -`; it is stored for the framework of the managed source and cannot name
+another one.
 
 ### Production checklist
 
@@ -273,8 +315,12 @@ Changes are written to the audit log (logger `io.vctrust.trust.audit`).
 - The signing key is in a keystore or an HSM; the app ships its thumbprint (and the next one before a rotation).
 - `trust.auth.api-keys: false`; clients authenticate with access tokens or certificates; no `api-key` in clear.
 - Every client names its frameworks; `anonymous` stays off unless the lists are meant to be public.
-- No `allowUnverified`, `allowUnpinned`, `allow-private-networks` or `http-allowed-hosts`.
+- Not the `demo` profile: its API keys, the admin key included, are public.
+- No `allowUnverified`, `allowUnpinned`, `allowExpired`, `allow-private-networks` or `http-allowed-hosts`.
 - A real database instead of the file-based H2 default (`spring.datasource.*`), and `/actuator/health` for probes.
+  The health endpoint is public and says `UP` or `DOWN` only; source states and their errors are at
+  `GET /admin/v1/sources` (`management.endpoint.health.show-details: always` shows them at the health endpoint too,
+  for a service that is reachable from a private network only).
 
 ### Development setup
 
@@ -283,7 +329,7 @@ scripts/dev-up.sh      # trust service + reference issuer (:8791) and verifier (
 scripts/dev-down.sh
 ```
 
-`dev-up.sh` starts the service with `--trust.http.allow-private-networks=true --trust.http.http-allowed-hosts=localhost`,
+`dev-up.sh` starts the service with the `demo` profile and `--trust.http.allow-private-networks=true --trust.http.http-allowed-hosts=localhost`,
 because the reference issuer lives on `http://localhost`, and runs `scripts/register-reference.mjs`, which lists the
 issuer and verifier through the admin API (framework `reference`).
 

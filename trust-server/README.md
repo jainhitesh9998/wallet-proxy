@@ -10,7 +10,7 @@ The server half of [Wallet Proxy](../README.md). Java 21, Spring Boot, Maven.
 
 ```sh
 mvn verify                                             # builds and tests all three
-java -jar trust-server/target/trust-server.jar         # http://localhost:8090, demo configuration
+java -jar trust-server/target/trust-server.jar --spring.profiles.active=demo    # http://localhost:8090, demo configuration (public API keys: development only)
 ```
 
 API: [`docs/openapi.json`](../docs/openapi.json), or `/swagger-ui.html` on a running service.

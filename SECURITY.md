@@ -14,7 +14,8 @@ proxy fetch from a private network; a way around client authentication.
 
 - `conformance/pki/` and `packages/wallet-core/test/fixtures/` hold **test keys**, committed on purpose. They protect
   nothing.
-- The API keys in the shipped `application.yml` (`demo-wallet-key`, `admin-key`) are for the demo configuration. A
-  deployment replaces them; see the production checklist in `docs/configuration.md`.
+- The API keys `demo-wallet-key`, `demo-verifier-key` and `admin-key` belong to the `demo` profile
+  (`application-demo.yml`), which a deployment does not activate: without it the service has no clients until the
+  operator configures them. See the production checklist in `docs/configuration.md`.
 - The demo wallet (`apps/wallet`) uses software keys and no user authentication. It demonstrates the protocols and the
   trust layer; it is not a wallet to keep real credentials in.

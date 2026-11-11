@@ -208,6 +208,9 @@ DNS rebinding), bounded size, redirects and time.
 | Proxy answers with something unsigned, signed for someone else, or about another party | Treated as a failed lookup: fallback |
 | Upstream of the proxy is down | The proxy serves its last copy (marked stale) for a bounded time |
 | Service not ready (a required source has not loaded) | `503 not_ready`; clients keep what they hold |
+| A trust list cannot be refreshed, is past its next update, or is older than the one held | The source keeps its last good content and reports the error; an expired or older list is never loaded in its place |
+| A listed issuer names JSON-LD contexts or a DID on a host that does not answer | The snapshot is built without them after a deadline; clients look them up by their own policy. Revocations and delistings do not wait |
+| One caller asks the proxy for many slow or endless upstreams | Each fetch ends at its size and time caps; the caller is held to a number of requests in progress (`429`); trust sources load over connections of their own |
 
 The library reports what it stands on: `status()` gives the service state, the snapshot in use, the last refresh
 error, and whether decisions are degraded.
@@ -235,9 +238,33 @@ verifier whose certificate does not chain to a verifier anchor is refused. All e
 that carries a token, a proof or a presentation is never re-sent to another location on a redirect. A presentation
 request whose query cannot be read exactly (an empty claims path would ask for everything) is refused.
 
+**What a trust source can do.** A source speaks for the framework it is configured for, and for nothing else:
+whatever it loads is placed in that framework, entries of the same id are merged only within a framework, and an
+anchor is tied only to an entity of its own framework. Whoever writes (or serves) the list of one framework cannot
+add a key, an identifier or an anchor to what clients of another framework are told. Within a framework, sources
+vouch for each other's entries; sources that should not are given frameworks of their own. A signed list counts
+only as signed when the signature is the list's own (for ETSI trusted lists: the enveloped signature directly under
+the root element, referring to that root; a signed list carried inside another document signs nothing of it). A
+list past its next update, or older than the one already loaded, is refused: either may be a state from before a
+withdrawal, served again. Anchor CRLs are held to the same rule. A document fetched from elsewhere, or sent to the
+admin API, can name web locations only, never a file of the service's host.
+
+**What the service fetches.** Everything goes through one guarded HTTP client: https only (plain http for hosts
+the operator allows, and for CRLs, which are signed), no private, loopback, link-local or otherwise internal
+address (checked on the address the socket then connects to), redirects re-checked hop by hop, response size and
+total time capped, and the caps end the fetch instead of reading on. Errors say that a host could not be reached,
+not how or at which address. The relays pass on only what they are for: a CRL that parses as one, a document with
+the shape of a status list, validated issuer metadata, a DID document whose `id` is the DID. A `did:web` names a
+host and plain path segments, nothing a URL parser could read as another resource. What one OpenID Federation
+lookup may fetch is bounded.
+
 **Service access.** Clients authenticate with OAuth 2.0 access tokens (RFC 9068), TLS client certificates or API
-keys; anonymous access is off unless enabled and scoped. Requests are rate limited per client. The admin API needs
-an admin client.
+keys; anonymous access is off unless enabled and scoped; no client exists until an operator configures one (the
+demo clients and their published keys are a profile of their own). Requests are limited per client: a rate, a
+number in progress at once, and a body size; credentials that are refused are counted per address. The admin API
+needs an admin client, which the authentication filter enforces by path and every operator use case checks again
+for itself; changes and refused attempts go to an audit log in which no caller-chosen value can pass for a field.
+The public health endpoint says `UP` or `DOWN` and nothing else.
 
 ## Credential verification in the wallet
 
@@ -250,6 +277,9 @@ trust client.
 | `dc+sd-jwt` (SD-JWT VC, HAIP profile) | `typ`; issuer signature with a key certified in `x5c` (no self-signed certificates); RFC 9901 §7.1 rejection rules for disclosures and digests; claims that must not be selectively disclosable; `vct` as requested; `exp` / `nbf`; `cnf.jwk`; Token Status List (JWT) |
 | `ldp_vc` (W3C VCDM 2.0 and 1.1, Data Integrity) | The data model's required members; contexts by URL at the top of the document only; every proof (`ecdsa-rdfc-2019`, `eddsa-rdfc-2022`, `Ed25519Signature2020`): the key is the issuer's own and authorized for `assertionMethod`, the signature covers the RDFC-1.0 form in JSON-LD safe mode (a term no context defines is an error, not silently unsigned); the document is in compact form, so that what is signed is what is read (a signed `validUntil` or `credentialStatus` spelled as an absolute IRI would otherwise be covered by the signature and overlooked by a reader of the JSON); validity; holder binding; Bitstring Status List |
 
+A validity that begins up to five minutes from now by the device's clock counts as begun: an issuer's clock may
+run ahead, and a status list is often built at the moment it is asked for. Expiry is not relaxed.
+
 Protocol scope: OpenID4VCI 1.0 (pre-authorized and authorization code grants, PAR, PKCE, DPoP, wallet and key
 attestation, nonce endpoint, batch and deferred issuance, notification, request and response encryption) and
 OpenID4VP 1.0 (DCQL, `direct_post` and `direct_post.jwt`, `x509_hash` / `x509_san_dns` / `decentralized_identifier`
@@ -259,7 +289,7 @@ OpenID4VP 1.0 (DCQL, `direct_post` and `direct_post.jwt`, `x509_hash` / `x509_sa
 
 | Evidence | What it shows | Where |
 | --- | --- | --- |
-| Evaluation vectors | The service decides each of 80 queries for a lenient and a strict client; the library must reach the same decision, reasons, entity (and what it was matched by), path result and revocation status from the snapshot the service signs, also with the registry listed backwards. Generated by the service, stale vectors fail the Java build | `conformance/evaluation`, `EvaluationVectorsTest.java`, `packages/trust-client/test/vectors.test.ts` |
+| Evaluation vectors | The service decides each of 94 queries for a lenient and a strict client; the library must reach the same decision, reasons, entity and framework (and what the entity was found through), path result, revocation status and `trusted_authorities` match (why a path is invalid, `x509.path.*`: at least the reason the service names) from the snapshot the service signs, also with the registry listed backwards. Generated by the service, stale vectors fail the Java build | `conformance/evaluation`, `EvaluationVectorsTest.java`, `packages/trust-client/test/vectors.test.ts` |
 | Live parity | The same comparison against a running service, over HTTP | `packages/trust-client/test/parity.live.test.ts` |
 | x509-limbo | The library's X.509 path validation against the C2SP limbo suite (8,832 cases in scope, none accepted that must be refused) | `packages/trust-client/test/x509-limbo.conformance.test.ts` |
 | Reference ecosystem | The wallet against an issuer and verifier built on third-party implementations: every format, issuance flows, presentation, revocation | `test-ecosystem`, `packages/wallet-core/test/interop.test.ts` |
@@ -285,9 +315,11 @@ the other way round.
 | `trust-core` `spi`, `registry` | What a trust list adapter implements (`TrustSourceFactory`, `OnDemandResolver`); loading, merging and publishing sources (`TrustSourceManager`) |
 | `trust-core` `evaluation` | `TrustEvaluator`: the rules, in the steps of [How a decision is made](#how-a-decision-is-made) |
 | `trust-adapters` | One package per list format, each a `TrustSourceFactory` |
-| `trust-server` `signing`, `security`, `http`, `cache` | The signing key (file, keystore, PKCS#11); client authentication and rate limiting; the guarded outbound HTTP client; `ResourceCache` |
-| `trust-server` `service` | Snapshots, the metadata / DID / CRL / status list proxies, JSON-LD contexts |
-| `trust-server` `api`, `config`, `managed` | REST controllers and DTOs; configuration properties and wiring; the admin-managed source |
+| `trust-server` `signing`, `cache`, `managed` | The signing key (file, keystore, PKCS#11); `ResourceCache`; the store and source of admin-managed entries |
+| `trust-server` `service` | The use cases, free of web types: snapshots, registry queries, the metadata / DID / CRL / status list relays, JSON-LD contexts, administration and its audit log. A refusal is a `ServiceException` with a kind and a code |
+| `trust-server` `security`, `http` | The edges: client authentication, rate, concurrency and request size limits; the guarded outbound HTTP client. They know neither the use cases nor the controllers |
+| `trust-server` `api` | REST controllers: they bind HTTP (parameters, conditional requests, cache headers, content types) to use cases and hold no logic of their own; `ApiExceptionHandler` is the one place where a refusal becomes a status |
+| `trust-server` `config` | Configuration properties and wiring. `LayeringTest` keeps these dependencies as described |
 
 **Client library** (`packages/trust-client/src`)
 
@@ -296,7 +328,7 @@ the other way round.
 | `util`, `encoding`, `crypto`, `jose` | Bytes and URLs; DER and CBOR; signature verification and keys; JWS |
 | `x509`, `did`, `status`, `credential`, `metadata` | Certificates, path validation, CRLs; DID documents and local resolution; status lists; reading issuer material out of credentials; issuer metadata discovery and policy |
 | `evaluation` | `LocalEvaluator`: the same rules as the service, in the same steps |
-| `snapshot`, `transport`, `cache` | Snapshot verification and storage; requests to the service (retries, circuit breaker); stored documents |
+| `snapshot`, `transport`, `cache` | Snapshot verification, storage and refresh; requests to the service (retries, circuit breaker); stored documents |
 | `client.ts`, `lookups` | `TrustClient`: configuration, status, decisions, and each lookup with its proxy route and its fallback |
 | `index.ts`, `primitives.ts` | The two entry points: the supported surface, and the building blocks |
 
@@ -317,4 +349,10 @@ the other way round.
 - No public issuer could be found (November 2026) that issues W3C VCDM 2.0 Data Integrity credentials over
   OpenID4VCI 1.0 to a script; that format is tested against the reference issuer, which signs with Digital Bazaar's
   cryptosuite implementations.
+- What the service remembers about the newest list and CRL it has seen is kept in memory: after a restart, a list
+  that is validly signed and not past its next update is accepted again even if a newer one was held before.
+- A source that fails keeps its last good content for as long as the service runs, also past that list's next
+  update; the source's state shows the error.
+- The relays tell whether a host answers. They do not reach internal addresses, but a client can learn through them
+  whether a public host is reachable from the service.
 - The wallet is a demonstration: software keys, no secure hardware, no user authentication.
