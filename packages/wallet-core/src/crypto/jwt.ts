@@ -1,4 +1,4 @@
-import { bytes } from '@vctrust/trust-client';
+import { bytes } from '@vctrust/trust-client/primitives';
 import type { SigningKey } from './keys.js';
 
 const enc = (o: unknown) => bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify(o)));

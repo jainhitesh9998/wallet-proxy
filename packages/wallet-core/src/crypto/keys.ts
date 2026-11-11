@@ -1,6 +1,7 @@
 /** Holder / instance keys. Software P-256 keys by default; the interface allows hardware-backed stores. */
 import { p256 } from '@noble/curves/nist.js';
-import { bytes, publicKeyToJwk, jwkThumbprint, type Jwk } from '@vctrust/trust-client';
+import type { Jwk } from '@vctrust/trust-client';
+import { bytes, publicKeyToJwk, jwkThumbprint } from '@vctrust/trust-client/primitives';
 
 export interface SigningKey {
   readonly id: string;

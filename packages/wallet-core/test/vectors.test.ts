@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { p256 } from '@noble/curves/nist.js';
-import { bytes, cbor } from '@vctrust/trust-client';
+import { bytes, cbor } from '@vctrust/trust-client/primitives';
 import { concatKdf, decryptJwe, encryptJwe, openId4VpHandover, SoftwareKey, createPkce, Dpop, decodeDisclosure, type AuthorizationRequest } from '../src/index.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 

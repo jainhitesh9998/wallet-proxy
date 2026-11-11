@@ -4,24 +4,21 @@
  * verifier trust enforcement and error responses.
  */
 import { describe, expect, it } from 'vitest';
-import { createPrivateKey, createSign } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { deflateRawSync } from 'node:zlib';
-import { bytes, createTrustClient, decodeJws, parseCertificate } from '@vctrust/trust-client';
+import { createTrustClient, MemoryCacheStore, type TrustClient } from '@vctrust/trust-client';
+import { bytes, decodeJws, parseCertificate } from '@vctrust/trust-client/primitives';
 import { decryptJwe, disclosureDigest, encryptJwe, evaluateDcql, IssuanceError, KeyValueCredentialStore, MemoryCredentialStore, pickInstance, PresentationRequestError, presentSdJwt,
   reportPresentationError, resolveAuthorizationRequest, selectDisclosures, decodeDisclosure, SoftwareKey, SoftwareKeyStore, verifierRefusal, Wallet,
   type DcqlClaim, type StoredCredential, type JweEnc } from '../src/index.js';
 import { demoAttester } from './wallet-provider.js';
+import { b64, entity, es256, pem } from './support.js';
 
-const PKI = new URL('../../trust-client/test/fixtures/pki/', import.meta.url);
-const pem = (n: string) => readFileSync(new URL(`${n}.pem`, PKI), 'utf8');
-const b64 = (p: string) => p.replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
-const enc = (o: unknown) => bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify(o)));
-function es256(header: object, payload: object, keyName: string): string {
-  const input = `${enc(header)}.${enc(payload)}`;
-  const sig = createSign('SHA256').update(input).sign({ key: createPrivateKey(readFileSync(new URL(`${keyName}.key`, PKI))), dsaEncoding: 'ieee-p1363' });
-  return `${input}.${bytes.base64UrlEncode(new Uint8Array(sig))}`;
-}
+/** Trust pinned for the mock ecosystem: the rp-ca is the mock issuer's own CA, and a verifier CA. */
+const pinned = (f: typeof fetch, known = true): TrustClient => createTrustClient({ storage: new MemoryCacheStore(), http: { fetch: f, retries: 0 },
+  pinned: known ? { anchors: [{ domain: 'credential-issuer', certificate: pem('rp-ca'), entityId: 'issuer' }, { domain: 'verifier-access', certificate: pem('rp-ca') }],
+    entities: [entity('issuer', ['CREDENTIAL_ISSUER'], [{ type: 'URL', value: 'https://issuer.example' }])] } : {} });
+const offline = (async () => { throw new TypeError('offline'); }) as typeof fetch;
+
 const disclosure = (...d: unknown[]) => bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify(d)));
 
 /** An SD-JWT VC from the rp key (credential-issuer domain under rp-ca) with nested and array disclosures. */
@@ -45,7 +42,7 @@ interface MockIssuer { fetch: typeof fetch; notifications: string[]; requests: {
 function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credential: (holderJwk: Record<string, unknown>, configId: string, n: number) => string;
   proofTypes?: Record<string, unknown>; tokenAuthMethods?: string[]; zip?: boolean; batchSize?: number; deferred?: number;
   /** the access token expires once the first deferred answer was given; a refresh token replaces it */
-  expiring?: boolean; legacyPending?: boolean; respond?: (keys: Record<string, unknown>[]) => string[]; format?: string }): MockIssuer {
+  expiring?: boolean; legacyPending?: boolean; legacyResponse?: boolean; tokenNonce?: boolean; respond?: (keys: Record<string, unknown>[]) => string[]; format?: string }): MockIssuer {
   const issuerKey = SoftwareKey.generate();
   const notifications: string[] = [];
   const requests: MockIssuer['requests'] = [];
@@ -75,7 +72,7 @@ function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credent
       requests.push({ contentType: 'token', body: { attested: headers.has('OAuth-Client-Attestation'), ...form } });
       if (form.grant_type === 'refresh_token') return form.refresh_token === 'rt' ? Response.json({ access_token: 'at2', token_type: 'Bearer' })
         : Response.json({ error: 'invalid_grant' }, { status: 400 });
-      return Response.json({ access_token: 'at', token_type: 'Bearer', ...(opts.expiring ? { refresh_token: 'rt' } : {}) });
+      return Response.json({ access_token: 'at', token_type: 'Bearer', ...(opts.expiring ? { refresh_token: 'rt' } : {}), ...(opts.tokenNonce ? { c_nonce: 'pre-1.0-nonce' } : {}) });
     }
     if (u === `${ISSUER}/nonce`) return Response.json({ c_nonce: 'cn-1' });
     if (u === `${ISSUER}/notification`) { notifications.push(JSON.parse(String(init?.body)).event); return new Response(null, { status: 204 }); }
@@ -107,6 +104,7 @@ function mockIssuer(opts: { requestEnc?: boolean; responseEnc?: boolean; credent
       // Answered in reverse order: the response need not follow the proofs.
       const answer = { credentials: (opts.respond ? opts.respond(keys) : keys.map((k, i) => opts.credential(k, String(body.credential_configuration_id), i)).reverse())
         .map((credential) => ({ credential })), notification_id: 'n-1' };
+      if (opts.legacyResponse) return Response.json({ credential: answer.credentials[0]!.credential });
       const re = body.credential_response_encryption as { jwk: never; enc: JweEnc } | undefined;
       if (re) {
         const plain = bytes.utf8Encode(JSON.stringify(answer));
@@ -125,7 +123,7 @@ const offerFor = (ids: string[]) => `openid-credential-offer://?credential_offer
 const offer = offerFor(['pid']);
 
 function walletFor(issuer: MockIssuer, extra: Partial<ConstructorParameters<typeof Wallet>[0]> = {}) {
-  const trust = createTrustClient({ fetch: issuer.fetch, fallback: { localAnchors: [{ domain: 'credential-issuer', certificate: pem('rp-ca') }] } });
+  const trust = pinned(issuer.fetch);
   return new Wallet({ trust, keyStore: new SoftwareKeyStore(), credentials: new MemoryCredentialStore(), fetch: issuer.fetch, redirectUri: 'https://wallet.example/cb', ...extra });
 }
 /** An SD-JWT VC bound (cnf) to the key in the wallet's proof. */
@@ -164,7 +162,8 @@ describe('issuance (OID4VCI 1.0 / HAIP)', () => {
     expect(tampered.notifications).toEqual(['credential_failure']);
 
     const untrusted = mockIssuer({ credential: (jwk) => issueFor(jwk, { signer: 'rogue-ds' }) });
-    await expect((await walletFor(untrusted).receive(offer)).acceptPreAuthorized()).rejects.toThrow(/issuer certificate is not trusted/);
+    // It claims to come from the registered issuer, under a certificate that is not that issuer's.
+    await expect((await walletFor(untrusted).receive(offer)).acceptPreAuthorized()).rejects.toThrow(/issuer is not trusted .*not bound to it/);
     const typ = mockIssuer({ credential: (jwk) => issueFor(jwk, { typ: 'vc+sd-jwt' }) });
     await expect((await walletFor(typ).receive(offer)).acceptPreAuthorized()).rejects.toThrow(/dc\+sd-jwt is required/);
   });
@@ -301,8 +300,7 @@ describe('batch issuance (OID4VCI §8.2, HAIP §4)', () => {
         response_type: 'vp_token', response_mode: 'direct_post', nonce: 'n', response_uri: 'https://verifier.example/post',
         dcql_query: { credentials: [{ id: 'pid', format: 'dc+sd-jwt', meta: { vct_values: ['urn:eudi:pid:1'] }, claims: [{ path: ['given_name'] }] }] } }, 'rp'));
     }) as typeof fetch;
-    const trust = createTrustClient({ fetch: verifierFetch, fallback: { localAnchors: [{ domain: 'credential-issuer', certificate: pem('rp-ca') },
-      { domain: 'verifier-access', certificate: pem('rp-ca') }] } });
+    const trust = pinned(verifierFetch);
     const presenter = new Wallet({ ...wallet.opts, trust, fetch: verifierFetch });
     const uri = `openid4vp://?client_id=${encodeURIComponent(`x509_hash:${rpHash}`)}&request_uri=${encodeURIComponent('https://verifier.example/req')}`;
     for (let i = 0; i < 3; i++) await (await presenter.startPresentation(uri)).respond();
@@ -343,20 +341,18 @@ describe('batch pairing of W3C credentials', () => {
   const vc = (subject: string) => JSON.stringify({ '@context': ['https://www.w3.org/ns/credentials/v2'], type: ['VerifiableCredential'], issuer: 'did:example:issuer',
     credentialSubject: { id: subject, name: 'Erika' } });
   const ldpWallet = (issuer: MockIssuer) => walletFor(issuer, { batchSize: 2 });
-  const accept = async (issuer: MockIssuer) => {
-    const w = ldpWallet(issuer);
-    (w.oid4vci.opts as { verify?: boolean }).verify = false;
-    return (await w.receive(offer)).acceptPreAuthorized();
-  };
+  // The credentials here are unsigned: pairing happens first, so a pairing refusal shows as itself and a passed pairing as
+  // the verification failure that follows. (Signed W3C batches are issued in interop.test.ts.)
+  const accept = async (issuer: MockIssuer) => (await ldpWallet(issuer).receive(offer)).acceptPreAuthorized();
 
   it('treats a subject DID that is not a key binding as the subject, not as a foreign key', async () => {
-    const [cred] = await accept(mockIssuer({ format: 'ldp_vc', batchSize: 2, credential: () => '', respond: () => [vc('did:example:erika'), vc('did:example:erika')] }));
-    expect(cred!.instances).toHaveLength(1);
+    await expect(accept(mockIssuer({ format: 'ldp_vc', batchSize: 2, credential: () => '', respond: () => [vc('did:example:erika'), vc('did:example:erika')] })))
+      .rejects.toThrow(/failed verification/);
   });
 
   it('pairs did:jwk subjects with their keys, and refuses one bound to a key the wallet did not send', async () => {
-    const [cred] = await accept(mockIssuer({ format: 'ldp_vc', batchSize: 2, credential: () => '', respond: (k) => [vc(didJwk(k[1]!)), vc(didJwk(k[0]!))] }));
-    expect(JSON.parse(String(cred!.credential)).credentialSubject.id).toBe(didJwk(cred!.holderJwk as never));
+    await expect(accept(mockIssuer({ format: 'ldp_vc', batchSize: 2, credential: () => '', respond: (k) => [vc(didJwk(k[1]!)), vc(didJwk(k[0]!))] })))
+      .rejects.toThrow(/failed verification/);
     const stranger = SoftwareKey.generate().publicJwk as unknown as Record<string, unknown>;
     await expect(accept(mockIssuer({ format: 'ldp_vc', batchSize: 2, credential: () => '', respond: (k) => [vc(didJwk(k[0]!)), vc(didJwk(stranger))] })))
       .rejects.toThrow(/did not send/);
@@ -364,8 +360,8 @@ describe('batch pairing of W3C credentials', () => {
 });
 
 describe('deferred issuance after the access token expired', () => {
-  it('refreshes the token, and treats a pre-1.0 issuance_pending answer as pending', async () => {
-    const issuer = mockIssuer({ deferred: 1, expiring: true, legacyPending: true, credential: (jwk) => issueFor(jwk) });
+  it('refreshes the token and asks again', async () => {
+    const issuer = mockIssuer({ deferred: 1, expiring: true, credential: (jwk) => issueFor(jwk) });
     // An attester is configured, but the token request went out anonymously: the refresh must too.
     const wallet = walletFor(issuer, { attester: demoAttester() });
     (wallet.oid4vci.opts as { deferredWaitSeconds?: number }).deferredWaitSeconds = 0;
@@ -379,13 +375,27 @@ describe('deferred issuance after the access token expired', () => {
     expect(refresh.body.client_id).toBeUndefined();
   });
 
-  it('keeps polling through issuance_pending answers during the first wait', async () => {
-    const issuer = mockIssuer({ deferred: 1, legacyPending: true, credential: (jwk) => issueFor(jwk) });
+  it('keeps polling through 202 answers during the first wait', async () => {
+    const issuer = mockIssuer({ deferred: 1, credential: (jwk) => issueFor(jwk) });
     const wallet = walletFor(issuer);
     (wallet.oid4vci.opts as { deferredWaitSeconds?: number }).deferredWaitSeconds = 4;
     const [cred] = await (await wallet.receive(offer)).acceptPreAuthorized();
     expect(cred!.pending).toBeUndefined();
     expect(cred!.report?.trusted).toBe(true);
+  }, 10_000);
+
+  it('speaks OpenID4VCI 1.0 only: no issuance_pending error, no singular credential, no c_nonce from the token endpoint', async () => {
+    const pending = mockIssuer({ deferred: 1, legacyPending: true, credential: (jwk) => issueFor(jwk) });
+    const w = walletFor(pending);
+    (w.oid4vci.opts as { deferredWaitSeconds?: number }).deferredWaitSeconds = 4;
+    await expect((await w.receive(offer)).acceptPreAuthorized()).rejects.toThrow(/Deferred credential request failed \(HTTP 400\): issuance_pending/);
+    const singular = mockIssuer({ legacyResponse: true, credential: (jwk) => issueFor(jwk) });
+    await expect((await walletFor(singular).receive(offer)).acceptPreAuthorized()).rejects.toMatchObject({ code: 'invalid_credential_response' });
+    // A c_nonce in the token response is ignored: the proof carries the nonce endpoint's.
+    const tokenNonce = mockIssuer({ tokenNonce: true, credential: (jwk) => issueFor(jwk) });
+    await (await walletFor(tokenNonce).receive(offer)).acceptPreAuthorized();
+    const proof = (tokenNonce.requests.find((r) => r.contentType === 'application/json')!.body.proofs as { jwt: string[] }).jwt[0]!;
+    expect(decodeJws(proof).payload.nonce).toBe('cn-1');
   }, 10_000);
 
   it('keeps the keys of a pending credential whose retrieval was refused, and deletes those of a discarded one', async () => {
@@ -396,7 +406,7 @@ describe('deferred issuance after the access token expired', () => {
     // deferred: 0 answers the first poll at once, so make the credential endpoint defer by asking with wait 0
     const [pending] = await wallet.store(await (await wallet.receive(offer)).acceptPreAuthorized());
     expect(pending!.pending).toBeDefined();
-    await expect(wallet.retrieveDeferred(pending!.id)).rejects.toThrow(/not trusted/);
+    await expect(wallet.retrieveDeferred(pending!.id)).rejects.toThrow(/issuer is not trusted/);
     expect(await keyStore.get(pending!.holderKeyId)).toBeDefined();
     const fresh = mockIssuer({ credential: (jwk) => issueFor(jwk) });
     const w2 = walletFor(fresh, { keyStore });
@@ -482,8 +492,6 @@ describe('minimal disclosure (OpenID4VP §6.4)', () => {
       claims: [{ id: 'a', path: ['nickname'] }, { id: 'b', path: ['given_name'] }], claim_sets: [['a'], ['b']] }] };
     const r = await evaluateDcql(sets, [mk('x', cred)]);
     expect(r.matches[0]!.claimsFor.x!.map((c) => c.id)).toEqual(['b']);
-    const legacy = { ...mk('l', cred), format: 'vc+sd-jwt' } as StoredCredential;
-    expect((await evaluateDcql({ credentials: [{ id: 'q', format: 'vc+sd-jwt', meta: { vct_values: ['urn:other'] } }] }, [legacy])).satisfied).toBe(false);
   });
 });
 
@@ -498,8 +506,8 @@ describe('verifier trust and error responses (OpenID4VP §5.9.3, §8.2, §8.4)',
     return new Response(es256({ alg: 'ES256', typ: 'oauth-authz-req+jwt', x5c: [b64(pem('rp'))] }, claims, 'rp'));
   }) as typeof fetch;
   const uri = (clientId = cid) => `openid4vp://?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent('https://verifier.example/req')}`;
-  const trusted = createTrustClient({ fetch: (async () => { throw new TypeError('offline'); }) as typeof fetch, fallback: { localAnchors: [{ domain: 'verifier-access', certificate: pem('rp-ca') }] } });
-  const untrusted = createTrustClient({ fetch: (async () => { throw new TypeError('offline'); }) as typeof fetch });
+  const trusted = pinned(offline);
+  const untrusted = pinned(offline, false);
 
   it('refuses to present to an x509 verifier whose chain is not trusted', async () => {
     expect((await resolveAuthorizationRequest(uri(), trusted, serve(base))).verifier.refusal).toBeUndefined();

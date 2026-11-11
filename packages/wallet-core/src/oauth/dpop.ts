@@ -4,7 +4,7 @@
  * for both AS (400 JSON error) and resource servers (401 WWW-Authenticate).
  */
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytes } from '@vctrust/trust-client';
+import { bytes } from '@vctrust/trust-client/primitives';
 import { nowSeconds, randomId, signJwt } from '../crypto/jwt.js';
 import type { SigningKey } from '../crypto/keys.js';
 

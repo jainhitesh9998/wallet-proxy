@@ -1,6 +1,6 @@
 /** Message digest factory for rdf-canonize that does not depend on platform crypto (React Native safe). */
 import { sha256, sha384 } from '@noble/hashes/sha2.js';
-import { bytes } from '@vctrust/trust-client';
+import { bytes } from '@vctrust/trust-client/primitives';
 
 export function createMessageDigest(algorithm = 'sha256') {
   const h = /384/.test(algorithm) ? sha384.create() : sha256.create();

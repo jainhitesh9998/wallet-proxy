@@ -2,7 +2,8 @@
 import { p256 } from '@noble/curves/nist.js';
 import { gcm } from '@noble/ciphers/aes.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytes, publicKeyFromJwk, publicKeyToJwk, type Jwk } from '@vctrust/trust-client';
+import type { Jwk } from '@vctrust/trust-client';
+import { bytes, publicKeyFromJwk, publicKeyToJwk } from '@vctrust/trust-client/primitives';
 
 export type JweEnc = 'A128GCM' | 'A256GCM';
 

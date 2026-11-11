@@ -1,48 +1,73 @@
 # @vctrust/wallet-core
 
-Platform-neutral holder logic for OpenID4VCI 1.0, OpenID4VP 1.0 and HAIP 1.0, built on `@vctrust/trust-client`. The demo app
-(`apps/wallet`) is a thin UI over this package.
+Platform-neutral wallet logic for OpenID4VCI 1.0, OpenID4VP 1.0 and HAIP 1.0, with credential verification, on top
+of [`@vctrust/trust-client`](../trust-client). The demo app ([`apps/wallet`](../../apps/wallet)) is a thin UI over it.
 
-- **Issuance:**
-  - Flows: credential offers (by value or reference), the pre-authorized code with `tx_code`, and the authorization code flow with PKCE, PAR and the RFC 9207 `iss` check. Wallet-initiated issuance is supported too.
-  - HAIP features: DPoP with server nonces; wallet attestation (`attest_jwt_client_auth`) wherever the AS supports it, with one instance key per authorization server and attestation challenges; key attestation.
-  - Credential requests: nonce endpoint, `proofs.jwt` (ES256 checked against the issuer) or `proofs.attestation`, holder binding by `jwk`, `did:jwk` or `did:key`, request and response encryption when the issuer requires it (`encryption: 'preferred'` whenever offered).
-  - Batch issuance (`batchSize`, capped at the issuer's `batch_size`): one request, one key per instance (one key attestation for all keys when attesting), instances paired with their keys by binding and each verified. Foreign keys, mixed bound and bearer credentials, or differing claims refuse the batch. `pickInstance()` gives the least-presented instance, and `respond()` presents it, so each verifier sees a fresh one.
-  - Deferred issuance: waited for up to `deferredWaitSeconds`, otherwise stored as pending; `wallet.retrieveDeferred(id)` asks again later with the kept (DPoP-bound) access token, refreshing it when the issuer gave a refresh token. Pending credentials are never offered for presentation; `wallet.remove()` also deletes the holder keys.
-  - Acceptance: a credential that fails verification (or an SD-JWT VC from an untrusted `x5c` issuer) is refused with an `IssuanceError` carrying the report, and the issuer gets `credential_failure`. `wallet.store()` sends `credential_accepted`, `wallet.discard()` sends `credential_deleted`.
-  - Per-issuer client registrations cover issuers that need a pre-registered client or a token proxy (MOSIP).
-- **Verification** (`verifyCredential`), each format returning a per-check report plus the issuer `TrustDecision`:
-  - *mso_mdoc:* COSE_Sign1, item digests, validity and device-key binding.
-  - *JSON-LD VC (VCDM 1.1/2.0):* Ed25519Signature2020, eddsa-rdfc-2022 and ecdsa-rdfc-2019 over RDFC-1.0. Contexts are bundled, safe mode is on, issuer key control and status lists are checked.
-  - *SD-JWT VC:* disclosure digests, cnf binding and the Token Status List.
-- **Presentation:**
-  - Request handling: `request_uri` (GET or POST, `client_id` required alongside), JAR checks (`typ`, signature, `exp`) for `x509_hash`, `x509_san_dns`, `decentralized_identifier` and `redirect_uri`. Verifier trust comes from the trust client and is enforced: `verifier.refusal` is set, and `respond()` refuses, unless an `x509_*` verifier is TRUSTED.
-  - Credential selection with DCQL, including credential and claim sets (per candidate), `trusted_authorities` and holder binding (required by default). Only the claims on the requested paths are disclosed (`selectDisclosures`).
-  - Errors after authentication (`transaction_data`, `redirect_uri` with `direct_post`) carry `reportTo`; `reportPresentationError()` returns them to the verifier once the user has seen them.
-  - Presentation formats: SD-JWT + KB-JWT, an mdoc DeviceResponse with the OpenID4VPHandover transcript, and ldp_vp.
-  - Responses go back as `direct_post` or `direct_post.jwt` (ECDH-ES + AES-GCM JWE).
-  - **Over the Digital Credentials API** (OpenID4VP Appendix A, HAIP §5.2):
-    - The platform hands over the request and the verifier's Origin; `pickDcApiRequest()` picks the request to answer, and `startDcApiPresentation()` resolves it.
-    - Unsigned, signed and multi-signed requests are accepted. Signed requests must list the Origin in `expected_origins`.
-    - The presentation is bound to `origin:<origin>`; mdoc uses the OpenID4VPDCAPIHandover transcript.
-    - `respond()` returns the response data (`{vp_token}` or `{response: <JWE>}` for `dc_api.jwt`) in `result.dcApi` instead of posting it.
-    - `dcApiError()` gives `{error}` for an authenticated request the user chose to answer with an error.
+Everything the wallet needs to know about a counterparty comes through the trust client: the issuer's metadata and
+trust, the verifier's trust, DID documents, JSON-LD contexts, CRLs and status lists. What the trust layer says
+decides what the wallet does.
 
 ```ts
 const wallet = new Wallet({ trust, keyStore: new SoftwareKeyStore(), credentials: new MemoryCredentialStore(), redirectUri });
-const session = await wallet.receive(offerUri);
+
+const session = await wallet.receive(offerUri);          // throws when the trust layer refuses the issuer
+if (session.needsConfirmation) {                         // the issuer is unknown to the trust layer
+  // show session.issuerTrust to the user, and only if they agree:
+  session.confirmUnknownIssuer();
+}
 const [credential] = await wallet.store(await session.acceptPreAuthorized(txCode));
-console.log(credential.report.valid, credential.report.trust.decision, credential.report.checks);
+credential.report;                                       // every check, the issuer's trust decision, the claims
 
 const p = await wallet.startPresentation(openid4vpUri);
-console.log(p.verifier.trust.decision, p.dcql.satisfied);
-await p.respond();
-
-// DC API: requestJson and origin come from the platform (Android Credential Manager, see apps/wallet/modules/dc-api)
-const dc = await wallet.startDcApiPresentation(pickDcApiRequest(requestJson, origin)!);
-const { dcApi } = await dc.respond();        // hand {protocol, data: dcApi} back to the platform
+p.verifier;                                              // who asks, their trust decision, a refusal if there is one
+p.dcql;                                                  // what can be presented: required and optional credentials
+await p.respond();                                       // optional credentials only when named: respond(choice, include)
 ```
 
-Tests:
-- `npx vitest run`: offline suite (65 tests), including the OpenID4VP SessionTranscript (redirect and DC API) and RFC 7518 KDF vectors, and an in-memory HAIP issuer for encryption, attestation proofs, refusal, notifications, batch and deferred issuance.
-- `npm run test:live`: live suites against the Animo playground, MOSIP collab and a local trust server.
+## What it does
+
+**Issuance (OpenID4VCI 1.0).** Credential offers by value or by reference; the pre-authorized code grant with a
+transaction code; the authorization code grant with PKCE, PAR and the RFC 9207 `iss` check; DPoP with server nonces;
+wallet attestation (`attest_jwt_client_auth`) and key attestation; the nonce endpoint; `jwt` and `attestation`
+proofs; binding by `jwk`, `cose_key`, `did:jwk` or `did:key`; batch issuance with one key per instance; deferred
+issuance, also resumed later; notifications; credential request and response encryption.
+
+**Verification.** `verifyCredential(format, credential, options)` returns a report with one entry per check and the
+issuer's trust decision. Formats: `mso_mdoc`, `dc+sd-jwt`, `ldp_vc`. See
+[what is checked](../../docs/architecture.md#credential-verification-in-the-wallet).
+
+**Presentation (OpenID4VP 1.0).** Request objects by reference (GET or POST with wallet metadata); the client
+identifier prefixes `x509_hash`, `x509_san_dns`, `decentralized_identifier` and `redirect_uri`; DCQL with credential
+sets, claim sets, values and `trusted_authorities`; SD-JWT VC with key binding, mdoc DeviceResponse, W3C
+presentations; `direct_post` and `direct_post.jwt`; and the Digital Credentials API (Appendix A: unsigned, signed
+and multi-signed requests, origin-bound responses).
+
+## Rules that are not options
+
+- Only OpenID4VCI 1.0 and OpenID4VP 1.0 messages. Earlier draft shapes are errors.
+- https for every endpoint a counterparty names. `insecureHosts` exists for an issuer on localhost during development.
+- An issuer the trust layer refuses is turned away before anything is fetched from it; from an unknown one nothing
+  beyond its metadata is requested until `confirmUnknownIssuer()`.
+- An issued credential is verified with the key the wallet proved, must be of the type that was asked for, and is
+  refused (the issuer is told `credential_failure`) when any check fails, when its issuer is not trusted, or when
+  it is signed with a certificate that chains to no trusted anchor.
+- A verifier that presents a certificate must chain to a trusted verifier anchor; a refused verifier can only be
+  declined.
+- A credential that failed its last verification is not offered for presentation; credentials the verifier marks
+  optional are not sent unless the user adds them.
+
+## Tests
+
+```sh
+npm test -w @vctrust/wallet-core      # offline
+LIVE=1 npx vitest run test/proxy.live.test.ts test/animo.live.test.ts test/waltid.live.test.ts   # see below
+```
+
+| Test | Covers |
+| --- | --- |
+| `sdjwt.test.ts`, `mdoc.test.ts` | Each rule a credential can break, one at a time, with credentials built from the test PKI |
+| `interop.test.ts` | The wallet against the reference issuer and verifier (`test-ecosystem`, run as its own process): all formats and flows, altered W3C credentials, revocation, presentation |
+| `real-world.test.ts` | Credentials that public sandbox issuers issued (`conformance/real-world`) |
+| `oid4vp.test.ts`, `dcapi.test.ts`, `haip.test.ts`, `vectors.test.ts` | Request authentication, DCQL, the Digital Credentials API, HAIP features against an in-memory issuer, specification test vectors |
+| `proxy.live.test.ts` | Trust service + reference ecosystem + wallet, including the service going away (`scripts/dev-up.sh`) |
+| `animo*.live.test.ts`, `waltid.live.test.ts` | The Animo playground and walt.id's demo issuer through the trust service (internet) |

@@ -7,12 +7,13 @@
  *  - over the DC API (Appendix A): audience origin:<origin>, OpenID4VPDCAPIHandover, dc_api / dc_api.jwt response data
  */
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytes, cbor, decodeIssuerSigned, decodeJws, jwkThumbprintBytes, base58Encode, type Jwk } from '@vctrust/trust-client';
+import type { Jwk, TrustClient } from '@vctrust/trust-client';
+import { bytes, cbor, decodeJws, jwkThumbprintBytes, base58Encode } from '@vctrust/trust-client/primitives';
 import { nowSeconds, signJwt } from '../crypto/jwt.js';
 import { encryptJwe, type JweEnc } from '../crypto/jwe.js';
 import type { KeyStore, SigningKey } from '../crypto/keys.js';
 import { parseSdJwt, decodeDisclosure, type Disclosure } from '../verify/sdjwt.js';
-import { issuerSignedItems } from '../verify/mdoc.js';
+import { decodeIssuedMdoc, issuerSignedItems } from '../verify/mdoc.js';
 import { canonize, createDocumentLoader } from '../verify/jsonld.js';
 import type { StoredCredential } from '../store/credentials.js';
 import { encryptionKey, type AuthorizationRequest, type DcqlClaim } from './request.js';
@@ -79,7 +80,8 @@ export function selectDisclosures(payload: Record<string, unknown>, decoded: Dis
     return matched ? found : null;
   };
   const selected = new Set<Disclosure>();
-  for (const c of claims) for (const d of follow(payload, c, 0) ?? []) selected.add(d);
+  // A path names something: an empty one would select the whole credential, and selects nothing.
+  for (const c of claims) for (const d of (c.path.length ? follow(payload, c, 0) : null) ?? []) selected.add(d);
   return decoded.filter((d) => selected.has(d));
 }
 
@@ -118,8 +120,9 @@ function responseEncryptionKey(req: AuthorizationRequest): Jwk | undefined {
 
 /** mdoc DeviceResponse for one document, disclosing only the requested data elements. */
 export async function presentMdoc(c: StoredCredential, claims: DcqlClaim[], req: AuthorizationRequest, key: SigningKey, encryptionJwk?: Jwk): Promise<string> {
-  const { issuerSigned, docType: wrapped } = decodeIssuerSigned(String(c.credential));
-  const docType = c.report?.credentialType ?? wrapped ?? '';
+  const issuerSigned = decodeIssuedMdoc(String(c.credential));
+  const docType = c.report?.credentialType;
+  if (!docType) throw new Error(`Credential ${c.id} has no verified docType`);
   const wanted = new Set(pathsOf(claims).map((p) => `${p[0]}|${p[1]}`));
   const nameSpaces = new Map<string, unknown[]>();
   for (const [ns, items] of issuerSignedItems(issuerSigned)) {
@@ -145,17 +148,22 @@ export async function presentMdoc(c: StoredCredential, claims: DcqlClaim[], req:
   return bytes.base64UrlEncode(cbor.encode(response));
 }
 
-/** W3C VP with an ecdsa-rdfc-2019 DataIntegrityProof made with the holder's did:jwk / did:key. */
-export async function presentLdp(c: StoredCredential, req: AuthorizationRequest, key: SigningKey, f: typeof fetch): Promise<Record<string, unknown>> {
+/**
+ * W3C VP with an ecdsa-rdfc-2019 DataIntegrityProof made with the holder's did:jwk / did:key (challenge = nonce,
+ * domain = audience). A credential that is not bound to a holder is presented in a VP without a proof (§6.1: only
+ * when the verifier does not require cryptographic holder binding).
+ */
+export async function presentLdp(c: StoredCredential, req: AuthorizationRequest, key: SigningKey, trust: Pick<TrustClient, 'context'>): Promise<Record<string, unknown>> {
   const vc = typeof c.credential === 'string' ? JSON.parse(c.credential) : c.credential;
+  if (c.unbound) return { '@context': ['https://www.w3.org/ns/credentials/v2'], type: ['VerifiablePresentation'], verifiableCredential: [vc] };
   const holder = c.holderDid ?? `did:jwk:${bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify({ crv: 'P-256', kty: 'EC', x: key.publicJwk.x, y: key.publicJwk.y })))}`;
   const vm = holder.startsWith('did:jwk:') ? `${holder}#0` : `${holder}#${holder.slice('did:key:'.length)}`;
   const vp: Record<string, unknown> = { '@context': ['https://www.w3.org/ns/credentials/v2'], type: ['VerifiablePresentation'], holder, verifiableCredential: [vc] };
   const proof: Record<string, unknown> = { type: 'DataIntegrityProof', cryptosuite: 'ecdsa-rdfc-2019', created: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     verificationMethod: vm, proofPurpose: 'authentication', challenge: req.nonce, domain: audienceOf(req) };
-  const loader = createDocumentLoader(f);
-  const docC = await canonize(vp, loader, false);
-  const cfgC = await canonize({ ...proof, '@context': vp['@context'] }, loader, false);
+  const loader = createDocumentLoader(trust);
+  const docC = await canonize(vp, loader);
+  const cfgC = await canonize({ ...proof, '@context': vp['@context'] }, loader);
   const hashData = bytes.concatBytes(sha256(bytes.utf8Encode(cfgC)), sha256(bytes.utf8Encode(docC)));
   proof.proofValue = `z${base58Encode(await key.sign(hashData))}`;
   return { ...vp, proof };
@@ -166,17 +174,16 @@ export interface PresentationSelection {
   [queryId: string]: { credential: StoredCredential; claims: DcqlClaim[] };
 }
 
-export async function buildVpToken(req: AuthorizationRequest, selection: PresentationSelection, keys: KeyStore, f: typeof fetch): Promise<Record<string, unknown[]>> {
+export async function buildVpToken(req: AuthorizationRequest, selection: PresentationSelection, keys: KeyStore, trust: Pick<TrustClient, 'context'>): Promise<Record<string, unknown[]>> {
   const encJwk = responseEncryptionKey(req);
   const vpToken: Record<string, unknown[]> = {};
   for (const [queryId, { credential, claims }] of Object.entries(selection)) {
     const key = await keys.get(credential.holderKeyId);
     if (!key) throw new Error(`Holder key for credential ${credential.id} is not available`);
     switch (credential.format) {
-      case 'dc+sd-jwt':
-      case 'vc+sd-jwt': vpToken[queryId] = [await presentSdJwt(credential, claims, req, key)]; break;
+      case 'dc+sd-jwt': vpToken[queryId] = [await presentSdJwt(credential, claims, req, key)]; break;
       case 'mso_mdoc': vpToken[queryId] = [await presentMdoc(credential, claims, req, key, encJwk)]; break;
-      case 'ldp_vc': vpToken[queryId] = [await presentLdp(credential, req, key, f)]; break;
+      case 'ldp_vc': vpToken[queryId] = [await presentLdp(credential, req, key, trust)]; break;
       default: throw new Error(`Cannot present format ${credential.format}`);
     }
   }

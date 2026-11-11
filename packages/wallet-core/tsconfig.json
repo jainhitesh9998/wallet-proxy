@@ -1,5 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": ".", "noEmit": true, "types": ["node"] },
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@vctrust/trust-client": ["../trust-client/src/index.ts"],
+      "@vctrust/trust-client/primitives": ["../trust-client/src/primitives.ts"]
+    }
+  },
   "include": ["src", "test"]
 }

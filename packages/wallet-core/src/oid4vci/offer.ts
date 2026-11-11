@@ -1,4 +1,6 @@
-/** OpenID4VCI 1.0 Credential Offer (§4.1) parsing: by value or by reference, any scheme. */
+/** OpenID4VCI 1.0 Credential Offer (§4.1): by value or by reference, from any URL scheme that carries the parameters. */
+import { requireHttps } from '../net.js';
+
 export interface TxCode {
   input_mode?: 'numeric' | 'text';
   length?: number;
@@ -16,27 +18,35 @@ export interface CredentialOffer {
 
 export const PRE_AUTH = 'urn:ietf:params:oauth:grant-type:pre-authorized_code';
 
-/** Accepts openid-credential-offer:// / haip-vci:// / https deep links, or raw offer JSON. */
-export async function resolveCredentialOffer(input: string, f: typeof fetch): Promise<CredentialOffer> {
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * Accepts an openid-credential-offer:// (or haip-vci://, https) link, or the offer JSON itself. An offer by reference
+ * is fetched over https; the offer names an https issuer and at least one configuration.
+ */
+export async function resolveCredentialOffer(input: string, f: typeof fetch, insecureHosts: readonly string[] = []): Promise<CredentialOffer> {
   const s = input.trim();
   let offer: unknown;
   if (s.startsWith('{')) offer = JSON.parse(s);
   else {
-    const q = s.includes('?') ? s.slice(s.indexOf('?') + 1) : '';
-    const params = new URLSearchParams(q);
+    const params = new URLSearchParams(s.includes('?') ? s.slice(s.indexOf('?') + 1) : '');
     const byValue = params.get('credential_offer');
     const byRef = params.get('credential_offer_uri');
-    if (byValue) offer = JSON.parse(byValue);
-    else if (byRef) {
-      if (!byRef.startsWith('https://') && !byRef.startsWith('http://')) throw new Error(`credential_offer_uri is not a URL: ${byRef}`);
-      const r = await f(byRef, { headers: { Accept: 'application/json' } });
-      if (!r.ok) throw new Error(`Fetching credential offer failed: HTTP ${r.status}`);
+    // §4.1: exactly one of the two.
+    if ((byValue === null) === (byRef === null)) throw new Error('A credential offer link carries either credential_offer or credential_offer_uri');
+    if (byValue !== null) offer = JSON.parse(byValue);
+    else {
+      const r = await f(requireHttps(byRef, 'credential_offer_uri', insecureHosts), { headers: { Accept: 'application/json' } });
+      if (!r.ok) throw new Error(`Fetching the credential offer failed: HTTP ${r.status}`);
       offer = await r.json();
-    } else throw new Error('No credential_offer or credential_offer_uri parameter');
+    }
   }
-  const o = offer as CredentialOffer;
-  if (typeof o.credential_issuer !== 'string' || !Array.isArray(o.credential_configuration_ids) || o.credential_configuration_ids.length === 0) {
+  if (!isObject(offer) || typeof offer.credential_issuer !== 'string' || !Array.isArray(offer.credential_configuration_ids)
+    || offer.credential_configuration_ids.length === 0 || !offer.credential_configuration_ids.every((id) => typeof id === 'string')) {
     throw new Error('Invalid credential offer: credential_issuer and credential_configuration_ids are required');
   }
-  return o;
+  requireHttps(offer.credential_issuer, 'credential_issuer', insecureHosts);
+  const pre = isObject(offer.grants) ? offer.grants[PRE_AUTH] : undefined;
+  if (pre !== undefined && (!isObject(pre) || typeof pre['pre-authorized_code'] !== 'string')) throw new Error('Invalid credential offer: the pre-authorized code grant has no pre-authorized_code');
+  return offer as unknown as CredentialOffer;
 }

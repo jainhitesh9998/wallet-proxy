@@ -1,4 +1,5 @@
-import type { IssuerInfo, TrustDecision } from '@vctrust/trust-client';
+import type { TrustDecision } from '@vctrust/trust-client';
+import type { IssuerInfo } from '@vctrust/trust-client/primitives';
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip';
 

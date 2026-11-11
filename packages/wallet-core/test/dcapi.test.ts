@@ -6,24 +6,15 @@ import { describe, expect, it } from 'vitest';
 import { createPrivateKey, createPublicKey, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { p256 } from '@noble/curves/nist.js';
-import { bytes, cbor, createTrustClient, decodeJws, parseCertificate, publicKeyFromJwk, verifyJws, verifySignature } from '@vctrust/trust-client';
+import { bytes, cbor, decodeJws, jwkThumbprintBytes, parseCertificate, publicKeyFromJwk, verifyJws, verifySignature } from '@vctrust/trust-client/primitives';
 import { buildVpToken, dcApiError, decryptJwe, disclosureDigest, evaluateDcql, openId4VpHandover, pickDcApiRequest, PresentationRequestError,
   resolveDcApiRequest, sigStructure, SoftwareKey, submitResponse, type AuthorizationRequest, type KeyStore, type StoredCredential } from '../src/index.js';
-
-const PKI = new URL('../../trust-client/test/fixtures/pki/', import.meta.url);
-const pem = (n: string) => readFileSync(new URL(`${n}.pem`, PKI), 'utf8');
-const b64 = (p: string) => p.replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
-const enc = (o: unknown) => bytes.base64UrlEncode(bytes.utf8Encode(JSON.stringify(o)));
-function es256(header: object, payload: object, keyName: string): string {
-  const input = `${enc(header)}.${enc(payload)}`;
-  const sig = createSign('SHA256').update(input).sign({ key: createPrivateKey(readFileSync(new URL(`${keyName}.key`, PKI))), dsaEncoding: 'ieee-p1363' });
-  return `${input}.${bytes.base64UrlEncode(new Uint8Array(sig))}`;
-}
+import { buildMdoc } from './mdoc-builder.js';
+import { b64, enc, es256, pem, pinnedTrust, PKI } from './support.js';
 
 const ORIGIN = 'https://verifier.example';
-const offline = createTrustClient({ fetch: (async () => { throw new TypeError('offline'); }) as typeof fetch });
-const trusted = createTrustClient({ fetch: (async () => { throw new TypeError('offline'); }) as typeof fetch,
-  fallback: { localAnchors: [{ domain: 'verifier-access', certificate: pem('rp-ca') }] } });
+const offline = pinnedTrust([]);
+const trusted = pinnedTrust([{ domain: 'verifier-access', certificate: pem('rp-ca') }]);
 const cid = `x509_hash:${parseCertificate(pem('rp')).sha256}`;
 const dcql = { credentials: [
   { id: 'pid', format: 'dc+sd-jwt', meta: { vct_values: ['urn:eudi:pid:1'] }, claims: [{ path: ['given_name'] }] },
@@ -53,8 +44,7 @@ function sdJwt(): string {
 }
 const sd: StoredCredential = { id: 'c1', format: 'dc+sd-jwt', configurationId: 'pid', credential: sdJwt(), credentialIssuer: 'https://issuer.example',
   holderKeyId: holder.id, holderJwk: holder.publicJwk, issuedAt: new Date().toISOString(), report: { credentialType: 'urn:eudi:pid:1' } as never };
-const mosip = JSON.parse(readFileSync(new URL('../../trust-client/test/fixtures/MockMdl-DrivingLicenseCredential.json', import.meta.url), 'utf8'));
-const mdl: StoredCredential = { id: 'c2', format: 'mso_mdoc', configurationId: 'mdl', credential: mosip.credentials?.[0]?.credential ?? mosip.credential,
+const mdl: StoredCredential = { id: 'c2', format: 'mso_mdoc', configurationId: 'mdl', credential: buildMdoc(holder),
   credentialIssuer: 'https://mdl.example', holderKeyId: holder.id, holderJwk: holder.publicJwk, issuedAt: new Date().toISOString(),
   report: { credentialType: 'org.iso.18013.5.1.mDL' } as never };
 
@@ -66,7 +56,7 @@ async function present(request: AuthorizationRequest) {
     const m = r.matches.find((x) => x.query.id === id)!;
     return [id, { credential: m.candidates[0]!, claims: m.claims }];
   }));
-  return submitResponse(request, { vp_token: await buildVpToken(request, selection, keys, fetch) }, fetch);
+  return submitResponse(request, { vp_token: await buildVpToken(request, selection, keys, trusted) }, fetch);
 }
 
 describe('OpenID4VP over the DC API', () => {
@@ -204,7 +194,7 @@ describe('OpenID4VP over the DC API', () => {
     const vpToken = JSON.parse(bytes.utf8Decode(plaintext)).vp_token as Record<string, string[]>;
     const doc = ((cbor.decode(bytes.base64UrlDecode(vpToken.mdl![0]!)) as Map<string, unknown>).get('documents') as Map<string, unknown>[])[0]!;
     const sig = (doc.get('deviceSigned') as Map<string, Map<string, unknown[]>>).get('deviceAuth')!.get('deviceSignature') as unknown[];
-    const handover = ['OpenID4VPDCAPIHandover', (await import('@noble/hashes/sha2.js')).sha256(cbor.encode([ORIGIN, 'n-1', (await import('@vctrust/trust-client')).jwkThumbprintBytes(jwk)]))];
+    const handover = ['OpenID4VPDCAPIHandover', (await import('@noble/hashes/sha2.js')).sha256(cbor.encode([ORIGIN, 'n-1', jwkThumbprintBytes(jwk)]))];
     const da = ['DeviceAuthentication', [null, null, handover], 'org.iso.18013.5.1.mDL', new cbor.Tagged(24, cbor.encode(new Map()))];
     const payload = cbor.encode(new cbor.Tagged(24, cbor.encode(da)));
     expect(verifySignature('ES256', publicKeyFromJwk(holder.publicJwk), sigStructure(sig[0] as Uint8Array, payload), sig[3] as Uint8Array)).toBe(true);

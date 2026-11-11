@@ -3,8 +3,11 @@
  * JAR verification per client_id prefix (x509_hash, x509_san_dns, decentralized_identifier, redirect_uri),
  * and verifier trust through the trust client.
  */
-import { decodeJws, verifyJws, parseCertificate, findVerificationMethod, verificationMethodPublicKey, type TrustClient, type TrustDecision, type Jwk } from '@vctrust/trust-client';
+import type { Jwk, TrustClient, TrustDecision } from '@vctrust/trust-client';
+import { decodeJws, verifyJws, parseCertificate, findVerificationMethod, verificationMethodPublicKey } from '@vctrust/trust-client/primitives';
 import { randomId } from '../crypto/jwt.js';
+import { requireHttps } from '../net.js';
+import { dcqlProblem } from './dcql.js';
 
 export interface DcqlClaim { id?: string; path: (string | number | null)[]; values?: unknown[]; intent_to_retain?: boolean }
 export interface DcqlCredentialQuery {
@@ -40,6 +43,7 @@ export interface VerifierView {
   name?: string;
   /** the name is the verifier's own claim (client_name), not the registry's */
   nameSelfDeclared?: boolean;
+  /** a logo to show: only for a verifier the trust layer knows (an image URL from an unknown party is not fetched) */
   logoUri?: string;
   trust: TrustDecision;
   /** Checks done locally on the request object */
@@ -106,7 +110,7 @@ export const WALLET_METADATA = {
   authorization_encryption_enc_values_supported: ['A128GCM', 'A256GCM'],
 };
 
-export async function resolveAuthorizationRequest(uri: string, trust: TrustClient, f: typeof fetch): Promise<{ request: AuthorizationRequest; verifier: VerifierView }> {
+export async function resolveAuthorizationRequest(uri: string, trust: TrustClient, f: typeof fetch, insecureHosts: readonly string[] = []): Promise<{ request: AuthorizationRequest; verifier: VerifierView }> {
   const q = new URLSearchParams(uri.includes('?') ? uri.slice(uri.indexOf('?') + 1) : uri);
   const queryClientId = q.get('client_id') ?? '';
   let raw: Record<string, unknown>;
@@ -121,6 +125,7 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
     if (requestUri) {
       const method = (q.get('request_uri_method') ?? 'get').toLowerCase();
       if (method !== 'get' && method !== 'post') throw new PresentationRequestError(`Unsupported request_uri_method ${method}`, 'invalid_request_uri_method');
+      requireHttps(requestUri, 'request_uri', insecureHosts);
       const r = method === 'post'
         ? await f(requestUri, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/oauth-authz-req+jwt' },
           body: new URLSearchParams({ wallet_metadata: JSON.stringify(WALLET_METADATA), wallet_nonce: (walletNonce = randomId()) }).toString() })
@@ -137,7 +142,7 @@ export async function resolveAuthorizationRequest(uri: string, trust: TrustClien
   }
   const clientId = String(raw.client_id ?? '');
   if (!clientId || (queryClientId && queryClientId !== clientId)) throw new PresentationRequestError('client_id in request object does not match the query parameter', 'invalid_client');
-  return authenticate(raw, jws, clientId, trust, checks);
+  return authenticate(raw, jws, clientId, trust, checks, undefined, insecureHosts);
 }
 
 /** The protocol identifiers of OpenID4VP over the Digital Credentials API (Appendix A.1) this wallet answers. */
@@ -253,8 +258,8 @@ function readRequestObject(jwt: string, checks: VerifierView['checks']): Jws {
  * Authenticates the verifier per client identifier prefix, evaluates its trust and checks the request is well formed.
  * {@code origin} is set for the DC API, where the response goes back through the platform instead of to a URL.
  */
-async function authenticate(raw: Record<string, unknown>, jws: Jws | undefined, clientId: string, trust: TrustClient,
-                            checks: VerifierView['checks'], origin?: string): Promise<{ request: AuthorizationRequest; verifier: VerifierView }> {
+async function authenticate(raw: Record<string, unknown>, jws: Jws | undefined, clientId: string, trust: TrustClient, checks: VerifierView['checks'],
+                            origin?: string, insecureHosts: readonly string[] = []): Promise<{ request: AuthorizationRequest; verifier: VerifierView }> {
   const dcApi = origin !== undefined;
   const header = jws?.header;
   const { prefix, value } = dcApi && !jws ? { prefix: 'origin', value: origin } : clientIdPrefix(clientId);
@@ -262,6 +267,10 @@ async function authenticate(raw: Record<string, unknown>, jws: Jws | undefined, 
   const responseMode = String(raw.response_mode ?? (dcApi ? 'dc_api' : 'fragment'));
   // Over the DC API the response goes back through the platform: response_uri / redirect_uri mean nothing (A.2).
   const responseUri = dcApi ? undefined : raw.response_uri as string | undefined;
+  // The presentation is posted there: never over plain http, whoever asks.
+  if (responseUri !== undefined) {
+    try { requireHttps(responseUri, 'response_uri', insecureHosts); } catch (e) { throw new PresentationRequestError((e as Error).message); }
+  }
 
   // Signature and prefix rules (OID4VP §5.9.3)
   if (prefix === 'x509_san_dns' || prefix === 'x509_hash') {
@@ -319,6 +328,8 @@ async function authenticate(raw: Record<string, unknown>, jws: Jws | undefined, 
   if (typeof raw.nonce !== 'string' || !raw.nonce) throw fail('nonce is required');
   if (raw.presentation_definition) throw fail('presentation_definition is not part of OpenID4VP 1.0; use dcql_query');
   if (!raw.dcql_query) throw fail('dcql_query is required');
+  const malformed = dcqlProblem(raw.dcql_query);
+  if (malformed) throw fail(`dcql_query is not valid: ${malformed}`);
   if (raw.dcql_query && raw.scope) throw fail('dcql_query and scope must not both be present');
   const modes = dcApi ? ['dc_api', 'dc_api.jwt'] : ['direct_post', 'direct_post.jwt'];
   if (!modes.includes(responseMode)) throw fail(`Unsupported response_mode ${responseMode}${dcApi ? ' over the DC API' : ''}`);
@@ -343,7 +354,8 @@ async function authenticate(raw: Record<string, unknown>, jws: Jws | undefined, 
   };
   return { request, verifier: { clientId, prefix, origin, trust: trustDecision, checks, refusal,
     // The registry's name for a recognised verifier; otherwise the request's own client_name, marked as self-declared.
-    ...verifierName(trustDecision.entity?.display?.[0]?.name, md.client_name), logoUri: md.logo_uri as string | undefined } };
+    ...verifierName(trustDecision.entity?.display?.[0]?.name, md.client_name),
+    ...(trustDecision.decision === 'TRUSTED' ? { logoUri: trustDecision.entity?.display?.[0]?.logoUri ?? (typeof md.logo_uri === 'string' ? md.logo_uri : undefined) } : {}) } };
 }
 
 function verifierName(registered: string | undefined, declared: unknown): Pick<VerifierView, 'name' | 'nameSelfDeclared'> {

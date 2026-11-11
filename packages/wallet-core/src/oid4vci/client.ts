@@ -3,12 +3,19 @@
  *  - pre-authorized code (+ tx_code) and authorization code flows; PKCE S256; PAR when offered; RFC 9207 iss check
  *  - DPoP-bound tokens with nonce handling at AS and credential issuer
  *  - wallet attestation (attest_jwt_client_auth) and key attestation in jwt proofs
- *  - nonce endpoint, credential_identifier vs credential_configuration_id, deferred issuance, notification
+ *  - nonce endpoint, credential_identifier vs credential_configuration_id, batch and deferred issuance, notification
  *  - credential request / response encryption (ECDH-ES P-256, A128GCM / A256GCM) when the issuer requires or offers it
- *  - credentials that fail verification are refused (credential_failure); credential_accepted only once stored
- * Issuer metadata and trust come from the TrustClient (trust service, with standards-based fallback).
+ *
+ * What the wallet is told by the trust layer decides what it does. Issuer metadata and the issuer's trust come from
+ * the TrustClient (the proxy first, standard discovery as fallback). An issuer the trust layer refuses is not
+ * contacted; an unknown one only after the user confirmed it. Every credential is verified before it is kept, must
+ * be the credential that was asked for, and is refused (credential_failure) otherwise.
+ *
+ * Only OpenID4VCI 1.0 messages are spoken: no c_nonce from the token endpoint, no singular credential member, no
+ * issuance_pending error. All endpoints must be https.
  */
-import { bytes, base58Encode, writeVarint, MULTICODEC, type IssuerMetadataResult, type Jwk, type TrustClient, type TrustDecision } from '@vctrust/trust-client';
+import type { IssuerMetadataResult, Jwk, TrustClient, TrustDecision } from '@vctrust/trust-client';
+import { bytes, base58Encode, writeVarint, MULTICODEC } from '@vctrust/trust-client/primitives';
 import { p256 } from '@noble/curves/nist.js';
 import { nowSeconds, randomId, signJwt } from '../crypto/jwt.js';
 import { decryptJwe, encryptJwe, type JweEnc } from '../crypto/jwe.js';
@@ -16,17 +23,15 @@ import { SoftwareKey, type KeyStore, type SigningKey } from '../crypto/keys.js';
 import { Dpop } from '../oauth/dpop.js';
 import { createPkce, type Pkce } from '../oauth/pkce.js';
 import type { WalletAttester } from '../oauth/attestation.js';
+import { guardedFetch, requireHttps } from '../net.js';
+import { didPublicKey } from '../crypto/did-key.js';
 import { PRE_AUTH, resolveCredentialOffer, type CredentialOffer, type TxCode } from './offer.js';
-import { holderBinding, verifyCredential, type VerificationReport } from '../verify/index.js';
-import { didPublicKey } from '../verify/sdjwt.js';
+import { expectedOf, holderBinding, verifyCredential, type VerificationReport } from '../verify/index.js';
 
 export interface IssuerClientRegistration {
   /** Pre-registered client_id at this issuer's AS (when not using wallet attestation). */
   clientId: string;
   redirectUri?: string;
-  /** Token endpoint override, e.g. a wallet-backend token proxy holding the client's credentials. */
-  tokenEndpoint?: string;
-  extraAuthorizeParams?: Record<string, string>;
   /** Defaults to true when the AS offers PAR. */
   usePar?: boolean;
 }
@@ -46,12 +51,8 @@ export interface Oid4vciOptions {
   keyAttestation?: 'auto' | 'always' | 'never';
   /** Max seconds to wait for deferred credentials before returning them as pending. */
   deferredWaitSeconds?: number;
-  verify?: boolean;
-  /**
-   * Refuse a credential that fails verification, or an SD-JWT VC whose x5c issuer certificate does not chain to a
-   * trusted anchor (SD-JWT VC §3.5: the credential MUST be rejected). Default true.
-   */
-  rejectInvalid?: boolean;
+  /** Hosts that may be reached over plain http: local development only (an issuer on localhost). */
+  insecureHosts?: string[];
   /** Credential request / response encryption: only when the issuer requires it (default) or whenever it offers it. */
   encryption?: 'required' | 'preferred';
   /**
@@ -93,9 +94,13 @@ export interface IssuedCredential extends CredentialInstance {
   pending?: { transactionId: string; interval: number; accessToken?: string; tokenType?: string; refreshToken?: string; dpopKeyId?: string;
     holderKeyIds?: string[];
     /** how the token request authenticated, repeated for the refresh: wallet attestation, a client_id, or anonymously */
-    tokenAuth?: { attested: boolean; clientId?: string } };
+    tokenAuth?: { attested: boolean; clientId?: string };
+    /** the user confirmed an issuer the trust layer did not know when the credential was requested */
+    confirmedUnknown?: true };
   /** Further instances of the same credential from a batch, each bound to its own key. */
   instances?: CredentialInstance[];
+  /** The configuration names no binding method: the credential is not bound to the wallet's key (holderKeyId is only a handle). */
+  unbound?: true;
   /**
    * Notifies the issuer (OID4VCI §11) — {@link Wallet.store} sends credential_accepted, {@link Wallet.discard}
    * credential_deleted. Not enumerable, so it is never persisted.
@@ -133,21 +138,28 @@ interface SealedRequest {
   responseKey?: SoftwareKey;
 }
 
-type TokenResponse = { access_token: string; token_type: string; c_nonce?: string; refresh_token?: string;
+type TokenResponse = { access_token: string; token_type: string; refresh_token?: string;
   authorization_details?: Array<{ type: string; credential_configuration_id?: string; credential_identifiers?: string[] }> };
 
 export class Oid4vciClient {
   private readonly f: typeof fetch;
 
   constructor(readonly opts: Oid4vciOptions) {
-    this.f = opts.fetch ?? fetch;
+    this.f = guardedFetch(opts.fetch ?? fetch, opts.insecureHosts);
   }
 
-  /** Resolves an offer, fetches issuer metadata (through the trust service) and returns a session. */
+  /** Resolves an offer, gets the issuer's metadata and trust through the trust client, and returns a session. */
   async startFromOffer(offerInput: string): Promise<IssuanceSession> {
-    const offer = await resolveCredentialOffer(offerInput, this.f);
+    const offer = await resolveCredentialOffer(offerInput, this.f, this.opts.insecureHosts);
+    await this.refuseUntrusted(offer.credential_issuer);
     const metadata = await this.opts.trust.getIssuerMetadata(offer.credential_issuer);
     return new IssuanceSession(this, offer, metadata);
+  }
+
+  /** An issuer the trust layer refuses is turned away on its identifier alone, before anything is fetched from it. */
+  private async refuseUntrusted(credentialIssuer: string): Promise<void> {
+    const d = await this.opts.trust.evaluateIssuer({ credentialIssuer });
+    if (d.decision === 'NOT_TRUSTED') throw new IssuanceError(`The issuer ${credentialIssuer} is not trusted: ${d.summary}`, 'issuer_not_trusted');
   }
 
   /**
@@ -155,13 +167,17 @@ export class Oid4vciClient {
    * pending while the issuer is not done; the issued credential keeps the pending one's id.
    */
   async retrieveDeferred(pending: IssuedCredential): Promise<IssuedCredential> {
+    await this.refuseUntrusted(pending.credentialIssuer);
     const metadata = await this.opts.trust.getIssuerMetadata(pending.credentialIssuer);
+    // What the user agreed to when the credential was requested still holds, and nothing more: an unknown issuer or
+    // signer is accepted now only if it was confirmed then.
     return new IssuanceSession(this, { credential_issuer: metadata.credentialIssuer, credential_configuration_ids: [pending.configurationId],
-      grants: { authorization_code: {} } }, metadata).retrieveDeferred(pending);
+      grants: { authorization_code: {} } }, metadata, pending.pending?.confirmedUnknown === true).retrieveDeferred(pending);
   }
 
   /** Wallet-initiated issuance (no offer): authorization code flow for the given configurations. */
   async startWalletInitiated(credentialIssuer: string, configurationIds: string[]): Promise<IssuanceSession> {
+    await this.refuseUntrusted(credentialIssuer);
     const metadata = await this.opts.trust.getIssuerMetadata(credentialIssuer);
     return new IssuanceSession(this, { credential_issuer: metadata.credentialIssuer, credential_configuration_ids: configurationIds,
       grants: { authorization_code: {} } }, metadata);
@@ -189,7 +205,11 @@ export class IssuanceSession {
   /** how the last token request authenticated (a refresh repeats it) */
   private tokenAuth?: { attested: boolean; clientId?: string };
 
-  constructor(private readonly client: Oid4vciClient, readonly offer: CredentialOffer, readonly metadata: IssuerMetadataResult) {
+  /** @param confirmed the user already agreed to an issuer the trust layer does not know */
+  constructor(private readonly client: Oid4vciClient, readonly offer: CredentialOffer, readonly metadata: IssuerMetadataResult, private confirmed = false) {
+    if (metadata.trust.decision === 'NOT_TRUSTED') {
+      throw new IssuanceError(`The issuer ${metadata.credentialIssuer} is not trusted: ${metadata.trust.summary}`, 'issuer_not_trusted');
+    }
     this.im = metadata.credentialIssuerMetadata;
     const supported = (this.im.credential_configurations_supported ?? {}) as Record<string, Record<string, unknown>>;
     this.configurations = offer.credential_configuration_ids.map((id) => {
@@ -202,7 +222,11 @@ export class IssuanceSession {
     this.txCode = pre?.tx_code;
     const servers = Object.keys(metadata.authorizationServers);
     const wanted = pre?.authorization_server ?? offer.grants?.authorization_code?.authorization_server;
-    this.as = wanted && metadata.authorizationServers[wanted] ? wanted : servers[0] ?? metadata.credentialIssuer;
+    // OID4VCI §4.1.1: the offer's authorization_server is one of the issuer's authorization_servers.
+    if (wanted !== undefined && !metadata.authorizationServers[wanted]) {
+      throw new IssuanceError(`The offer names the authorization server ${wanted}, which is not one of the issuer's`, 'invalid_credential_offer');
+    }
+    this.as = wanted ?? servers[0] ?? metadata.credentialIssuer;
     this.asMd = metadata.authorizationServers[this.as] ?? {};
     this.reg = client.opts.registrations?.[metadata.credentialIssuer];
     this.redirectUri = this.reg?.redirectUri ?? client.opts.redirectUri;
@@ -214,6 +238,27 @@ export class IssuanceSession {
 
   get issuerTrust(): TrustDecision {
     return this.metadata.trust;
+  }
+
+  /** The trust layer does not know this issuer: beyond the metadata already read, nothing is requested from it until {@link confirmUnknownIssuer}. */
+  get needsConfirmation(): boolean {
+    return this.metadata.trust.decision !== 'TRUSTED' && !this.confirmed;
+  }
+
+  /** The user, told that the issuer is unknown to the trust layer, chose to go on. */
+  confirmUnknownIssuer(): void {
+    this.confirmed = true;
+  }
+
+  private requireConsent(): void {
+    if (this.needsConfirmation) {
+      throw new IssuanceError(`The issuer ${this.metadata.credentialIssuer} is unknown to the trust service; the user has to confirm it first`, 'issuer_unknown');
+    }
+  }
+
+  /** An endpoint from the issuer's or the authorization server's metadata; https only. */
+  private endpoint(md: Record<string, unknown>, name: string): string | undefined {
+    return md[name] === undefined ? undefined : requireHttps(md[name], name, this.client.opts.insecureHosts);
   }
 
   /** Issuer display (OpenID4VCI §12.2.4 display) */
@@ -252,7 +297,7 @@ export class IssuanceSession {
     const attester = this.client.opts.attester!;
     let challenge = this.attestationChallenge;
     this.attestationChallenge = undefined;
-    const ce = this.asMd.challenge_endpoint as string | undefined;
+    const ce = this.endpoint(this.asMd, 'challenge_endpoint');
     if (!challenge && ce) {
       const r = await this.client.fetchFn(ce, { method: 'POST', headers: { Accept: 'application/json' } });
       if (!r.ok) throw await this.error('Attestation challenge request', r);
@@ -293,6 +338,7 @@ export class IssuanceSession {
   // ---- pre-authorized code -------------------------------------------------------------------------
 
   async acceptPreAuthorized(txCode?: string): Promise<IssuedCredential[]> {
+    this.requireConsent();
     const pre = this.offer.grants?.[PRE_AUTH];
     if (!pre) throw new IssuanceError('Offer has no pre-authorized code grant');
     if (this.txCode && !txCode) throw new IssuanceError('This offer requires a transaction code', 'tx_code_required');
@@ -311,7 +357,8 @@ export class IssuanceSession {
 
   /** Builds the authorization request (via PAR when available). Open the returned URL in a browser. */
   async beginAuthorization(): Promise<{ authorizationUrl: string; state: string; redirectUri: string }> {
-    const authEndpoint = this.asMd.authorization_endpoint as string | undefined;
+    this.requireConsent();
+    const authEndpoint = this.endpoint(this.asMd, 'authorization_endpoint');
     if (!authEndpoint) throw new IssuanceError('Authorization server has no authorization_endpoint');
     const clientId = this.attestationWanted() ? this.client.opts.attester!.clientId : this.clientId;
     if (!clientId) throw new IssuanceError('No client_id: configure wallet attestation, a registration or clientId');
@@ -320,7 +367,7 @@ export class IssuanceSession {
     const scopes = this.configurations.map((c) => c.config.scope).filter((s): s is string => typeof s === 'string');
     const params: Record<string, string> = {
       response_type: 'code', client_id: clientId, redirect_uri: this.redirectUri, state: this.state,
-      code_challenge: this.pkce.challenge, code_challenge_method: 'S256', ...(this.reg?.extraAuthorizeParams ?? {}),
+      code_challenge: this.pkce.challenge, code_challenge_method: 'S256',
     };
     if (scopes.length === this.configurations.length) params.scope = [...new Set(scopes)].join(' ');
     else {
@@ -330,16 +377,11 @@ export class IssuanceSession {
     }
     const issuerState = this.offer.grants?.authorization_code?.issuer_state;
     if (issuerState) params.issuer_state = issuerState;
-    const par = this.asMd.pushed_authorization_request_endpoint as string | undefined;
+    const par = this.endpoint(this.asMd, 'pushed_authorization_request_endpoint');
     if (par && this.reg?.usePar !== false) {
       const r = await this.asPost(par, params, this.attestationWanted());
       if (!r.ok) {
-        const err = await this.error('PAR', r);
-        // Some issuers (e.g. Credo-based playgrounds) only authorize sessions they started with an offer.
-        if (err.code === 'access_denied' && !issuerState) {
-          throw new IssuanceError(`${err.message}. The issuer refused wallet-initiated issuance; start from a credential offer issued by it instead.`, err.code, err.status);
-        }
-        throw err;
+        throw await this.error('PAR', r);
       }
       const { request_uri: requestUri } = (await r.json()) as { request_uri: string };
       return { authorizationUrl: `${authEndpoint}?${new URLSearchParams({ client_id: clientId, request_uri: requestUri })}`, state: this.state, redirectUri: this.redirectUri };
@@ -366,7 +408,7 @@ export class IssuanceSession {
   // ---- token & credential --------------------------------------------------------------------------
 
   private async token(form: Record<string, string>, attest: boolean): Promise<TokenResponse> {
-    const endpoint = this.reg?.tokenEndpoint ?? (this.asMd.token_endpoint as string | undefined);
+    const endpoint = this.endpoint(this.asMd, 'token_endpoint');
     if (!endpoint) throw new IssuanceError('Authorization server has no token_endpoint');
     const r = await this.asPost(endpoint, form, attest);
     if (!r.ok) throw await this.error('Token request', r);
@@ -376,14 +418,23 @@ export class IssuanceSession {
     return t;
   }
 
-  private async nonce(token: TokenResponse): Promise<string | undefined> {
-    const ne = this.im.nonce_endpoint as string | undefined;
-    if (!ne) return token.c_nonce;
+  /** A c_nonce from the nonce endpoint (OID4VCI §7); an issuer without one asks for no nonce in proofs. */
+  private async nonce(): Promise<string | undefined> {
+    const ne = this.endpoint(this.im, 'nonce_endpoint');
+    if (!ne) return undefined;
     const r = await this.client.fetchFn(ne, { method: 'POST', headers: { Accept: 'application/json' } });
     if (!r.ok) throw await this.error('Nonce request', r);
     const dpopNonce = r.headers.get('DPoP-Nonce');
-    if (dpopNonce && this.dpop) this.dpop.setNonce(String(this.im.credential_endpoint), dpopNonce);
-    return ((await r.json()) as { c_nonce: string }).c_nonce;
+    if (dpopNonce && this.dpop) this.dpop.setNonce(this.credentialEndpoint(), dpopNonce);
+    const nonce = ((await r.json()) as { c_nonce?: unknown }).c_nonce;
+    if (typeof nonce !== 'string' || !nonce) throw new IssuanceError('The nonce endpoint returned no c_nonce', 'invalid_nonce');
+    return nonce;
+  }
+
+  private credentialEndpoint(): string {
+    const e = this.endpoint(this.im, 'credential_endpoint');
+    if (!e) throw new IssuanceError('The issuer metadata has no credential_endpoint');
+    return e;
   }
 
   private async issueAll(token: TokenResponse, anonymous: boolean): Promise<IssuedCredential[]> {
@@ -409,47 +460,46 @@ export class IssuanceSession {
   }
 
   private async issueOne(configId: string, config: Record<string, unknown>, token: TokenResponse, anonymous: boolean): Promise<IssuedCredential> {
-    const binding = (config.cryptographic_binding_methods_supported as string[] | undefined) ?? ['jwk'];
+    if (!(SUPPORTED as readonly unknown[]).includes(config.format)) throw new IssuanceError(`This wallet does not hold credentials of format ${String(config.format)}`, 'unsupported_credential_format');
+    // OID4VCI §12.2.4: a configuration that names no binding methods issues credentials not bound to a key, and takes no proofs.
+    const binding = bindingMethods(config);
     const holders: Holder[] = [];
-    for (let i = this.batchSize(); i > 0; i--) {
+    for (let i = binding.length ? this.batchSize() : 1; i > 0; i--) {
       const key = await this.client.opts.keyStore.create();
       holders.push({ key, did: bindingDid(key.publicJwk, binding) });
     }
     const identifiers = token.authorization_details?.find((d) => d.credential_configuration_id === configId)?.credential_identifiers;
-    let nonce = await this.nonce(token);
+    let nonce = binding.length ? await this.nonce() : undefined;
     let response: Response | undefined;
     let sealed: SealedRequest | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const proofs = await this.proofs(holders, config, nonce, anonymous);
-      const body: Record<string, unknown> = identifiers?.length
-        ? { credential_identifier: identifiers[0], proofs }
-        : { credential_configuration_id: configId, proofs };
+      const proofs = binding.length ? { proofs: await this.proofs(holders, config, nonce, anonymous) } : {};
+      // §8.2: credential_identifier when the token response carried authorization_details, else credential_configuration_id.
+      const body: Record<string, unknown> = identifiers?.length ? { credential_identifier: identifiers[0], ...proofs } : { credential_configuration_id: configId, ...proofs };
       sealed = this.seal(body);
-      response = await this.credentialPost(String(this.im.credential_endpoint), sealed, token);
-      if (response.status === 400 && attempt === 0) {
+      response = await this.credentialPost(this.credentialEndpoint(), sealed, token);
+      if (response.status === 400 && attempt === 0 && binding.length) {
         const err = (await response.clone().json().catch(() => ({}))) as { error?: string };
-        if (err.error === 'invalid_nonce') { nonce = await this.nonce(token); continue; }
+        if (err.error === 'invalid_nonce') { nonce = await this.nonce(); continue; }
       }
       break;
     }
     if (!response!.ok) throw await this.error(`Credential request (${configId})`, response!);
-    let payload = (await this.open(response!, sealed!)) as { credentials?: Array<{ credential: unknown }>; credential?: unknown; transaction_id?: string;
-      interval?: number; notification_id?: string };
-    if (response!.status === 202 || (payload.transaction_id && !payload.credentials)) {
-      payload = await this.waitDeferred(payload.transaction_id!, payload.interval ?? 5, token) ?? payload;
-    }
-    return this.complete(configId, config, payload, holders, token);
+    let payload = credentialResponse(await this.open(response!, sealed!));
+    if (payload.transaction_id) payload = await this.waitDeferred(payload.transaction_id, payload.interval ?? 5, token) ?? payload;
+    return this.complete(configId, config, payload, holders, token, binding.length > 0);
   }
 
   /** Asks again for a credential that was still pending when issuance returned (see {@link Oid4vciClient.retrieveDeferred}). */
   async retrieveDeferred(c: IssuedCredential): Promise<IssuedCredential> {
     const p = c.pending;
     if (!p) throw new IssuanceError('The credential is not pending');
+    this.requireConsent();
     if (!p.accessToken) throw new IssuanceError('No access token was kept for this deferred credential; ask the issuer for a new offer', 'invalid_transaction_id');
-    const endpoint = this.im.deferred_credential_endpoint as string | undefined;
+    const endpoint = this.endpoint(this.im, 'deferred_credential_endpoint');
     if (!endpoint) throw new IssuanceError('The issuer has no deferred_credential_endpoint');
     const keyStore = this.client.opts.keyStore;
-    const binding = (this.configurations[0]!.config.cryptographic_binding_methods_supported as string[] | undefined) ?? ['jwk'];
+    const binding = bindingMethods(this.configurations[0]!.config);
     const holders: Holder[] = [];
     for (const id of p.holderKeyIds ?? [c.holderKeyId]) {
       const key = await keyStore.get(id);
@@ -479,26 +529,25 @@ export class IssuanceSession {
     const stillPending = (interval?: number): IssuedCredential => ({ ...c, pending: { ...p, accessToken: token.access_token, tokenType: token.token_type,
       refreshToken: token.refresh_token, interval: interval ?? p.interval } });
     if (r.status === 202) return stillPending(((await this.open(r, sealed)) as { interval?: number }).interval);
-    const pendingInterval = await issuancePending(r);
-    if (pendingInterval !== undefined) return stillPending(pendingInterval || undefined);
     if (!r.ok) {
       const err = await this.error('Deferred credential request', r);
       if (refreshed) err.updatedPending = stillPending(); // a rotated refresh token must not be lost
       throw err;
     }
-    const done = await this.complete(c.configurationId, this.configurations[0]!.config, await this.open(r, sealed), holders, token, true);
+    const done = await this.complete(c.configurationId, this.configurations[0]!.config, credentialResponse(await this.open(r, sealed)), holders, token,
+      binding.length > 0, true);
     done.id = c.id;
     return done;
   }
 
-  /** Pairs the received credentials with their keys, verifies them and refuses invalid ones (or records a pending issuance). */
-  private async complete(configId: string, config: Record<string, unknown>, payload: { credentials?: Array<{ credential: unknown }>; credential?: unknown;
-    transaction_id?: string; interval?: number; notification_id?: string }, holders: Holder[], token: TokenResponse, retry = false): Promise<IssuedCredential> {
+  /** Pairs the received credentials with their keys, verifies them and refuses what must not be kept (or records a pending issuance). */
+  private async complete(configId: string, config: Record<string, unknown>, payload: CredentialResponse, holders: Holder[], token: TokenResponse,
+                         bound: boolean, retry = false): Promise<IssuedCredential> {
     const opts = this.client.opts;
     const format = String(config.format);
     const meta = (config.credential_metadata ?? {}) as Record<string, unknown>;
-    const received = payload.credentials?.map((c) => c.credential) ?? (payload.credential !== undefined ? [payload.credential] : []);
-    const paired = received.length ? bindInstances(format, received, holders) : { instances: [], dropped: 0 };
+    const received = payload.credentials?.map((c) => c.credential) ?? [];
+    const paired = received.length ? bindInstances(format, received, holders, bound) : { instances: [], dropped: 0 };
     // A refused fresh issuance keeps no keys; a refused retry keeps them for the pending entry, which removing deletes.
     const dropKeys = async (keep: Set<string>) => { for (const h of holders) if (!keep.has(h.key.id)) await opts.keyStore.delete?.(h.key.id); };
     if (paired.error) {
@@ -510,38 +559,35 @@ export class IssuanceSession {
       holderJwk: holders[0]!.key.publicJwk, ...(holders[0]!.did ? { holderDid: holders[0]!.did } : {}) }];
     const issued: IssuedCredential = {
       id: randomId(), format, configurationId: configId, ...primary!, credentialIssuer: this.metadata.credentialIssuer, issuedAt: new Date().toISOString(),
-      display: ((meta.display ?? config.display) as Record<string, unknown>[] | undefined)?.[0],
-      claimMetadata: (meta.claims ?? config.claims) as unknown[] | undefined,
-      ...(more.length ? { instances: more } : {}),
+      display: (meta.display as Record<string, unknown>[] | undefined)?.[0],
+      claimMetadata: meta.claims as unknown[] | undefined,
+      ...(more.length ? { instances: more } : {}), ...(bound ? {} : { unbound: true as const }),
     };
     if (!issued.credential && payload.transaction_id) {
       issued.pending = { transactionId: payload.transaction_id, interval: payload.interval ?? 5, accessToken: token.access_token, tokenType: token.token_type,
         ...(token.refresh_token ? { refreshToken: token.refresh_token, ...(this.tokenAuth ? { tokenAuth: this.tokenAuth } : {}) } : {}),
-        ...(this.dpop && token.token_type?.toLowerCase() === 'dpop' ? { dpopKeyId: this.dpop.key.id } : {}), holderKeyIds: holders.map((h) => h.key.id) };
+        ...(this.dpop && token.token_type?.toLowerCase() === 'dpop' ? { dpopKeyId: this.dpop.key.id } : {}), holderKeyIds: holders.map((h) => h.key.id),
+        ...(this.confirmed ? { confirmedUnknown: true as const } : {}) };
       return issued;
     }
     // One notification_id covers every credential of the response (OID4VCI §8.3, §11).
     const notify = this.notifier(token, payload.notification_id);
-    if (opts.verify !== false) {
-      // Every instance is verified with its own key; one bad instance refuses the batch.
-      for (const instance of [issued, ...more]) {
-        instance.report = await verifyCredential(format, instance.credential, { trust: opts.trust, fetch: this.client.fetchFn,
-          holderJwk: instance.holderJwk, holderDid: instance.holderDid, credentialIssuer: issued.credentialIssuer });
-      }
-      if (!payload.credentials && payload.credential) issued.report!.checks.unshift({ id: 'oid4vci.response', label: 'Credential response',
-        status: 'warn', detail: 'Pre-1.0 response shape (credential instead of credentials[])' });
-      if (paired.dropped) issued.report!.checks.unshift({ id: 'oid4vci.batch', label: 'Batch', status: 'warn',
-        detail: `${paired.dropped} further credential(s) for keys already used were not kept` });
-      const differs = more.find((x) => !sameDataset(issued.report!.claims, x.report!.claims));
-      const refused = opts.rejectInvalid === false ? undefined
-        : differs ? { report: differs.report!, reason: 'The batch instances carry different claims; a batch must share one credential dataset (OID4VCI §3.3.2)' }
-          : [issued, ...more].map((x) => ({ report: x.report!, reason: rejection(format, x.report!) })).find((x) => x.reason);
-      if (refused) {
-        const reason = more.length ? `${refused.reason} (one of ${more.length + 1} batch instances)` : refused.reason!;
-        await notify?.('credential_failure', reason.slice(0, 200));
-        if (!retry) await dropKeys(new Set());
-        throw new IssuanceError(reason, 'invalid_credential', undefined, refused.report);
-      }
+    // Every instance is verified with its own key and against what was asked for; one bad instance refuses the batch.
+    const expected = expectedOf(config);
+    for (const instance of [issued, ...more]) {
+      instance.report = await verifyCredential(format, instance.credential, { trust: opts.trust, expected,
+        ...(bound ? { holderJwk: instance.holderJwk, holderDid: instance.holderDid } : {}) });
+    }
+    if (paired.dropped) issued.report!.checks.unshift({ id: 'oid4vci.batch', label: 'Batch', status: 'warn',
+      detail: `${paired.dropped} further credential(s) for keys already used were not kept` });
+    const differs = more.find((x) => !sameDataset(issued.report!.claims, x.report!.claims));
+    const refused = differs ? { report: differs.report!, reason: 'The batch instances carry different claims; a batch must share one credential dataset (OID4VCI §3.3.2)' }
+      : [issued, ...more].map((x) => ({ report: x.report!, reason: rejection(x.report!, this.confirmed) })).find((x) => x.reason);
+    if (refused) {
+      const reason = more.length ? `${refused.reason} (one of ${more.length + 1} batch instances)` : refused.reason!;
+      await notify?.('credential_failure', reason.slice(0, 200));
+      if (!retry) await dropKeys(new Set());
+      throw new IssuanceError(reason, 'invalid_credential', undefined, refused.report);
     }
     // Keys the issuer issued nothing for are not kept.
     await dropKeys(new Set([issued, ...more].map((x) => x.holderKeyId)));
@@ -552,7 +598,7 @@ export class IssuanceSession {
   }
 
   private notifier(token: TokenResponse, notificationId?: string) {
-    const endpoint = this.im.notification_endpoint as string | undefined;
+    const endpoint = this.endpoint(this.im, 'notification_endpoint');
     return endpoint && notificationId ? async (event: NotificationEvent, description?: string) => {
       await this.credentialPost(endpoint, json({ notification_id: notificationId, event, ...(description ? { event_description: description } : {}) }), token)
         .catch(() => undefined);
@@ -566,12 +612,11 @@ export class IssuanceSession {
    */
   private async proofs(holders: Holder[], config: Record<string, unknown>, nonce: string | undefined, anonymous: boolean): Promise<Record<string, string[]>> {
     const types = config.proof_types_supported as Record<string, Record<string, unknown>> | undefined;
-    const algsOk = (t?: Record<string, unknown>) => {
-      const algs = t?.proof_signing_alg_values_supported as string[] | undefined;
-      return !algs || algs.includes('ES256');
-    };
+    // §12.2.4: proof_types_supported is present whenever the configuration names binding methods.
+    if (!types || typeof types !== 'object') throw new IssuanceError('The configuration binds credentials to a key but names no proof_types_supported', 'invalid_issuer_metadata');
+    const algsOk = (t?: Record<string, unknown>) => Array.isArray(t?.proof_signing_alg_values_supported) && (t!.proof_signing_alg_values_supported as unknown[]).includes('ES256');
     const attested = () => this.client.opts.attester!.keyAttestation(holders.map((h) => h.key.publicJwk), nonce);
-    if (!types || (types.jwt && algsOk(types.jwt))) return { jwt: await this.jwtProofs(holders, config, nonce, anonymous) };
+    if (types.jwt && algsOk(types.jwt)) return { jwt: await this.jwtProofs(holders, config, nonce, anonymous) };
     if (types.attestation && this.client.opts.attester && algsOk(types.attestation)) {
       this.checkKeyProtection(types.attestation);
       return { attestation: [await attested()] };
@@ -680,7 +725,7 @@ export class IssuanceSession {
   }
 
   private async waitDeferred(transactionId: string, interval: number, token: TokenResponse) {
-    const endpoint = this.im.deferred_credential_endpoint as string | undefined;
+    const endpoint = this.endpoint(this.im, 'deferred_credential_endpoint');
     if (!endpoint) return undefined;
     const deadline = Date.now() + (this.client.opts.deferredWaitSeconds ?? 30) * 1000;
     let wait = Math.max(1, interval);
@@ -688,10 +733,9 @@ export class IssuanceSession {
       await new Promise((r) => setTimeout(r, wait * 1000));
       const sealed = this.seal({ transaction_id: transactionId });
       const r = await this.credentialPost(endpoint, sealed, token);
-      if (r.status === 200) return (await this.open(r, sealed)) as { credentials?: Array<{ credential: unknown }>; notification_id?: string };
-      if (r.status === 202) { wait = ((await this.open(r, sealed)) as { interval?: number }).interval ?? wait; continue; }
-      const pendingInterval = await issuancePending(r);
-      if (pendingInterval !== undefined) { wait = pendingInterval || wait; continue; }
+      if (r.status === 200) return credentialResponse(await this.open(r, sealed));
+      // §9.2: not ready yet, with the interval to wait before asking again.
+      if (r.status === 202) { wait = Math.max(1, ((await this.open(r, sealed)) as { interval?: number }).interval ?? wait); continue; }
       throw await this.error('Deferred credential request', r);
     }
     return undefined;
@@ -710,11 +754,30 @@ export class IssuanceSession {
   }
 }
 
-/** A pre-1.0 "issuance_pending" answer (400): its interval (0 when none is given), or undefined for anything else. */
-async function issuancePending(r: Response): Promise<number | undefined> {
-  if (r.status !== 400) return undefined;
-  const err = (await r.clone().json().catch(() => ({}))) as { error?: string; interval?: number };
-  return err.error === 'issuance_pending' ? (typeof err.interval === 'number' ? err.interval : 0) : undefined;
+const SUPPORTED = ['mso_mdoc', 'dc+sd-jwt', 'ldp_vc'] as const;
+
+interface CredentialResponse {
+  credentials?: Array<{ credential: unknown }>;
+  transaction_id?: string;
+  interval?: number;
+  notification_id?: string;
+}
+
+/** An OpenID4VCI 1.0 Credential Response (§8.3): credentials, or a transaction_id for deferred issuance; never both, never neither. */
+function credentialResponse(body: Record<string, unknown>): CredentialResponse {
+  const { credentials, transaction_id: transactionId } = body;
+  const issued = Array.isArray(credentials) && credentials.length > 0 && credentials.every((c) => c && typeof c === 'object' && 'credential' in c);
+  if (issued === (typeof transactionId === 'string')) {
+    throw new IssuanceError('The credential response is not an OpenID4VCI 1.0 response: it must carry either credentials (a list of {credential}) or a transaction_id',
+      'invalid_credential_response');
+  }
+  return body as CredentialResponse;
+}
+
+/** The binding methods of a configuration; none means its credentials are not bound to a key (§12.2.4). */
+function bindingMethods(config: Record<string, unknown>): string[] {
+  const m = config.cryptographic_binding_methods_supported;
+  return Array.isArray(m) ? m.filter((x): x is string => typeof x === 'string') : [];
 }
 
 const json = (body: Record<string, unknown>): SealedRequest => ({ body: JSON.stringify(body), contentType: 'application/json' });
@@ -725,7 +788,7 @@ const json = (body: Record<string, unknown>): SealedRequest => ({ body: JSON.str
  * bound and bearer credentials; a further credential for a key already paired is dropped (counted in {@code dropped}).
  * Bearer credentials take the unused keys in order.
  */
-function bindInstances(format: string, credentials: unknown[], holders: Holder[]): { instances: CredentialInstance[]; dropped: number; error?: string } {
+function bindInstances(format: string, credentials: unknown[], holders: Holder[], expectBound: boolean): { instances: CredentialInstance[]; dropped: number; error?: string } {
   const free = [...holders];
   const instances: CredentialInstance[] = [];
   let dropped = 0;
@@ -739,6 +802,7 @@ function bindInstances(format: string, credentials: unknown[], holders: Holder[]
   });
   const bound = bindings.filter((b) => b.jwk || b.did).length;
   if (bound > 0 && bound < credentials.length) return { instances, dropped, error: 'The batch mixes credentials bound to a key with bearer credentials' };
+  if (!expectBound && credentials.length > 1) return { instances, dropped, error: 'The issuer sent several credentials although one was requested' };
   const sameKey = (h: Holder, b: { jwk?: Jwk; did?: string }) => (b.jwk ? h.key.publicJwk.x === b.jwk.x && h.key.publicJwk.y === b.jwk.y : h.did === b.did);
   for (const [i, credential] of credentials.entries()) {
     const b = bindings[i]!;
@@ -771,16 +835,21 @@ function sameDataset(a: Record<string, unknown>, b: Record<string, unknown>): bo
   return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
 }
 
-/** Why a freshly issued credential must be refused, if it must. */
-function rejection(format: string, r: VerificationReport): string | undefined {
+/**
+ * Why a freshly issued credential must be refused, if it must: it does not verify; its issuer is one the trust layer
+ * refuses; its signing certificate chains to no trusted anchor (ISO 18013-5 §9.3.3 for the Document Signer, HAIP
+ * §6.1.1 for SD-JWT VC: the signature then proves nothing); or its signer is unknown and the user did not agree to that.
+ */
+function rejection(r: VerificationReport, confirmedUnknown: boolean): string | undefined {
   if (!r.valid) {
     const failed = r.checks.filter((x) => x.status === 'fail' && x.id !== 'issuer.trust').map((x) => `${x.label}: ${x.detail ?? 'failed'}`);
     return `The credential failed verification (${failed.join('; ')})`;
   }
-  if ((format === 'dc+sd-jwt' || format === 'vc+sd-jwt') && r.issuer.x5c?.length && r.trust?.decision !== 'TRUSTED') {
-    return `The SD-JWT VC issuer certificate is not trusted (${r.trust?.summary ?? 'no trust decision'}); SD-JWT VC requires rejecting it`;
-  }
-  return undefined;
+  const why = r.trust?.summary ?? 'no trust decision';
+  if (r.trust?.decision === 'NOT_TRUSTED') return `The credential's issuer is not trusted (${why})`;
+  if (r.trust?.decision === 'TRUSTED') return undefined;
+  if (r.issuer.x5c?.length) return `The credential's signing certificate does not chain to a trusted anchor (${why})`;
+  return confirmedUnknown ? undefined : `The credential is signed by ${r.issuer.issuer ?? 'an issuer'} unknown to the trust service (${why})`;
 }
 
 /** DID for binding methods that need one (did:jwk preferred, then did:key); undefined means use a jwk header. */

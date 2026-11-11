@@ -4,16 +4,20 @@ import type { KeyStore } from './crypto/keys.js';
 import type { WalletAttester } from './oauth/attestation.js';
 import { IssuanceError, Oid4vciClient, type CredentialInstance, type IssuanceSession, type IssuedCredential, type IssuerClientRegistration } from './oid4vci/client.js';
 import type { CredentialStore, StoredCredential } from './store/credentials.js';
+import { guardedFetch } from './net.js';
 import { verifyCredential, type VerificationReport } from './verify/index.js';
 import { PresentationRequestError, resolveAuthorizationRequest, resolveDcApiRequest, type AuthorizationRequest, type DcApiRequest, type VerifierView } from './oid4vp/request.js';
 import { evaluateDcql, type DcqlResult } from './oid4vp/dcql.js';
 import { buildVpToken, submitResponse, type PresentationSelection, type SubmitResult } from './oid4vp/present.js';
 
 export interface WalletOptions {
+  /** The trust layer: every trust decision and every lookup about a counterparty goes through it. */
   trust: TrustClient;
   keyStore: KeyStore;
   credentials: CredentialStore;
   fetch?: typeof fetch;
+  /** Hosts that may be reached over plain http: local development only (an issuer or verifier on localhost). */
+  insecureHosts?: string[];
   attester?: WalletAttester;
   redirectUri: string;
   clientId?: string;
@@ -23,6 +27,10 @@ export interface WalletOptions {
   keyAttestation?: 'auto' | 'always' | 'never';
   /** Instances to request of each credential from issuers that support batch issuance (see {@link Oid4vciOptions.batchSize}). */
   batchSize?: number;
+  /** Seconds to wait for a deferred credential before returning it as pending (default 30). */
+  deferredWaitSeconds?: number;
+  /** Credential request / response encryption: only when the issuer requires it (default) or whenever it offers it. */
+  encryption?: 'required' | 'preferred';
 }
 
 /** A stored credential's instances; the first is the credential itself. */
@@ -48,8 +56,8 @@ export class Wallet {
   private readonly f: typeof fetch;
 
   constructor(readonly opts: WalletOptions) {
-    this.f = opts.fetch ?? fetch;
-    this.oid4vci = new Oid4vciClient({ ...opts, fetch: this.f });
+    this.f = guardedFetch(opts.fetch ?? fetch, opts.insecureHosts);
+    this.oid4vci = new Oid4vciClient({ ...opts, fetch: opts.fetch ?? fetch });
   }
 
   get trust(): TrustClient {
@@ -112,8 +120,8 @@ export class Wallet {
   async reverify(id: string): Promise<VerificationReport> {
     const c = await this.opts.credentials.get(id);
     if (!c) throw new Error(`No credential ${id}`);
-    const verify = (x: CredentialInstance) => verifyCredential(c.format, x.credential, { trust: this.opts.trust, fetch: this.f, holderJwk: x.holderJwk,
-      holderDid: x.holderDid, credentialIssuer: c.credentialIssuer });
+    const verify = (x: CredentialInstance) => verifyCredential(c.format, x.credential, { trust: this.opts.trust,
+      ...(c.unbound ? {} : { holderJwk: x.holderJwk, holderDid: x.holderDid }) });
     const report = await verify(c);
     const reports: VerificationReport[] = [];
     for (const x of c.instances ?? []) reports.push({ ...(await verify(x)), claims: {} });
@@ -134,7 +142,7 @@ export class Wallet {
   }
 
   async startPresentation(requestUri: string): Promise<PresentationSession> {
-    const { request, verifier } = await resolveAuthorizationRequest(requestUri, this.opts.trust, this.f);
+    const { request, verifier } = await resolveAuthorizationRequest(requestUri, this.opts.trust, this.f, this.opts.insecureHosts);
     const dcql = await evaluateDcql(request.dcqlQuery, await this.list(), this.opts.trust);
     return new PresentationSession(this, request, verifier, dcql);
   }
@@ -154,20 +162,24 @@ export class Wallet {
 export class PresentationSession {
   constructor(private readonly wallet: Wallet, readonly request: AuthorizationRequest, readonly verifier: VerifierView, readonly dcql: DcqlResult) {}
 
-  /** Presents the chosen credentials (default: first candidate for every selected query). */
-  async respond(choice: Record<string, string> = {}): Promise<SubmitResult> {
+  /**
+   * Presents the chosen credentials: for every required query the chosen candidate (default: the first). Credentials
+   * the verifier marked optional ({@link DcqlResult.optional}) are sent only when {@code include} names them: what
+   * is not required is the user's to add, not the wallet's to volunteer.
+   */
+  async respond(choice: Record<string, string> = {}, include: string[] = []): Promise<SubmitResult> {
     if (this.verifier.refusal) throw new PresentationRequestError(this.verifier.refusal, 'access_denied');
     if (!this.dcql.satisfied) throw new Error(this.dcql.reason ?? 'Request cannot be satisfied');
     const selection: PresentationSelection = {};
     const used: Array<[string, number]> = [];
-    for (const id of this.dcql.selected) {
+    for (const id of [...this.dcql.selected, ...this.dcql.optional.filter((o) => include.includes(o) && !this.dcql.selected.includes(o))]) {
       const m = this.dcql.matches.find((x) => x.query.id === id)!;
       const stored = m.candidates.find((c) => c.id === choice[id]) ?? m.candidates[0]!;
       const { index, instance } = pickInstance(stored);
       selection[id] = { credential: { ...stored, ...instance }, claims: m.claimsFor[stored.id] ?? m.claims };
       used.push([stored.id, index]);
     }
-    const vpToken = await buildVpToken(this.request, selection, this.wallet.opts.keyStore, this.wallet.fetchFn);
+    const vpToken = await buildVpToken(this.request, selection, this.wallet.opts.keyStore, this.wallet.opts.trust);
     // Counted before sending: once a presentation may have reached the verifier, its instance is no longer fresh.
     for (const [id, index] of used) await this.wallet.markPresented(id, index);
     return submitResponse(this.request, { vp_token: vpToken }, this.wallet.fetchFn);

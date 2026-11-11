@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytes } from '@vctrust/trust-client';
+import { bytes } from '@vctrust/trust-client/primitives';
 
 export interface Pkce {
   verifier: string;

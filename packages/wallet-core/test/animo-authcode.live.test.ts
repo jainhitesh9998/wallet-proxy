@@ -3,8 +3,7 @@ import { expect, it } from 'vitest';
 import { liveTrust } from './live-trust.js';
 import { Oid4vciClient, SoftwareKeyStore } from '../src/index.js';
 import { demoAttester } from './wallet-provider.js';
-// @ts-expect-error untyped
-import { chromium } from '../../../tools/mosip-issuance/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 
 const REDIRECT = 'https://wallet.vctrust.dev/cb';
 const log = (s: string) => process.stderr.write(`${s}\n`);
