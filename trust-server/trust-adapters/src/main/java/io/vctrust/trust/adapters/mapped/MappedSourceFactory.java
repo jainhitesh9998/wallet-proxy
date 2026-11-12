@@ -1001,6 +1001,11 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (!ENTRY_ID.matcher(id).matches()) {
                 throw unreadable(block, label, ENTRY_ID_RULE);
             }
+            if (!entry.containsKey("roles")) {
+                // The evaluator considers only the entries that have the role asked about: listed without one, the
+                // record would restrict nobody, and its party's key would be left to whatever anchor it chains to.
+                throw unreadable(block, label, "it yields no role");
+            }
             if (entry.containsKey("framework")) {
                 try {
                     TrustedEntityParser.entity(Map.of("id", id, "framework", entry.get("framework")), def.frameworkId(), provenance, NO_FILES);

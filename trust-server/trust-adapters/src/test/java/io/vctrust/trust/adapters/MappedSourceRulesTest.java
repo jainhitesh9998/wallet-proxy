@@ -373,7 +373,8 @@ class MappedSourceRulesTest {
         Map<String, Object> m = mapping();
         m.put("pages", Map.of("next", "$.links.next"));
         m.put("lookup", Map.of("url", "https://lookup.elsewhere.example/v1/{identifier}", "identifierTypes", List.of("DID"),
-                "startsWith", List.of("did:example:"), "entity", Map.of("id", "$.id", "identifiers", List.of(Map.of("type", "DID", "value", "$.did")))));
+                "startsWith", List.of("did:example:"), "entity", Map.of("id", "$.id", "roles", List.of("CREDENTIAL_ISSUER"),
+                        "identifiers", List.of(Map.of("type", "DID", "value", "$.did")))));
         Map<String, Object> page1 = doc("a");
         page1.put("links", Map.of("next", "/v1/issuers?page=2"));
         serveJson(ctx, page1);

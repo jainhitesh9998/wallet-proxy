@@ -125,7 +125,7 @@ class MappingLanguageTest {
         }
         root.put("issuers", issuers);
         root.put("contexts", List.of("https://contexts.example/a", "https://contexts.example/b"));
-        Mapping m = Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.issuers[*]", "id", "$.id",
+        Mapping m = Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.issuers[*]", "id", "$.id", "roles", "VERIFIER",
                 "contexts", "^.contexts[*]", "attributes", Map.of("first", "^.contexts[0]")))));
         Mapping.Block block = m.entities.getFirst();
         for (Object record : block.records(root)) {
@@ -242,14 +242,14 @@ class MappingLanguageTest {
 
     @Test
     void aMappingIsCheckedWhenRead() {
-        Map<String, Object> ok = Map.of("entities", List.of(Map.of("each", "$.issuers[*]", "id", "$.id")));
+        Map<String, Object> ok = Map.of("entities", List.of(Map.of("each", "$.issuers[*]", "id", "$.id", "roles", "VERIFIER")));
         assertThat(Mapping.parse(ok).entities).hasSize(1);
 
         assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.x[*]", "id", "$.id", "nmae", "$.n")))))
                 .hasMessageStartingWith("mapping.entities[0]: unknown member [nmae]");
         assertThatThrownBy(() -> Mapping.parse(Map.of("entites", List.of())))
                 .hasMessageStartingWith("mapping: unknown member [entites]");
-        assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.x[*]", "id", "$.id",
+        assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.x[*]", "id", "$.id", "roles", "VERIFIER",
                 "identifiers", List.of(Map.of("type", "URL", "value", "$.u", "kind", "x")))))))
                 .hasMessageStartingWith("mapping.entities[0].identifiers[0]: unknown member [kind]");
         assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("id", "$.id")))))
@@ -259,10 +259,10 @@ class MappingLanguageTest {
         // Constants that name enumeration values are checked now, also inside a translation.
         assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.x[*]", "id", "$.id", "roles", List.of("ISSUER"))))))
                 .hasMessageStartingWith("mapping.entities[0].roles: Unknown role 'ISSUER'");
-        assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.x[*]", "id", "$.id",
+        assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.x[*]", "id", "$.id", "roles", "VERIFIER",
                 "status", Map.of("path", "$.s", "values", Map.of("on", "ENABLED"), "default", "REVOKED"))))))
                 .hasMessageStartingWith("mapping.entities[0].status: Unknown status 'ENABLED'");
-        assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.x[*]", "id", "$.id",
+        assertThatThrownBy(() -> Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.x[*]", "id", "$.id", "roles", "VERIFIER",
                 "identifiers", List.of(Map.of("type", "EMAIL", "value", "$.e")))))))
                 .hasMessageContaining("Unknown identifier type 'EMAIL'");
         assertThatThrownBy(() -> Mapping.parse(Map.of("anchors", List.of(Map.of("each", "$.x[*]", "domain", "d", "certificate", "$.c",
@@ -273,7 +273,7 @@ class MappingLanguageTest {
 
     @Test
     void aLookupIsAskedOnlyAboutWhatItNames() {
-        Map<String, Object> entity = Map.of("id", "$.id");
+        Map<String, Object> entity = Map.of("id", "$.id", "roles", "VERIFIER");
         assertThat(Mapping.parse(Map.of("lookup", Map.of("url", "https://r.example/{identifier}", "identifierTypes", List.of("DID"),
                 "startsWith", List.of("did:example:"), "entity", entity))).lookup.missStatus()).containsExactly(404);
         assertThatThrownBy(() -> Mapping.parse(Map.of("lookup", Map.of("url", "https://r.example/{identifier}", "identifierTypes", List.of("DID"),
@@ -297,7 +297,7 @@ class MappingLanguageTest {
         var def = new io.vctrust.trust.core.spi.SourceDefinition("partner", "mapped", "partner", null, true, Map.of(
                 "location", "https://registry.partner.example/v1/issuers?key=s3cret-query",
                 "headers", Map.of("Authorization", "Bearer s3cret-token"),
-                "mapping", Map.of("entities", List.of(Map.of("each", "$.issuers[*]", "id", "$.id")))));
+                "mapping", Map.of("entities", List.of(Map.of("each", "$.issuers[*]", "id", "$.id", "roles", "VERIFIER")))));
         String text = MappedSourceFactory.read(def, location -> new byte[0]).toString();
         assertThat(text).contains("headers=[Authorization]").contains("location=https://registry.partner.example/v1/issuers,")
                 .doesNotContain("s3cret");

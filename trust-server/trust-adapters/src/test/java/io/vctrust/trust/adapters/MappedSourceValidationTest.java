@@ -182,12 +182,22 @@ class MappedSourceValidationTest {
         serveJson(ctx, boundList(1, members("kind", "issuer-v2", "state", "revoked")));
         assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", m)))).startsWith("mapping.entities[0]: record 1 (id "
                 + "'partner:dmv') cannot be read: roles: 'issuer-v2' is not one of the values its translation knows");
-        // With a kind it knows, or a default, it loads; a record without a kind has no role from it (absent is absent:
-        // required: [roles] is how an operator says that every record has one).
+        // A record without a kind has no role from it, and a record that yields no role fails the load (third round, item
+        // 1: listed without a role, the entry would restrict nobody; it was listed without one before).
+        serveJson(ctx, boundList(1, members("kind", "issuer")));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", m)))).startsWith("mapping.entities[0]: record 2 (id "
+                + "'partner:college') cannot be read: it yields no role");
+        // With a kind it knows, or a default, it loads.
         try {
-            serveJson(ctx, boundList(1, members("kind", "issuer")));
+            Map<String, Object> both = boundList(1, members("kind", "issuer"));
+            List<Object> issuers = new java.util.ArrayList<>((List<?>) both.get("issuers"));
+            Map<String, Object> college = new LinkedHashMap<>((Map<String, Object>) issuers.get(1));
+            college.put("kind", "issuer");
+            issuers.set(1, college);
+            both.put("issuers", issuers);
+            serveJson(ctx, both);
             assertThat(source(ctx, props("mapping", m)).load().entities()).extracting(e -> e.id() + " " + e.roles())
-                    .containsExactly("partner:dmv [CREDENTIAL_ISSUER]", "partner:college []");
+                    .containsExactly("partner:dmv [CREDENTIAL_ISSUER]", "partner:college [CREDENTIAL_ISSUER]");
             block.put("roles", Map.of("path", "$.kind", "values", Map.of("issuer", "CREDENTIAL_ISSUER"), "default", "CREDENTIAL_ISSUER"));
             serveJson(ctx, boundList(1, members("kind", "issuer-v2")));
             assertThat(source(ctx, props("mapping", m)).load().entities()).hasSize(2);

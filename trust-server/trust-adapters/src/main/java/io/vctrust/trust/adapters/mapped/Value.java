@@ -83,23 +83,43 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
      * @throws IllegalArgumentException for anything that is not one of the forms
      */
     static Value parse(Object raw, String where) {
-        return parse(raw, where, false);
+        return parse(raw, where, Kind.SINGLE);
     }
 
-    /** Reads a value form of a member that takes a list: as {@link #parse}, and {@code allowEmpty} may be said. */
+    /**
+     * Reads a value form of a member that takes a list but restricts nothing (roles, certificates, CRL locations):
+     * as {@link #parse}; {@code allowEmpty} would change nothing there, and is refused so that nobody believes it does.
+     */
     static Value parseList(Object raw, String where) {
-        return parse(raw, where, true);
+        return parse(raw, where, Kind.LIST);
     }
 
-    private static Value parse(Object raw, String where, boolean list) {
+    /** Reads a value form of a list that restricts (an anchor's doctypes): as {@link #parse}, and {@code allowEmpty} may be said. */
+    static Value parseRestricting(Object raw, String where) {
+        return parse(raw, where, Kind.RESTRICTING);
+    }
+
+    /** What a member takes: a single value, a list, or a list that restricts what its record may do. */
+    enum Kind {
+        SINGLE, LIST, RESTRICTING
+    }
+
+    private static Value parse(Object raw, String where, Kind kind) {
         try {
-            return read(raw, list);
+            return read(raw, kind);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(where + ": " + e.getMessage(), e);
         }
     }
 
-    private static Value read(Object raw, boolean list) {
+    /** What is said of {@code allowEmpty} where it changes nothing. */
+    static String changesNothing() {
+        return "allowEmpty applies to a list that restricts (authorizations, docTypes), where a list that is there and empty "
+                + "would otherwise restrict to nothing; here it would change nothing";
+    }
+
+    private static Value read(Object raw, Kind kind) {
+        boolean list = kind != Kind.SINGLE;
         if (raw instanceof String s) {
             return s.startsWith("$") || s.startsWith("^") ? new At(JsonPath.parse(s), false) : new Constant(s);
         }
@@ -132,6 +152,9 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             boolean translated = form.contains("path") && form.contains("values") && form.size() <= 3
                     && (form.size() == 2 || form.contains("default"));
             if (translated || says && form.equals(new TreeSet<>(List.of("path")))) {
+                if (says && kind != Kind.RESTRICTING) {
+                    throw new IllegalArgumentException(changesNothing());
+                }
                 Object path = m.get("path");
                 if (!(path instanceof String p) || !(p.startsWith("$") || p.startsWith("^"))) {
                     throw new IllegalArgumentException("path must be a path ($... or ^...)");

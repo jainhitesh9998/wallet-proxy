@@ -259,13 +259,19 @@ final class Mapping {
                 throw new IllegalArgumentException(where + ": allowEmpty applies to the blocks of entities and anchors");
             }
             List<String> required = requiredMembers(m, where, ENTITY_MEMBERS);
+            if (!m.containsKey("roles")) {
+                // The evaluator considers only the entries that have the role asked about: an entry without one would
+                // leave its party's key to whatever anchor it chains to.
+                throw new IllegalArgumentException(where + ": roles is required: an entity that yields no role answers no question, "
+                        + "and keeps nobody out");
+            }
             Map<String, Object> f = new LinkedHashMap<>();
             f.put("id", required(m, "id", where));
-            f.put("roles", many(m.get("roles"), where + ".roles"));
+            f.put("roles", many(m.get("roles"), where + ".roles", false));
             f.put("name", optional(m, "name", where));
             f.put("display", items(m.get("display"), where + ".display", Set.of("locale", "name", "description", "logoUri"), Set.of("name")));
             f.put("identifiers", items(m.get("identifiers"), where + ".identifiers", Set.of("type", "value"), Set.of("type", "value")));
-            f.put("certificates", many(m.get("certificates"), where + ".certificates"));
+            f.put("certificates", many(m.get("certificates"), where + ".certificates", true));
             f.put("authorizations", items(m.get("authorizations"), where + ".authorizations", Set.of("format", "type"), Set.of()));
             f.put("status", optional(m, "status", where));
             f.put("validFrom", optional(m, "validFrom", where));
@@ -294,8 +300,8 @@ final class Mapping {
             f.put("certificate", required(m, "certificate", where));
             f.put("entity", optional(m, "entity", where));
             f.put("status", optional(m, "status", where));
-            f.put("docTypes", many(m.get("docTypes"), where + ".docTypes"));
-            f.put("crlUrls", many(m.get("crlUrls"), where + ".crlUrls"));
+            f.put("docTypes", many(m.get("docTypes"), where + ".docTypes", true));
+            f.put("crlUrls", many(m.get("crlUrls"), where + ".crlUrls", true));
             f.put("crl", optional(m, "crl", where));
             f.put("framework", optional(m, "framework", where));
             check((Value) f.get("status"), EntityStatus.class, "status", where + ".status");
@@ -742,18 +748,18 @@ final class Mapping {
     record Item(JsonPath each, Map<String, Value> members, boolean allowEmpty) {
     }
 
-    /** The forms of a member that takes a list: each may say {@code allowEmpty}. */
-    private static List<Value> many(Object raw, String where) {
+    /** The forms of a member that takes a list; only those of a list that restricts may say {@code allowEmpty}. */
+    private static List<Value> many(Object raw, String where, boolean restricting) {
         if (raw == null) {
             return List.of();
         }
         List<Value> out = new ArrayList<>();
         if (raw instanceof List<?> l) {
             for (int i = 0; i < l.size(); i++) {
-                out.add(Value.parseList(l.get(i), where + "[" + i + "]"));
+                out.add(restricting ? Value.parseRestricting(l.get(i), where + "[" + i + "]") : Value.parseList(l.get(i), where + "[" + i + "]"));
             }
         } else {
-            out.add(Value.parseList(raw, where));
+            out.add(restricting ? Value.parseRestricting(raw, where) : Value.parseList(raw, where));
         }
         return List.copyOf(out);
     }
@@ -820,7 +826,7 @@ final class Mapping {
             if (e instanceof Map<?, ?> m && (m.containsKey("url") || m.containsKey("each") || m.containsKey("sha256"))) {
                 out.add(item(e, where + "[" + i + "]", Set.of("url", "sha256"), Set.of("url")));
             } else {
-                out.add(Value.parseList(e, where + "[" + i + "]"));
+                out.add(Value.parseRestricting(e, where + "[" + i + "]"));
             }
         }
         return List.copyOf(out);
