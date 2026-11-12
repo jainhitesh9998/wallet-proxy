@@ -359,9 +359,10 @@ public class TrustSourceManager implements AutoCloseable {
                     + " with records that differ (" + String.join(", ", differ) + "), and which one counted would depend on the order of the sources";
             named.forEach(source -> refused.computeIfAbsent(source, k -> new ArrayList<>()).add(message));
         });
-        // What the registry could not take quotes ids and locations as the lists wrote them.
+        // What the registry could not take quotes ids and locations as the lists wrote them, and a list decides how many
+        // such entries it has: at most MAX_REPORTED per source, then how many more there are.
         Map<String, List<String>> reported = new LinkedHashMap<>();
-        refused.forEach((source, messages) -> reported.put(source, escaped(messages)));
+        refused.forEach((source, messages) -> reported.put(source, escaped(bounded(messages))));
         if (!reported.equals(conflicts)) {
             reported.forEach((source, messages) -> messages.forEach(m -> log.warn("Trust source '{}': {}", source, m)));
             conflicts = reported;
@@ -394,6 +395,19 @@ public class TrustSourceManager implements AutoCloseable {
                 + " CRL locations (crlUrls); an anchor counts with at most " + TrustAnchor.MAX_CRL_URLS + ", and the other "
                 + (urls.size() - TrustAnchor.MAX_CRL_URLS) + " are not used, from " + urls.get(TrustAnchor.MAX_CRL_URLS) + " on");
         return bounded;
+    }
+
+    /** The most warnings the registry build reports of one source; a list with more of them gets one line that counts the rest. */
+    static final int MAX_REPORTED = 50;
+
+    /** The first {@link #MAX_REPORTED} messages, and when there are more, a line that says how many. */
+    private static List<String> bounded(List<String> messages) {
+        if (messages.size() <= MAX_REPORTED) {
+            return messages;
+        }
+        List<String> out = new ArrayList<>(messages.subList(0, MAX_REPORTED));
+        out.add((messages.size() - MAX_REPORTED) + " more warnings of the registry about this source are not shown");
+        return out;
     }
 
     /** Warnings as a source's state and the log show them: text from a list, escaped and cut ({@link ForeignText}). */

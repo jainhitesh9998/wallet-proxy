@@ -239,7 +239,8 @@ framework already holds the name an entity falls back to (for either reason; onl
 two are merged as two entries of one id are, whichever is listed first, and the warning says so. An anchor written
 with such an id is not loaded. The admin API refuses both
 (`invalid_document`). An entry that is not loaded for any reason, or is listed under another name, is named in a
-warning of its source's state (`GET /admin/v1/sources`). A source of one framework therefore adds nothing to, and takes nothing from, what
+warning of its source's state (`GET /admin/v1/sources`); of these, a source's state shows at most 50, then one line
+that says how many more there are. A source of one framework therefore adds nothing to, and takes nothing from, what
 the clients of another framework are told. Put sources that should not vouch for each other's entries into different
 frameworks.
 

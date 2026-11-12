@@ -256,6 +256,28 @@ class TrustSourceManagerTest {
     }
 
     @Test
+    void whatTheRegistryReportsOfOneSourceIsBounded() {
+        // A list decides how many of its anchors name too many CRL locations: what the state and the log carry is bounded.
+        List<String> locations = java.util.stream.IntStream.range(0, 9).mapToObj(i -> "https://crl" + i + ".example/ca.crl").toList();
+        List<io.vctrust.trust.core.model.TrustAnchor> anchors = java.util.stream.IntStream.range(0, 60)
+                .mapToObj(i -> new io.vctrust.trust.core.model.TrustAnchor(String.format("ca-%02d", i), io.vctrust.trust.core.model.TrustDomain.MDOC_IACA,
+                        io.vctrust.trust.core.testing.TestPki.rootCa("CN=CA " + i + ",C=UT").certificate(), "fw", null, null, Map.of("crlUrls", locations), null))
+                .toList();
+        var source = new Fixed("list", "fw", new SourceLoadResult(List.of(), anchors, ListInfo.unsigned(), List.of()));
+        var registry = new TrustRegistry();
+        try (var manager = new TrustSourceManager(registry, List.of(), List.of(source), Clock.systemUTC())) {
+            manager.start();
+            assertThat(registry.snapshot().allAnchors()).hasSize(60);
+            assertThat(manager.states()).singleElement().satisfies(st -> {
+                assertThat(st.warnings()).hasSize(51);
+                assertThat(st.warnings().subList(0, 50)).allMatch(w -> w.startsWith("Anchor 'ca-") && w.contains("names 9 CRL locations"));
+                assertThat(st.warnings().get(49)).startsWith("Anchor 'ca-49'");
+                assertThat(st.warnings().getLast()).isEqualTo("10 more warnings of the registry about this source are not shown");
+            });
+        }
+    }
+
+    @Test
     void aListOlderThanTheOneHeldIsNotLoaded() {
         var current = new SourceLoadResult(List.of(issuer("kept", "fw", "https://kept.example").build()), List.of(),
                 new ListInfo("Operator", "12", Instant.parse("2026-10-01T00:00:00Z"), null, ListInfo.SignatureStatus.VERIFIED, Map.of()), List.of());
