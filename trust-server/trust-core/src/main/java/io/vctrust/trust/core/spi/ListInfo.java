@@ -1,6 +1,8 @@
 package io.vctrust.trust.core.spi;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -14,7 +16,9 @@ public record ListInfo(String issuer, String sequence, Instant issuedAt, Instant
 
     public ListInfo {
         signature = signature == null ? SignatureStatus.NOT_CHECKED : signature;
-        details = details == null ? Map.of() : Map.copyOf(details);
+        // In the order the source gave them: a source's state is read by people, and an order that changes from one
+        // start of the service to the next (as Map.copyOf's does) reads as a change in the list.
+        details = details == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(details));
     }
 
     public static ListInfo unsigned() {
