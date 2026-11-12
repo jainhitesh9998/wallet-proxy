@@ -84,6 +84,13 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     /** The configuration, as read and checked when the source is created. */
     record Config(String location, URI origin, String publicUri, Map<String, String> headers, boolean jws, PinnedKeys keys,
                   boolean allowUnverified, boolean allowExpired, int maxEntities, int maxAnchors, Mapping mapping) {
+
+        /** Header names only: their values are credentials, and a record's own text would carry them into any log line. */
+        @Override
+        public String toString() {
+            return "Config[location=" + location + ", headers=" + new TreeSet<>(headers.keySet()) + ", format=" + (jws ? "jws" : "json")
+                    + ", pinnedKeys=" + keys.configured() + ", allowUnverified=" + allowUnverified + ", allowExpired=" + allowExpired + "]";
+        }
     }
 
     static Config read(SourceDefinition def, ResourceLoader resources) throws IOException {
