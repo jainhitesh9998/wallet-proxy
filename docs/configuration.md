@@ -329,12 +329,12 @@ another way, an entry would bind nothing, and a `REVOKED` one would never apply:
 | Type | Form | Written another way |
 | --- | --- | --- |
 | `X509_SHA256` | The SHA-256 of the DER certificate (32 bytes) in unpadded base64url, the OpenID4VP `x509_hash` value | Read as that form when it is the digest in hexadecimal (any case, with `:` between all the bytes or none, as `openssl x509 -fingerprint -sha256` prints it) or in base64 or base64url, padded or not. Anything else cannot be read |
-| `X509_SKI` | The subject key identifier's bytes in unpadded base64url | Cannot be read when it cannot be unpadded base64url: with `:`, spaces, `+`, `/` or `=`, or a length no encoding has. Hexadecimal without separators is base64url too and cannot be told from it: it is read, and matches only if it is the base64url form |
+| `X509_SKI` | The subject key identifier's bytes in unpadded base64url | Read as that form when it is in standard base64 (`A-Z a-z 0-9 + /`, with correct `=` padding or none) and holds a `+`, `/` or `=`, as ETSI trusted lists write it: padding removed, `+` as `-`, `/` as `_`. Anything else that is not unpadded base64url cannot be read: with `:` or spaces, the two alphabets mixed, wrong padding, padding on base64url, a length no encoding has. Hexadecimal without separators is base64url too and cannot be told from it: it is read as written, and matches only if it is the base64url form |
 | `JWK_THUMBPRINT` | The RFC 7638 thumbprint (SHA-256) in unpadded base64url, 43 characters | Cannot be read |
 
-The service and the library read an `X509_SHA256` value so wherever they meet one: in the registry, in a query (an
-`x509_hash` client identifier), and in trust an app pins. `conformance/evaluation/identifiers.json` holds both to the
-same forms.
+The service and the library read an `X509_SHA256` or `X509_SKI` value so wherever they meet one: in the registry, in
+a query (an `x509_hash` client identifier), in what an ETSI trusted list or a LoTE says (an `X509SKI` there is standard
+base64), and in trust an app pins. `conformance/evaluation/identifiers.json` holds both to the same forms.
 
 Entries belong to the framework of their source; a `framework` key is accepted only when it names that framework,
 and an entry naming another one cannot be read. `certificateLocation` may name a `classpath:` or `file:`

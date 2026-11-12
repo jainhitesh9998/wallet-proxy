@@ -140,6 +140,84 @@ class EtsiTrustedListSourceTest {
         assertThat(r.listInfo().signature()).isEqualTo(ListInfo.SignatureStatus.NOT_SIGNED);
     }
 
+    /** A national list whose one provider is named by the key identifier of its signing certificate (X509SKI). */
+    static String providerBySki(String status, String ski) {
+        return """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#" Id="tsl" TSLTag="http://uri.etsi.org/19612/TSLTag">
+                  <SchemeInformation>
+                    <TSLVersionIdentifier>6</TSLVersionIdentifier><TSLSequenceNumber>12</TSLSequenceNumber>
+                    <TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUgeneric</TSLType>
+                    <SchemeOperatorName><Name xml:lang="en">Utopia Supervisory Body</Name></SchemeOperatorName>
+                    <SchemeTerritory>UT</SchemeTerritory>
+                    <ListIssueDateTime>2026-10-01T00:00:00Z</ListIssueDateTime>
+                    <NextUpdate><dateTime>2099-01-01T00:00:00Z</dateTime></NextUpdate>
+                  </SchemeInformation>
+                  <TrustServiceProviderList>
+                    <TrustServiceProvider>
+                      <TSPInformation><TSPName><Name xml:lang="en">Utopia EAA Provider</Name></TSPName></TSPInformation>
+                      <TSPServices>
+                        <TSPService><ServiceInformation>
+                          <ServiceTypeIdentifier>http://uri.etsi.org/TrstSvc/Svctype/EAA/Q</ServiceTypeIdentifier>
+                          <ServiceName><Name xml:lang="en">QEAA issuance</Name></ServiceName>
+                          <ServiceDigitalIdentity><DigitalId><X509SKI>%s</X509SKI></DigitalId></ServiceDigitalIdentity>
+                          <ServiceStatus>http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/%s</ServiceStatus>
+                        </ServiceInformation></TSPService>
+                      </TSPServices>
+                    </TrustServiceProvider>
+                  </TrustServiceProviderList>
+                </TrustServiceStatusList>
+                """.formatted(ski, status).trim();
+    }
+
+    /**
+     * A list writes a key identifier as xsd:base64Binary: standard base64, padded. The evaluators compute unpadded
+     * base64url, and the identifier is read so (Identifier): the provider is found through the certificate that carries
+     * the key identifier, and a withdrawn one keeps its party out rather than binding nothing.
+     */
+    @Test
+    void aProviderNamedByTheKeyIdentifierOfItsCertificateIsFoundThroughIt() throws Exception {
+        var ca = TestPki.rootCa("CN=Shared Issuer CA,C=UT");
+        var signer = TestPki.leaf("CN=Utopia EAA signer,C=UT", ca, List.of(), null);
+        String computed = Certificates.subjectKeyIdentifier(signer.certificate()).orElseThrow();
+        String written = java.util.Base64.getEncoder().encodeToString(java.util.Base64.getUrlDecoder().decode(computed));
+        assertThat(written).endsWith("=").isNotEqualTo(computed);
+        // The CA is listed by another source, for no entity: the list says whose certificate it is.
+        var caDef = new SourceDefinition("ca", "test", "eu", null, true, true, Map.of());
+        io.vctrust.trust.core.spi.TrustSource caList = new io.vctrust.trust.core.spi.TrustSource() {
+            @Override
+            public SourceDefinition definition() {
+                return caDef;
+            }
+
+            @Override
+            public io.vctrust.trust.core.spi.SourceLoadResult load() {
+                return new io.vctrust.trust.core.spi.SourceLoadResult(List.of(), List.of(new io.vctrust.trust.core.model.TrustAnchor("shared-ca",
+                        TrustDomain.CREDENTIAL_ISSUER, ca.certificate(), "eu", null, null, null, null)), ListInfo.unsigned(), List.of());
+            }
+        };
+        for (String status : List.of("granted", "withdrawn")) {
+            var ctx = new TestContext().put("https://tl.example/ut.xml", providerBySki(status, written));
+            var tl = new EtsiTrustedListSourceFactory().create(new SourceDefinition("tl", "etsi-tl", "eu", null, true,
+                    Map.of("location", "https://tl.example/ut.xml", "allowUnverified", true)), ctx);
+            var registry = new io.vctrust.trust.core.registry.TrustRegistry();
+            try (var sources = new io.vctrust.trust.core.registry.TrustSourceManager(registry, List.of(), List.of(caList, tl), java.time.Clock.systemUTC())) {
+                sources.start();
+                var d = new io.vctrust.trust.core.evaluation.TrustEvaluator(registry, sources, new io.vctrust.trust.core.did.DidResolver(List.of()),
+                        new io.vctrust.trust.core.x509.X509PathValidator(), java.time.Clock.systemUTC(), java.time.Duration.ofHours(1))
+                        .evaluate(new io.vctrust.trust.core.evaluation.TrustQuery(EntityRole.CREDENTIAL_ISSUER,
+                                new io.vctrust.trust.core.evaluation.TrustQuery.Subject(null, List.of(Certificates.toBase64(signer.certificate())), null, null),
+                                new io.vctrust.trust.core.evaluation.TrustQuery.Context("oid4vci", "dc+sd-jwt", "urn:eudi:pid:1", null, null, List.of())),
+                                io.vctrust.trust.core.policy.ClientProfile.unrestricted("wallet"));
+                assertThat(d.entity()).as(status).isNotNull();
+                assertThat(d.entity().id()).as(status).startsWith("etsi-tl:ut:");
+                assertThat(d.evidence().matchedIdentifiers()).as(status).contains("X509_SKI:" + computed);
+                assertThat(d.decision()).as(status).isEqualTo("granted".equals(status)
+                        ? io.vctrust.trust.core.evaluation.Decision.TRUSTED : io.vctrust.trust.core.evaluation.Decision.NOT_TRUSTED);
+            }
+        }
+    }
+
     @Test
     void verifiesXmlSignatureAgainstPinnedSigner() throws Exception {
         var eaa = TestPki.rootCa("CN=QEAA CA,C=UT");

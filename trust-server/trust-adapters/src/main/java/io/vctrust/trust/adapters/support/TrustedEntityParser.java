@@ -225,7 +225,8 @@ public final class TrustedEntityParser {
         String value = i.required("value");
         IdentifierType t = i.parse(IdentifierType.class, type, "identifier type");
         // A hash or key identifier written in a form the evaluators do not compute binds nothing: a REVOKED entry
-        // written so would never apply. Identifier reads a SHA-256 written any common way; the other two have one form.
+        // written so would never apply. Identifier reads a SHA-256 written any common way and a key identifier in standard
+        // base64; what it reads must then be the one form.
         switch (t) {
             case X509_SHA256 -> {
                 if (Identifier.sha256Digest(value) == null) {
@@ -234,7 +235,8 @@ public final class TrustedEntityParser {
                 }
             }
             case X509_SKI -> {
-                if (!unpaddedBase64Url(value)) {
+                // Standard base64 (as a trusted list writes it) reads as unpadded base64url (Identifier.skiFromBase64).
+                if (!unpaddedBase64Url(new Identifier(t, value).value())) {
                     throw i.fail("'value' is not a subject key identifier in unpadded base64url (the form the evaluators compute): '"
                             + shown(value) + "'");
                 }

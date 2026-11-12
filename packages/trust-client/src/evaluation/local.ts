@@ -50,7 +50,8 @@ export interface LocalTrustData {
  * The key an identifier is matched by. Identifiers are compared as the specifications compare them: URLs (credential
  * issuer identifiers, client identifiers, federation entity identifiers) byte for byte, with no normalization
  * (RFC 8414 section 3.3, OpenID4VCI 1.0 section 12.2.1); DNS names without regard to case; DIDs without a fragment; a
- * certificate's SHA-256 (X509_SHA256) as unpadded base64url however the digest is written ({@link sha256Digest}).
+ * certificate's SHA-256 (X509_SHA256) as unpadded base64url however the digest is written ({@link sha256Digest}); a
+ * subject key identifier (X509_SKI) written in standard base64 as unpadded base64url ({@link skiFromBase64}).
  * The service applies the same rule (Identifier.java), so a port in any language matches with a string comparison;
  * conformance/evaluation/identifiers.json holds both to it. The snapshot carries identifiers in this form already; an
  * app's pinned trust may write a hash another way.
@@ -59,7 +60,26 @@ export function identifierKey(type: string, value: string): string {
   if (type === 'DID') return value.split('#')[0]!;
   if (type === 'DNS') return value.toLowerCase();
   if (type === 'X509_SHA256') return sha256Digest(value) ?? value;
+  if (type === 'X509_SKI') return skiFromBase64(value) ?? value;
   return value;
+}
+
+/** Standard base64: its alphabet, then '=' padding or none. */
+const STANDARD_BASE64 = /^([A-Za-z0-9+/]+)(=*)$/;
+
+/**
+ * A subject key identifier written in standard base64 (as ETSI trusted lists and LoTE write one) as the same bytes in
+ * unpadded base64url, the form both evaluators compute: padding removed, '+' as '-', '/' as '_'. A textual rule, with no
+ * guessing: only a value in the standard alphabet, with correct '=' padding or none, that holds at least one of '+', '/'
+ * or '='; anything else is undefined, and the value is compared as written. As on the service (Identifier.skiFromBase64).
+ */
+function skiFromBase64(value: string): string | undefined {
+  const m = STANDARD_BASE64.exec(value);
+  if (!m || !/[+/=]/.test(value)) return undefined;
+  const length = m[1]!.length;
+  const padding = m[2]!.length;
+  const padded = padding === 0 ? length % 4 !== 1 : padding === 1 ? length % 4 === 3 : padding === 2 && length % 4 === 2;
+  return padded ? m[1]!.replace(/\+/g, '-').replace(/\//g, '_') : undefined;
 }
 
 /** 32 bytes in hexadecimal, in any case, with ':' between all the bytes or none (as openssl prints a fingerprint). */

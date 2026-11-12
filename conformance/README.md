@@ -36,8 +36,9 @@ side to it, and each side's own list of spellings must be exactly the file's.
 
 `identifiers.json` is how both compare an identifier: spellings that must read as one key (a certificate's SHA-256 in
 hexadecimal, with or without colons, or in padded or standard base64 reads as the unpadded base64url the evaluators
-compute; a DNS name without case; a DID without its fragment), and values that are compared as written (a hash that is
-not a 32-byte digest, a subject key identifier or JWK thumbprint in another form). `IdentifierFormsTest.java`
+compute; a subject key identifier in standard base64 reads as unpadded base64url; a DNS name without case; a DID without
+its fragment), and values that are compared as written (a hash that is not a 32-byte digest, a key identifier with
+mixed alphabets or wrong padding, or in hexadecimal, a JWK thumbprint in another form). `IdentifierFormsTest.java`
 (`Identifier`) and `identifiers.test.ts` (`identifierKey`) hold each side to it; in the registry format an `X509_SHA256`
 value that is not such a digest makes the entry unreadable (`RegistryFormatTest.java`).
 

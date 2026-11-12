@@ -1,5 +1,5 @@
 {
-  "description": "How an identifier is compared, by the service (Identifier.java) and by the client library (identifierKey in evaluation/local.ts): every value of an entry of \"same\" reads as its \"key\", every value of \"unchanged\" as itself. An X509_SHA256 value that is a SHA-256 digest (32 bytes) written in hexadecimal (any case, with \":\" between all the bytes or none) or in base64 or base64url (padded or not; the last character as an encoder writes it) reads as unpadded base64url, the form both evaluators compute; anything else is compared as written, and in the registry format makes the entry unreadable. X509_SKI and JWK_THUMBPRINT have one form, unpadded base64url, and are compared as written. IdentifierFormsTest.java and identifiers.test.ts hold both sides to this file.",
+  "description": "How an identifier is compared, by the service (Identifier.java) and by the client library (identifierKey in evaluation/local.ts): every value of an entry of \"same\" reads as its \"key\", every value of \"unchanged\" as itself. An X509_SHA256 value that is a SHA-256 digest (32 bytes) written in hexadecimal (any case, with \":\" between all the bytes or none) or in base64 or base64url (padded or not; the last character as an encoder writes it) reads as unpadded base64url, the form both evaluators compute; anything else is compared as written, and in the registry format makes the entry unreadable. An X509_SKI value written in the standard base64 alphabet (A-Z a-z 0-9 + /), with correct \"=\" padding or none, that holds at least one of \"+\", \"/\" or \"=\" reads as the same bytes in unpadded base64url (padding removed, \"+\" to \"-\", \"/\" to \"_\"), the form both evaluators compute; any other X509_SKI value (one without those characters, hexadecimal among them; one that mixes the two alphabets; one whose padding is wrong) is compared as written. JWK_THUMBPRINT has one form, unpadded base64url, and is compared as written. IdentifierFormsTest.java and identifiers.test.ts hold both sides to this file.",
   "same": [
     {
       "type": "X509_SHA256",
@@ -14,6 +14,31 @@
         "1B:75:F1:E2:57:7C:43:9A:0F:F3:FC:9B:B4:3D:BE:93:9A:D3:C2:77:38:58:BD:70:1F:7E:FA:4C:66:F6:1D:2A",
         "1b:75:f1:e2:57:7c:43:9a:0f:f3:fc:9b:b4:3d:be:93:9a:d3:c2:77:38:58:bd:70:1f:7e:fa:4c:66:f6:1d:2a",
         "1b75f1E2577c439A0fF3fC9bB43Dbe939Ad3C2773858bD701f7Efa4c66f61d2A"
+      ]
+    },
+    {
+      "type": "X509_SKI",
+      "key": "bsFjaDQhrzh2YXFp-An_-pG_gUo",
+      "values": [
+        "bsFjaDQhrzh2YXFp-An_-pG_gUo",
+        "bsFjaDQhrzh2YXFp+An/+pG/gUo=",
+        "bsFjaDQhrzh2YXFp+An/+pG/gUo"
+      ]
+    },
+    {
+      "type": "X509_SKI",
+      "key": "q3vfAQ",
+      "values": [
+        "q3vfAQ",
+        "q3vfAQ=="
+      ]
+    },
+    {
+      "type": "X509_SKI",
+      "key": "-_-_",
+      "values": [
+        "-_-_",
+        "+/+/"
       ]
     },
     {
@@ -62,8 +87,20 @@
       "type": "X509_SKI",
       "values": [
         "AB:CD:EF:01",
-        "q3vfAQ==",
-        "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c277"
+        "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c277",
+        "6ec163683421af3876617169f809fffa91bf814a",
+        "bsFjaDQhrzh2YXFp-An_-pG_gUo=",
+        "bsFjaDQhrzh2YXFp+An_-pG/gUo=",
+        "q3vfAQ=",
+        "q3vf==",
+        "q3vfA==",
+        "q3vfAQ===",
+        "q3v=fAQ=",
+        "==",
+        "",
+        " q3vfAQ==",
+        "q3vfAQ==\n",
+        "q3vf AQ=="
       ]
     },
     {

@@ -253,13 +253,24 @@ class RegistryFormatTest {
                 }
             }
         }
-        // X509_SKI: the key identifier's bytes in unpadded base64url, as both evaluators compute it. Hexadecimal without
-        // separators cannot be told from base64url, and is read (and matches nothing unless it is that form).
+        // X509_SKI: the key identifier's bytes in unpadded base64url, as both evaluators compute it. Written in standard
+        // base64 (as ETSI lists write it) it reads as that form (Identifier). Hexadecimal without separators cannot be
+        // told from base64url, and is read (and matches nothing unless it is that form).
+        Map<String, String> skis = new java.util.LinkedHashMap<>();
         for (String value : List.of("q3vf", "q3vfAQ", "q3vfAQ8", "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c277", "_-8")) {
-            assertThat(withIdentifier("X509_SKI", value).entities().getFirst().identifiers()).as(value)
-                    .singleElement().satisfies(i -> assertThat(i.value()).isEqualTo(value));
+            skis.put(value, value);
         }
-        for (String value : List.of("", "AB:CD:EF:01", "ab cd ef", "q3vfAQ==", "q3vf+Q", "q3vf/Q", "q3vfA", "q3vfAR", "q3vfAQ9")) {
+        skis.put("q3vfAQ==", "q3vfAQ");
+        skis.put("q3vf+Q", "q3vf-Q");
+        skis.put("q3vf/Q", "q3vf_Q");
+        skis.put("bsFjaDQhrzh2YXFp+An/+pG/gUo=", "bsFjaDQhrzh2YXFp-An_-pG_gUo");
+        for (Map.Entry<String, String> ski : skis.entrySet()) {
+            assertThat(withIdentifier("X509_SKI", ski.getKey()).entities().getFirst().identifiers()).as(ski.getKey())
+                    .singleElement().satisfies(i -> assertThat(i.value()).isEqualTo(ski.getValue()));
+        }
+        // Anything else is refused: padding on base64url, the two alphabets mixed, padding that is wrong, bits set past
+        // the last byte.
+        for (String value : List.of("", "AB:CD:EF:01", "ab cd ef", "q3vf-Q==", "q3vf+_Q", "q3vfAQ=", "q3vfA", "q3vfAR", "q3vfAR==", "q3vfAQ9")) {
             assertThatThrownBy(() -> withIdentifier("X509_SKI", value)).as("'%s'", value)
                     .hasMessageContaining("identifiers[0]: 'value' is not a subject key identifier in unpadded base64url");
         }

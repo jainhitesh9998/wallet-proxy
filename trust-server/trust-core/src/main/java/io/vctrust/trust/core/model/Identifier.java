@@ -15,7 +15,8 @@ import java.util.regex.Pattern;
  * identifiers, client identifiers, OpenID Federation entity identifiers) byte for byte, with no normalization
  * (RFC 8414 section 3.3, OpenID4VCI 1.0 section 12.2.1); DNS names without regard to case; DIDs without a fragment;
  * certificate subjects in their RFC 2253 form; a certificate's SHA-256 ({@code X509_SHA256}) as unpadded base64url,
- * however the digest is written ({@link #sha256Digest}).
+ * however the digest is written ({@link #sha256Digest}); a subject key identifier ({@code X509_SKI}) written in
+ * standard base64 as unpadded base64url ({@link #skiFromBase64}).
  * A registry therefore lists a party's identifier exactly as that party writes it, and a client in any language
  * matches with a string comparison. The client library applies the same rules (identifierKey in evaluation/local.ts),
  * and conformance/evaluation/identifiers.json holds both to them.
@@ -67,8 +68,33 @@ public record Identifier(IdentifierType type, String value) {
                 String digest = sha256Digest(value);
                 yield digest == null ? value : digest;
             }
+            case X509_SKI -> {
+                String ski = skiFromBase64(value);
+                yield ski == null ? value : ski;
+            }
             default -> value;
         };
+    }
+
+    /** Standard base64: its alphabet, then '=' padding or none. */
+    private static final Pattern STANDARD_BASE64 = Pattern.compile("([A-Za-z0-9+/]+)(=*)");
+
+    /**
+     * A subject key identifier written in standard base64 (as ETSI trusted lists and LoTE write one: xsd:base64Binary)
+     * as the same bytes in unpadded base64url, the form both evaluators compute: padding removed, '+' as '-', '/' as
+     * '_'. A textual rule, with no guessing: only a value in the standard alphabet, with correct '=' padding or none,
+     * that holds at least one of '+', '/' or '='; anything else (one without those characters, hexadecimal among them;
+     * one that mixes the two alphabets; one whose padding is wrong) is null, and the value is compared as written.
+     */
+    public static String skiFromBase64(String value) {
+        Matcher m = STANDARD_BASE64.matcher(value);
+        if (!m.matches() || value.chars().noneMatch(c -> c == '+' || c == '/' || c == '=')) {
+            return null;
+        }
+        int length = m.group(1).length();
+        int padding = m.group(2).length();
+        boolean padded = padding == 0 ? length % 4 != 1 : padding == 1 ? length % 4 == 3 : padding == 2 && length % 4 == 2;
+        return padded ? m.group(1).replace('+', '-').replace('/', '_') : null;
     }
 
     /**
