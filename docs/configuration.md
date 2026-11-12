@@ -502,8 +502,8 @@ A block of entities (and a lookup's `entity`) must map `roles`, and a record tha
 may be a member the upstream renamed or dropped. Where the upstream writes `"roles": []` for a party it states no role
 for (this service's own snapshot does, for an entry that only describes a party, or a withdrawn one), say so with
 `roles: { path: $.roles[*], allowEmpty: true }`: such a record is listed without a role, as the document states it. An
-entry without a role that is not in good standing keeps its party out whatever is asked; one in good standing
-authorizes nothing.
+entry without a role that is not in good standing keeps its party out whatever is asked; one in good standing is not
+considered for any question, and the chain to the party's CA decides as if the entry were not there.
 
 **Values.** Every member takes one of these forms; a member that takes a list takes a list of them.
 
@@ -812,8 +812,16 @@ anchors:
     entity: $.entityId
     status: $.status
     docTypes: $.constraints.docTypes[*]
-    crlUrls: $.constraints.crlUrls[*]
+    crlUrls: $.constraints.crlUrls[*]    # where each CA publishes its CRL
 ```
+
+The upstream's CRLs are **not** taken from its snapshot: the `crls` claim is not read. This service fetches each CA's
+CRL itself, from the locations the anchor records name (`crlUrls`, mapped above) or from the CA certificate's own
+distribution point, and decides with what it fetched. An upstream whose anchors name no location and whose CA
+certificates name none either gives this service no CRL for them: a certificate such a CA revoked is decided as one it
+has not. So it is in the tests' fixture for this mapping (`MappedSourceFixturesTest`, fixture 3, this service's
+evaluation vectors): their anchors carry their CRLs only in the snapshot (`crls`), and the two vectors that depend on
+the IACA's CRL decide differently behind it.
 
 #### The example
 

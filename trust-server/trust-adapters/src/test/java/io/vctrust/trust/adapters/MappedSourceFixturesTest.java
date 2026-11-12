@@ -193,7 +193,10 @@ class MappedSourceFixturesTest {
     // A snapshot writes "authorizations": [] for an entity with none registered (unconstrained unless the client is
     // strict). A mapped list that is there and empty would mean "authorized for nothing"; allowEmpty says that here it
     // means none stated, as the snapshot does. So for "roles": [] (an entry that states no role), and an authorization
-    // without "type" covers every type of its format (allowAnyType).
+    // without "type" covers every type of its format (allowAnyType). The upstream's CRLs are not read from its snapshot
+    // (the "crls" claim): this service fetches a CA's CRL from the locations its anchor records name (crlUrls, mapped)
+    // or from the CA certificate's own distribution point. The vectors' anchors name no location; their CRLs are only in
+    // the snapshot, so the two vectors that depend on the IACA's CRL would decide differently behind this mapping.
     static final String SNAPSHOT_MAPPING = """
             list:
               issuer: $.iss
@@ -290,7 +293,13 @@ class MappedSourceFixturesTest {
                 assertThat(mapped.entityId()).isEqualTo(a.get("entityId"));
                 Object docTypes = ((Map<?, ?>) a.get("constraints")).get("docTypes");
                 assertThat(mapped.docTypes()).isEqualTo(docTypes == null ? List.of() : docTypes);
+                assertThat(mapped.crlUrls()).isEqualTo(a.get("constraints") instanceof Map<?, ?> c && c.get("crlUrls") instanceof List<?> l
+                        ? l : List.of());
+                assertThat(mapped.constraints()).doesNotContainKey("crl");
             }
+            // The snapshot's CRLs, which the mapping does not read: the vectors' anchors carry theirs only there.
+            assertThat((List<?>) claims.get("crls")).isNotEmpty();
+            assertThat(anchors).allSatisfy(a -> assertThat(((Map<?, ?>) a.get("constraints")).get("crlUrls")).isNull());
             // The request carried the credential this service has at the upstream one.
             assertThat(ctx.http.requests.getFirst().headers()).containsEntry("Authorization", "Bearer upstream-api-key");
         }
