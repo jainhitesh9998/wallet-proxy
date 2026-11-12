@@ -799,6 +799,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 }
             } catch (IOException e) {
                 throw new TrustSourceException("The lookup failed: " + e.getMessage(), e);
+            } catch (IllegalArgumentException e) {
+                throw new TrustSourceException("The answer cannot be read: " + e.getMessage(), e);
             }
             answers.put(identifier.key(), found, now.plus(found.isPresent() ? ON_DEMAND_TTL : ON_DEMAND_NEGATIVE_TTL));
             return found;

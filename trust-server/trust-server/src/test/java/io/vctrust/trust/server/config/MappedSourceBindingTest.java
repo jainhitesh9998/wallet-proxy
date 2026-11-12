@@ -119,13 +119,14 @@ class MappedSourceBindingTest {
                     - { when: "https://b.example/suspended", then: SUSPENDED }
                     - { when: "https://c.example/revoked", then: REVOKED }"""));
         var r = source(props).load();
-        assertThat(r.entities()).extracting(TrustedEntity::id).containsExactlyInAnyOrder("partner:a", "partner:b", "partner:c", "partner:d");
+        assertThat(r.entities()).extracting(TrustedEntity::id).containsExactlyInAnyOrder("partner:a", "partner:b", "partner:c");
         TrustedEntity a = r.entities().stream().filter(e -> e.id().equals("partner:a")).findFirst().orElseThrow();
         assertThat(a.roles()).hasSize(2);
         assertThat(a.attributes()).containsEntry("trust_level", "high").containsEntry("sourceList", "a");
-        // "unknown" is in no pair and there is no default: the status is left out, which the registry reads as ACTIVE.
-        assertThat(r.entities().stream().filter(e -> e.id().equals("partner:d")).findFirst().orElseThrow().status())
-                .isEqualTo(EntityStatus.ACTIVE);
+        // "unknown" is in no pair and there is no default: the status yields nothing, and a status the mapping
+        // configures but cannot read is not taken for good standing. The record is skipped.
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 4 is skipped: status yields nothing (no value at its "
+                + "path, or one its translation does not know); give status a default to say what such a record is");
     }
 
     @Test

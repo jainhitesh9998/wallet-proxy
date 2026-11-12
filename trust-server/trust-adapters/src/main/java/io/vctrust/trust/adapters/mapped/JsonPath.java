@@ -19,6 +19,9 @@ import java.util.Objects;
  * <p>There is no recursive descent, no slice, no function and no regular expression: each segment looks once at the
  * children of the nodes the previous segment selected, so evaluation is linear in the size of the document whatever
  * the document holds. Paths come from the configuration only, and are parsed when it is read.
+ *
+ * <p>Unlike RFC 9535, a segment applied to a node it cannot look into is an error rather than nothing (see
+ * {@link #select}); inside a filter, RFC 9535 holds.
  */
 final class JsonPath {
 
@@ -52,13 +55,28 @@ final class JsonPath {
         return segments.stream().anyMatch(s -> s instanceof Wildcard || s instanceof Filter);
     }
 
-    /** The nodes the path selects, in document order; a member whose value is null is selected as null. */
+    /**
+     * The nodes the path selects, in document order; a member whose value is null is selected as null.
+     *
+     * <p>Only a member that is not there, or is null, selects nothing. A segment that meets what it cannot look into
+     * (a member name on text or on a list, {@code [*]} on a number, an index on an object) is an error: the document
+     * holds something there, not what the mapping expects, and reading it as absent would leave out what it says (a
+     * list of doctypes written as one string would constrain nothing).
+     *
+     * @throws IllegalArgumentException naming the path, what it found and what the segment needs
+     */
     List<Object> select(Object current, Object root) {
         List<Object> nodes = new ArrayList<>(1);
         nodes.add(fromRoot ? root : current);
         for (Segment s : segments) {
             List<Object> next = new ArrayList<>();
             for (Object n : nodes) {
+                if (n == null) {
+                    continue;
+                }
+                if (!s.accepts(n)) {
+                    throw new IllegalArgumentException("the path " + text + " finds " + kind(n) + " where " + s.needs());
+                }
                 s.apply(n, next);
             }
             nodes = next;
@@ -69,6 +87,12 @@ final class JsonPath {
         return nodes;
     }
 
+    /** What a node of a document is, in words, for a message. */
+    static String kind(Object node) {
+        return node instanceof Map<?, ?> ? "an object" : node instanceof List<?> ? "a list" : node instanceof String ? "text"
+                : node instanceof Boolean ? "true or false" : node instanceof Number ? "a number" : "nothing";
+    }
+
     @Override
     public String toString() {
         return text;
@@ -76,6 +100,12 @@ final class JsonPath {
 
     private sealed interface Segment permits Member, Index, Wildcard, Filter {
         void apply(Object node, List<Object> out);
+
+        /** Whether the segment can look into this node at all (a missing member or index is not a question of kind). */
+        boolean accepts(Object node);
+
+        /** What the segment needs, for a message. */
+        String needs();
     }
 
     private record Member(String name) implements Segment {
@@ -84,6 +114,16 @@ final class JsonPath {
             if (node instanceof Map<?, ?> m && m.containsKey(name)) {
                 out.add(m.get(name));
             }
+        }
+
+        @Override
+        public boolean accepts(Object node) {
+            return node instanceof Map<?, ?>;
+        }
+
+        @Override
+        public String needs() {
+            return "." + name + " needs an object";
         }
     }
 
@@ -97,6 +137,16 @@ final class JsonPath {
                 }
             }
         }
+
+        @Override
+        public boolean accepts(Object node) {
+            return node instanceof List<?>;
+        }
+
+        @Override
+        public String needs() {
+            return "[" + index + "] needs a list";
+        }
     }
 
     private record Wildcard() implements Segment {
@@ -104,9 +154,29 @@ final class JsonPath {
         public void apply(Object node, List<Object> out) {
             children(node, out);
         }
+
+        @Override
+        public boolean accepts(Object node) {
+            return node instanceof Map<?, ?> || node instanceof List<?>;
+        }
+
+        @Override
+        public String needs() {
+            return "[*] needs a list or an object";
+        }
     }
 
     private record Filter(Condition condition) implements Segment {
+        @Override
+        public boolean accepts(Object node) {
+            return node instanceof Map<?, ?> || node instanceof List<?>;
+        }
+
+        @Override
+        public String needs() {
+            return "a filter needs a list or an object";
+        }
+
         @Override
         public void apply(Object node, List<Object> out) {
             List<Object> children = new ArrayList<>();

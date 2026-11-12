@@ -127,7 +127,8 @@ class MappingLanguageTest {
         assertThat(first(Map.of("template", "partner:{$.id}:{^.country}"), a)).isEqualTo("partner:a:UT");
         assertThat(first(Map.of("template", "n{$.n}-{$.flag}"), a)).isEqualTo("n1-true");
         assertThat(first(Map.of("template", "partner:{$.missing}"), a)).isNull();   // any part missing: nothing
-        assertThat(first(Map.of("template", "x{$.display}"), a)).isNull();          // an object is not text
+        // An object is not text: present but unusable, which skips the record (not a template that yields nothing).
+        assertThatThrownBy(() -> first(Map.of("template", "x{$.display}"), a)).hasMessage("the path $.display finds an object where text belongs");
         assertThat(first(Map.of("template", "{$['odd name']}{$.tags[?@ == '}']}"), a)).isNull();
         assertThat(first(Map.of("template", "{$['odd name']}!"), a)).isEqualTo("spaced!");
     }

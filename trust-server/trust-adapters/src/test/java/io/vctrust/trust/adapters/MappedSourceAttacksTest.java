@@ -308,4 +308,159 @@ class MappedSourceAttacksTest {
         assertThat(loadError(source(ctx, lookupOnly("maxAge", "PT1H")))).contains("mapping.lookup.maxAge applies to format: jws");
         assertThat(loadError(source(ctx, lookupOnly("maxAge", "a day")))).contains("mapping.lookup.maxAge must be a duration such as PT24H");
     }
+
+    // F4: a restriction in an unexpected shape was dropped, and the entry was wider than the document says -------------
+
+    /** The partner's mapping with these members added to (or, for a null value, removed from) its entities block. */
+    static Map<String, Object> entities(Object... kv) {
+        Map<String, Object> m = MappedSourceRulesTest.mapping();
+        Map<String, Object> block = (Map<String, Object>) ((List<?>) m.get("entities")).getFirst();
+        for (int i = 0; i < kv.length; i += 2) {
+            if (kv[i + 1] == null) {
+                block.remove((String) kv[i]);
+            } else {
+                block.put((String) kv[i], kv[i + 1]);
+            }
+        }
+        return m;
+    }
+
+    /** The warnings of a load of {@code issuers} (each with an id, an issuer URL and an active state added) under {@code mapping}. */
+    static SourceLoadResultView load(Map<String, Object> mapping, List<Map<String, Object>> issuers) throws TrustSourceException {
+        TestContext ctx = ctx();
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        List<Object> all = new java.util.ArrayList<>();
+        int n = 0;
+        for (Map<String, Object> issuer : issuers) {
+            Map<String, Object> i = new LinkedHashMap<>(Map.of("id", "p" + n++, "credential_issuer", "https://p.example", "state", "active"));
+            i.putAll(issuer);
+            all.add(i);
+        }
+        all.add(Map.of("id", "fine", "credential_issuer", "https://fine.example", "state", "active"));   // so that the load succeeds
+        d.put("issuers", all);
+        serveJson(ctx, d);
+        var r = source(ctx, props("mapping", mapping)).load();
+        return new SourceLoadResultView(r.entities().stream().map(e -> e.id()).toList(), r.entities(), r.warnings());
+    }
+
+    record SourceLoadResultView(List<String> ids, List<io.vctrust.trust.core.model.TrustedEntity> entities, List<String> warnings) {
+    }
+
+    static final Map<String, Object> AUTHORIZATIONS = Map.of("each", "$.credentials[*]", "format", "$.format", "type", "$.type");
+
+    @Test
+    void f4_anAuthorizationThatLacksAConfiguredMemberSkipsTheRecordAndIsNoWildcard() throws Exception {
+        Map<String, Object> m = entities("authorizations", List.of(AUTHORIZATIONS));
+        var r = load(m, List.of(
+                Map.of("credentials", List.of(Map.of("format", "mso_mdoc"))),                                 // type missing
+                Map.of("credentials", List.of(Map.of("fmt", "mso_mdoc", "vct", "org.iso.18013.5.1.mDL"))),    // members renamed
+                Map.of("credentials", List.of(Map.of("format", "mso_mdoc", "type", "org.iso.18013.5.1.mDL"))),
+                Map.of("credentials", List.of())));                                                         // none: absent
+        assertThat(r.ids()).containsExactly("partner:p2", "partner:p3", "partner:fine");
+        assertThat(r.warnings()).containsExactly(
+                "mapping.entities[0]: record 1 is skipped: authorizations: an item yields no type; "
+                        + "an authorization is never left open where the document does not say so",
+                "mapping.entities[0]: record 2 is skipped: authorizations: an item yields no format; "
+                        + "an authorization is never left open where the document does not say so");
+    }
+
+    @Test
+    void f4_aDateThatIsNotOneSkipsTheRecordAndANumberIsSecondsInTheRangeOfTwelveDigits() throws Exception {
+        Map<String, Object> m = entities("validUntil", "$.valid_until");
+        long millis = MappedSourceRulesTest.NOW.toEpochMilli();
+        var r = load(m, List.of(Map.of("valid_until", millis), Map.of("valid_until", -1), Map.of("valid_until", 1.5),
+                Map.of("valid_until", Map.of("seconds", 1)), Map.of("valid_until", 999_999_999_999L)));
+        assertThat(r.ids()).containsExactly("partner:p4", "partner:fine");
+        assertThat(r.entities().getFirst().validUntil()).isEqualTo(java.time.Instant.ofEpochSecond(999_999_999_999L));
+        assertThat(r.warnings()).containsExactly(
+                "mapping.entities[0]: record 1 is skipped: validUntil is not a date: '" + millis + "'",
+                "mapping.entities[0]: record 2 is skipped: validUntil is not a date: '-1'",
+                "mapping.entities[0]: record 3 is skipped: validUntil is not a date: '1.5'",
+                "mapping.entities[0]: record 4 is skipped: validUntil is not a date: '{...}'");
+        // A list fact that is not a date fails the load.
+        TestContext ctx = ctx();
+        Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        d.put("next_update", MappedSourceRulesTest.NOW.plus(Duration.ofDays(1)).toEpochMilli());
+        serveJson(ctx, d);
+        assertThat(loadError(source(ctx, props()))).contains("mapping.list.nextUpdate: the document has no date there");
+    }
+
+    @Test
+    void f4_aListPathOverSomethingThatIsNoListSkipsTheRecordAndConstrainsNothingAway() throws Exception {
+        TestContext ctx = ctx();
+        Map<String, Object> m = MappedSourceRulesTest.mapping();
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "docTypes", "$.doctypes[*]")));
+        Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        d.put("authorities", List.of(
+                Map.of("kid", "free-iaca", "certificate", MappedTesting.der("iaca"), "doctypes", "org.iso.18013.5.1.mDL"),
+                Map.of("kid", "bound-iaca", "certificate", MappedTesting.der("iaca"), "doctypes", List.of("org.iso.18013.5.1.mDL"))));
+        serveJson(ctx, d);
+        var r = source(ctx, props("mapping", m)).load();
+        assertThat(r.anchors()).singleElement().satisfies(a -> {
+            assertThat(a.id()).isEqualTo("bound-iaca");
+            assertThat(a.docTypes()).containsExactly("org.iso.18013.5.1.mDL");
+        });
+        assertThat(r.warnings()).containsExactly("mapping.anchors[0]: record 1 is skipped: "
+                + "docTypes: the path $.doctypes[*] finds text where [*] needs a list or an object");
+
+        // The same for a member under something that is not an object, and for a template.
+        var e = load(entities("name", "$.display.name", "attributes", Map.of("region", Map.of("template", "UT-{$.region}"))),
+                List.of(Map.of("display", "Alpha"), Map.of("region", Map.of("code", "N")), Map.of("display", Map.of("name", "Gamma"))));
+        assertThat(e.ids()).containsExactly("partner:p2", "partner:fine");
+        assertThat(e.warnings()).containsExactly(
+                "mapping.entities[0]: record 1 is skipped: name: the path $.display.name finds text where .name needs an object",
+                "mapping.entities[0]: record 2 is skipped: attributes.region: the path $.region finds an object where text belongs");
+    }
+
+    @Test
+    void f4_aStatusTheMappingCannotReadSkipsTheRecordAndDefaultCoversBoth() throws Exception {
+        Map<String, Object> translated = entities("status", Map.of("path", "$.state", "values", Map.of("active", "ACTIVE", "suspended", "SUSPENDED")));
+        var r = load(translated, List.of(Map.of("state", "withdrawn"), Map.of("state", "suspended")));
+        Map<String, Object> without = new LinkedHashMap<>(Map.of("id", "nostate", "credential_issuer", "https://n.example"));
+        assertThat(r.ids()).containsExactly("partner:p1", "partner:fine");
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 1 is skipped: status yields nothing "
+                + "(no value at its path, or one its translation does not know); give status a default to say what such a record is");
+        // No value at the path is the same.
+        TestContext ctx = ctx();
+        Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        d.put("issuers", List.of(without, Map.of("id", "a", "credential_issuer", "https://a.example", "state", "active")));
+        serveJson(ctx, d);
+        assertThat(source(ctx, props("mapping", translated)).load().entities()).extracting(e -> e.id()).containsExactly("partner:a");
+        assertThat(source(ctx, props("mapping", entities("status", "$.state"))).load().entities()).extracting(e -> e.id())
+                .containsExactly("partner:a");
+        // A default says what both are: "no status is active" is written default: ACTIVE.
+        Map<String, Object> active = entities("status", Map.of("path", "$.state", "values", Map.of("suspended", "SUSPENDED"), "default", "ACTIVE"));
+        assertThat(source(ctx, props("mapping", active)).load().entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:nostate ACTIVE", "partner:a ACTIVE");
+    }
+
+    @Test
+    void f4_requiredNamesTheMembersARecordMustYield() throws Exception {
+        // The partner renamed valid_until to validUntil: without required, the record would read as "no expiry".
+        Map<String, Object> m = entities("validUntil", "$.valid_until", "required", List.of("validUntil", "name"));
+        var r = load(m, List.of(Map.of("validUntil", "2020-01-01T00:00:00Z", "name", "Renamed"),
+                Map.of("valid_until", "2030-01-01T00:00:00Z", "name", "Kept"),
+                Map.of("valid_until", "2030-01-01T00:00:00Z")));
+        assertThat(r.ids()).containsExactly("partner:p1");
+        assertThat(r.warnings()).containsExactly(
+                "mapping.entities[0]: record 1 is skipped: validUntil is required and yields nothing",
+                "mapping.entities[0]: record 3 is skipped: name is required and yields nothing",
+                "mapping.entities[0]: record 4 is skipped: validUntil is required and yields nothing");
+        // Anchors too, constraints included.
+        TestContext ctx = ctx();
+        Map<String, Object> anchors = MappedSourceRulesTest.mapping();
+        anchors.put("anchors", List.of(Map.of("each", "$.authorities[*]", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "docTypes", "$.doctypes[*]", "required", "docTypes")));
+        Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        d.put("authorities", List.of(Map.of("certificate", MappedTesting.der("iaca"), "docTypes", List.of("org.iso.18013.5.1.mDL"))));
+        serveJson(ctx, d);
+        assertThat(loadError(source(ctx, props("mapping", anchors)))).contains("none of the 1 records at $.authorities[*] could be mapped; "
+                + "record 1 is skipped: docTypes is required and yields nothing");
+        // A name that is no member of the block, or one the block does not map, is a configuration error.
+        assertThat(loadError(source(ctx, props("mapping", entities("required", List.of("valid_until"))))))
+                .contains("mapping.entities[0].required: 'valid_until' is not a member of the block");
+        assertThat(loadError(source(ctx, props("mapping", entities("required", List.of("validUntil"))))))
+                .contains("mapping.entities[0].required: names validUntil, which the block does not map");
+    }
 }

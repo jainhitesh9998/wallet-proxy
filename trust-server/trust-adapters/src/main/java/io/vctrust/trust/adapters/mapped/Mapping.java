@@ -169,21 +169,26 @@ final class Mapping {
         final boolean entity;
         /** Whether a document in which this block finds no record at all is still a list (else the load fails). */
         final boolean allowEmpty;
+        /** The members a record must yield; one that yields none of them is skipped. */
+        final List<String> required;
         private final Map<String, Object> fields;
 
-        private Block(String where, JsonPath each, boolean entity, boolean allowEmpty, Map<String, Object> fields) {
+        private Block(String where, JsonPath each, boolean entity, boolean allowEmpty, List<String> required, Map<String, Object> fields) {
             this.where = where;
             this.each = each;
             this.entity = entity;
             this.allowEmpty = allowEmpty;
+            this.required = required;
             this.fields = fields;
         }
 
-        static final Set<String> ENTITY_MEMBERS = Set.of("each", "allowEmpty", "id", "roles", "name", "display", "identifiers",
-                "certificates", "authorizations", "status", "validFrom", "validUntil", "contexts", "attributes", "metadataPolicy",
-                "framework");
-        static final Set<String> ANCHOR_MEMBERS = Set.of("each", "allowEmpty", "id", "domain", "certificate", "entity", "status",
-                "docTypes", "crlUrls", "crl", "framework");
+        /** Members that say how the block is read, not what a record yields. */
+        private static final Set<String> CONTROL = Set.of("each", "allowEmpty", "required");
+        static final Set<String> ENTITY_MEMBERS = Set.of("each", "allowEmpty", "required", "id", "roles", "name", "display",
+                "identifiers", "certificates", "authorizations", "status", "validFrom", "validUntil", "contexts", "attributes",
+                "metadataPolicy", "framework");
+        static final Set<String> ANCHOR_MEMBERS = Set.of("each", "allowEmpty", "required", "id", "domain", "certificate", "entity",
+                "status", "docTypes", "crlUrls", "crl", "framework");
 
         /** @param eachRequired false for a lookup's answer, where {@code each} defaults to the whole document */
         static Block entity(Object raw, String where, boolean eachRequired) {
@@ -192,6 +197,7 @@ final class Mapping {
             if (!eachRequired && m.containsKey("allowEmpty")) {
                 throw new IllegalArgumentException(where + ": allowEmpty applies to the blocks of entities and anchors");
             }
+            List<String> required = requiredMembers(m, where, ENTITY_MEMBERS);
             Map<String, Object> f = new LinkedHashMap<>();
             f.put("id", required(m, "id", where));
             f.put("roles", many(m.get("roles"), where + ".roles"));
@@ -214,12 +220,13 @@ final class Mapping {
             for (Item item : items(f.get("identifiers"))) {
                 check(item.members.get("type"), IdentifierType.class, "identifier type", where + ".identifiers.type");
             }
-            return new Block(where, each, true, flag(m, "allowEmpty", where), f);
+            return new Block(where, each, true, flag(m, "allowEmpty", where), required, f);
         }
 
         static Block anchor(Object raw, String where) {
             Map<String, Object> m = members(raw, where, ANCHOR_MEMBERS);
             JsonPath each = each(m, where, true);
+            List<String> required = requiredMembers(m, where, ANCHOR_MEMBERS);
             Map<String, Object> f = new LinkedHashMap<>();
             f.put("id", optional(m, "id", where));
             f.put("domain", required(m, "domain", where));
@@ -231,7 +238,31 @@ final class Mapping {
             f.put("crl", optional(m, "crl", where));
             f.put("framework", optional(m, "framework", where));
             check((Value) f.get("status"), EntityStatus.class, "status", where + ".status");
-            return new Block(where, each, false, flag(m, "allowEmpty", where), f);
+            return new Block(where, each, false, flag(m, "allowEmpty", where), required, f);
+        }
+
+        /**
+         * {@code required}: members of the block that the block maps. A name that is not a member, or one the block
+         * does not map (it could never yield anything, and every record would be skipped), is an error.
+         */
+        private static List<String> requiredMembers(Map<String, Object> m, String where, Set<String> members) {
+            if (!m.containsKey("required")) {
+                return List.of();
+            }
+            TreeSet<String> known = new TreeSet<>(members);
+            known.removeAll(CONTROL);
+            List<String> out = new ArrayList<>();
+            for (Object o : list(m.get("required"), where + ".required")) {
+                String name = String.valueOf(o);
+                if (!known.contains(name)) {
+                    throw new IllegalArgumentException(where + ".required: '" + name + "' is not a member of the block; members: " + known);
+                }
+                if (!m.containsKey(name)) {
+                    throw new IllegalArgumentException(where + ".required: names " + name + ", which the block does not map");
+                }
+                out.add(name);
+            }
+            return List.copyOf(out);
         }
 
         private static JsonPath each(Map<String, Object> m, String where, boolean required) {
@@ -260,11 +291,14 @@ final class Mapping {
         }
 
         /**
-         * One record as an entry in the registry format. A member that yields nothing is left out; one that yields
-         * something of the wrong kind (an object where text belongs, a date that is not one) is an error, and the
-         * caller skips the record: a malformed {@code validUntil} must not make a party valid forever. No member can
-         * name a file ({@code certificateLocation} is not one of them): a document from elsewhere never makes the
-         * service read one.
+         * One record as an entry in the registry format. Absent is absent; present but unusable skips the record. A
+         * member whose path matches nothing (or null) is left out. One that finds something of the wrong kind (an
+         * object where text belongs, text where a list or an object must be, a date that is not one) is an error, and
+         * the caller skips the record: a malformed {@code validUntil} must not make a party valid forever, nor a list
+         * of doctypes written as one string leave an IACA unconstrained. So is a configured {@code status} that
+         * yields nothing, an authorization item that lacks a member its mapping configures, and a {@code required}
+         * member that yields nothing. No member can name a file ({@code certificateLocation} is not one of them): a
+         * document from elsewhere never makes the service read one.
          */
         Map<String, Object> map(Object record, Object root) {
             Map<String, Object> out = new LinkedHashMap<>();
@@ -272,10 +306,10 @@ final class Mapping {
                 put(out, "id", text("id", record, root));
                 putList(out, "roles", texts("roles", record, root));
                 put(out, "name", text("name", record, root));
-                putList(out, "display", objects("display", record, root, Set.of("name")));
-                putList(out, "identifiers", objects("identifiers", record, root, Set.of("type", "value")));
+                putList(out, "display", objects("display", record, root, Set.of("name"), false));
+                putList(out, "identifiers", objects("identifiers", record, root, Set.of("type", "value"), false));
                 putList(out, "certificates", texts("certificates", record, root));
-                putList(out, "authorizations", objects("authorizations", record, root, Set.of()));
+                putList(out, "authorizations", objects("authorizations", record, root, Set.of(), true));
                 put(out, "status", text("status", record, root));
                 put(out, "validFrom", instant("validFrom", record, root));
                 put(out, "validUntil", instant("validUntil", record, root));
@@ -283,12 +317,12 @@ final class Mapping {
                 Map<String, Object> attributes = new LinkedHashMap<>();
                 @SuppressWarnings("unchecked")
                 Map<String, Value> named = (Map<String, Value>) fields.get("attributes");
-                named.forEach((k, v) -> put(attributes, k, v.first(record, root)));
+                named.forEach((k, v) -> put(attributes, k, first(v, "attributes." + k, record, root)));
                 if (!attributes.isEmpty()) {
                     out.put("attributes", attributes);
                 }
                 Value policy = (Value) fields.get("metadataPolicy");
-                Object p = policy == null ? null : policy.first(record, root);
+                Object p = policy == null ? null : first(policy, "metadataPolicy", record, root);
                 if (p != null && !(p instanceof Map<?, ?>)) {
                     throw new IllegalArgumentException("metadataPolicy is not an object");
                 }
@@ -308,7 +342,50 @@ final class Mapping {
                 }
             }
             put(out, "framework", text("framework", record, root));
+            if (fields.get("status") != null && out.get("status") == null) {
+                // A state the mapping does not know is not good standing, and a status left out reads as ACTIVE.
+                throw new IllegalArgumentException("status yields nothing (no value at its path, or one its translation does not "
+                        + "know); give status a default to say what such a record is");
+            }
+            for (String member : required) {
+                if (!yielded(out, member)) {
+                    throw new IllegalArgumentException(member + " is required and yields nothing");
+                }
+            }
             return out;
+        }
+
+        /** Whether a member of the block is in the entry it mapped (an anchor's docTypes, crlUrls and crl in its constraints). */
+        private static boolean yielded(Map<String, Object> entry, String member) {
+            if (entry.containsKey(member)) {
+                return true;
+            }
+            return entry.get("constraints") instanceof Map<?, ?> c && c.containsKey(member);
+        }
+
+        /** A value form evaluated for one member: what is wrong with what it finds is said for that member. */
+        private static Object first(Value v, String member, Object current, Object root) {
+            try {
+                return v.first(current, root);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(member + ": " + e.getMessage(), e);
+            }
+        }
+
+        private static List<Object> all(Value v, String member, Object current, Object root) {
+            try {
+                return v.all(current, root);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(member + ": " + e.getMessage(), e);
+            }
+        }
+
+        private static List<Object> select(JsonPath p, String member, Object current, Object root) {
+            try {
+                return p.select(current, root);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(member + ": " + e.getMessage(), e);
+            }
         }
 
         private static void put(Map<String, Object> out, String key, Object value) {
@@ -325,23 +402,26 @@ final class Mapping {
 
         private String text(String member, Object record, Object root) {
             Value v = (Value) fields.get(member);
-            return v == null ? null : scalar(v.first(record, root), member);
+            return v == null ? null : scalar(first(v, member, record, root), member);
         }
 
         private List<String> texts(String member, Object record, Object root) {
             List<String> out = new ArrayList<>();
             for (Value v : values(fields.get(member))) {
-                for (Object o : v.all(record, root)) {
+                for (Object o : all(v, member, record, root)) {
                     out.add(scalar(o, member));
                 }
             }
             return out;
         }
 
-        /** A date as an ISO instant: an ISO date-time or date, or seconds since the epoch (a number or digits). */
+        /**
+         * A date as an ISO instant: an ISO date-time or date, or seconds since the epoch (a whole number, or digits,
+         * of at most twelve digits). Anything else is not a date: a time in milliseconds is not one in seconds.
+         */
         private String instant(String member, Object record, Object root) {
             Value v = (Value) fields.get(member);
-            Object found = v == null ? null : v.first(record, root);
+            Object found = v == null ? null : first(v, member, record, root);
             if (found == null) {
                 return null;
             }
@@ -352,22 +432,34 @@ final class Mapping {
             return i.toString();
         }
 
-        /** Nested items: one per match of the item's {@code each}, or one; left out without a required member. */
-        private List<Map<String, Object>> objects(String member, Object record, Object root, Set<String> required) {
-            return objects(items(fields.get(member)), member, record, root, required);
+        /**
+         * Nested items: one per match of the item's {@code each}, or one. Without a member in {@code required}, an
+         * item is left out. With {@code strict} (authorizations), an item for which any configured member yields
+         * nothing skips the record: an authorization without its type would cover every type of its format, and
+         * one without anything would leave the entity unconstrained for a lenient client.
+         */
+        private List<Map<String, Object>> objects(String member, Object record, Object root, Set<String> required, boolean strict) {
+            return objects(items(fields.get(member)), member, record, root, required, strict);
         }
 
         private static List<Map<String, Object>> objects(List<Item> items, String member, Object record, Object root,
-                                                         Set<String> required) {
+                                                         Set<String> required, boolean strict) {
             List<Map<String, Object>> out = new ArrayList<>();
             for (Item item : items) {
-                List<Object> matches = item.each == null ? List.of(record) : item.each.select(record, root);
+                List<Object> matches = item.each == null ? List.of(record) : select(item.each, member, record, root);
                 for (Object match : matches) {
                     if (match == null) {
                         continue;
                     }
                     Map<String, Object> o = new LinkedHashMap<>();
-                    item.members.forEach((k, v) -> put(o, k, scalar(v.first(match, root), member + "." + k)));
+                    for (Map.Entry<String, Value> e : item.members.entrySet()) {
+                        String k = e.getKey();
+                        put(o, k, scalar(first(e.getValue(), member + "." + k, match, root), member + "." + k));
+                        if (strict && !o.containsKey(k)) {
+                            throw new IllegalArgumentException(member + ": an item yields no " + k
+                                    + "; an authorization is never left open where the document does not say so");
+                        }
+                    }
                     if (o.keySet().containsAll(required) && !o.isEmpty()) {
                         out.add(o);
                     }
@@ -382,11 +474,11 @@ final class Mapping {
             List<Object> entries = (List<Object>) fields.get("contexts");
             for (Object e : entries) {
                 if (e instanceof Value v) {
-                    for (Object o : v.all(record, root)) {
+                    for (Object o : all(v, "contexts", record, root)) {
                         out.add(scalar(o, "contexts"));
                     }
                 } else {
-                    out.addAll(objects(List.of((Item) e), "contexts", record, root, Set.of("url")));
+                    out.addAll(objects(List.of((Item) e), "contexts", record, root, Set.of("url"), false));
                 }
             }
             return out;
@@ -455,7 +547,7 @@ final class Mapping {
             each = pathAt(s, where + ".each");
         }
         Map<String, Value> members = new LinkedHashMap<>();
-        for (String k : allowed) {
+        for (String k : new TreeSet<>(allowed)) {   // in a fixed order, so that a message names the same member each time
             if (m.containsKey(k)) {
                 members.put(k, Value.parse(m.get(k), where + "." + k));
             } else if (required.contains(k)) {
@@ -613,11 +705,14 @@ final class Mapping {
         return Instant.ofEpochSecond(d.longValue());
     }
 
-    /** An ISO date-time or date, or seconds since the epoch (a number or a string of digits); null for anything else. */
+    /**
+     * An ISO date-time or date, or seconds since the epoch: a string of one to twelve digits, or a whole number in that
+     * range. Null for anything else, which is not a date.
+     */
     static Instant instant(Object v) {
         try {
             if (v instanceof Number n) {
-                return Instant.ofEpochSecond(n.longValue());
+                return epochSeconds(n, true);
             }
             if (!(v instanceof String s)) {
                 return null;

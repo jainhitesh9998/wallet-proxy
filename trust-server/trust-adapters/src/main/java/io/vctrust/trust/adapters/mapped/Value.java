@@ -15,10 +15,12 @@ import java.util.TreeSet;
  *       of the document;</li>
  *   <li>any other scalar: a constant; {@code {value: X}} for a constant that starts with {@code $} or {@code ^};</li>
  *   <li>{@code {path: P, values: {a: X}, default: Z}}: the value at P, translated; {@code values} may also be a list of
- *       {@code {when, then}} pairs, for keys a YAML or Spring property key cannot carry. Without {@code default}, a value
- *       not in the table yields nothing;</li>
+ *       {@code {when, then}} pairs, for keys a YAML or Spring property key cannot carry. {@code default} stands for both
+ *       a value not in the table and no value at P; without it, either yields nothing;</li>
  *   <li>{@code {template: "did:web:{$.host}"}}: a string with paths in braces; nothing if any of them yields nothing.</li>
  * </ul>
+ *
+ * <p>A path that finds something of the wrong kind (see {@link JsonPath#select}) is an error, which skips the record.
  */
 sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value.Template {
 
@@ -267,15 +269,20 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             throw new IllegalArgumentException("template '" + text + "' has a { without }");
         }
 
+        /** A part that finds nothing makes the template yield nothing; one that finds an object or a list is an error. */
         @Override
         public List<Object> all(Object current, Object root) {
             StringBuilder out = new StringBuilder();
             for (Object part : parts) {
                 if (part instanceof JsonPath p) {
                     List<Object> found = present(p.select(current, root));
-                    String t = found.isEmpty() ? null : Value.text(found.getFirst());
-                    if (t == null) {
+                    if (found.isEmpty()) {
                         return List.of();
+                    }
+                    String t = Value.text(found.getFirst());
+                    if (t == null) {
+                        throw new IllegalArgumentException("the path " + p.text() + " finds " + JsonPath.kind(found.getFirst())
+                                + " where text belongs");
                     }
                     out.append(t);
                 } else {
