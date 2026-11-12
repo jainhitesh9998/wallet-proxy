@@ -129,13 +129,13 @@ class MappingLanguageTest {
                 "contexts", "^.contexts[*]", "attributes", Map.of("first", "^.contexts[0]")))));
         Mapping.Block block = m.entities.getFirst();
         for (Object record : block.records(root)) {
-            assertThat(block.map(record, root)).containsEntry("contexts", List.of("https://contexts.example/a", "https://contexts.example/b"));
+            assertThat(block.map(record, root).entry()).containsEntry("contexts", List.of("https://contexts.example/a", "https://contexts.example/b"));
         }
         assertThat(lookups).hasValue(2);   // once for each of the two paths, for the whole document
         // Another document is another evaluation.
         Map<String, Object> other = new java.util.LinkedHashMap<>(root);
         other.put("contexts", List.of("https://contexts.example/c"));
-        assertThat(block.map(issuers.getFirst(), other)).containsEntry("contexts", List.of("https://contexts.example/c"));
+        assertThat(block.map(issuers.getFirst(), other).entry()).containsEntry("contexts", List.of("https://contexts.example/c"));
     }
 
     static Object first(Object form, Object record) {
@@ -303,17 +303,21 @@ class MappingLanguageTest {
                    "validUntil": "$.n", "attributes": {"country": "$.country", "publisher": "^.publisher"}}]}"""));
         Object a = ((List<?>) ((Map<?, ?>) DOC).get("issuers")).get(0);
         assertThat(m.entities.getFirst().records(DOC)).hasSize(2);
-        assertThat(m.entities.getFirst().map(a, DOC)).isEqualTo(Json.parseObject("""
+        Mapping.Mapped mapped = m.entities.getFirst().map(a, DOC);
+        assertThat(mapped.entry()).isEqualTo(Json.parseObject("""
                 {"id": "p:a", "roles": ["CREDENTIAL_ISSUER"], "name": "Alpha",
                  "identifiers": [{"type": "URL", "value": "https://a.example"}, {"type": "CLIENT_ID", "value": "x"},
                                  {"type": "CLIENT_ID", "value": "y"}],
                  "authorizations": [{"format": "mso_mdoc", "type": "org.iso.18013.5.1.mDL"}],
                  "status": "ACTIVE", "validUntil": "1970-01-01T00:00:01Z", "attributes": {"country": "UT", "publisher": "Partner"}}"""));
-        // Something of the wrong kind is an error (the record is skipped), not a member left out.
-        assertThatThrownBy(() -> m.entities.getFirst().map(Map.of("id", "z", "n", "soon"), DOC)).hasMessageContaining("validUntil is not a date: 'soon'");
+        assertThat(mapped.unusable()).isEmpty();
+        // Something of the wrong kind cannot be read: the member is named with why, not left out as if absent.
+        Mapping.Mapped soon = m.entities.getFirst().map(Map.of("id", "z", "n", "soon"), DOC);
+        assertThat(soon.unusable()).containsExactly(Map.entry("validUntil", "validUntil is not a date: 'soon'"));
+        assertThat(soon.entry()).containsEntry("id", "p:z").doesNotContainKey("validUntil");
         Mapping plain = Mapping.parse(Map.of("entities", List.of(Map.of("each", "$[*]", "id", "$.id", "roles", "$.roles[*]"))));
-        assertThatThrownBy(() -> plain.entities.getFirst().map(Map.of("id", Map.of("x", 1)), DOC)).hasMessageContaining("id is an object");
-        assertThatThrownBy(() -> plain.entities.getFirst().map(Map.of("id", "z", "roles", List.of(List.of("VERIFIER"))), DOC))
-                .hasMessageContaining("roles is a list");
+        assertThat(plain.entities.getFirst().map(Map.of("id", Map.of("x", 1)), DOC).unusable().get("id")).contains("id is an object");
+        assertThat(plain.entities.getFirst().map(Map.of("id", "z", "roles", List.of(List.of("VERIFIER"))), DOC).unusable().get("roles"))
+                .contains("roles is a list");
     }
 }

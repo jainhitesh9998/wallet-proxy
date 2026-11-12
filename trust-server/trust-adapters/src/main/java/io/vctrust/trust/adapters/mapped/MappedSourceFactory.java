@@ -391,7 +391,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                             throw new TrustSourceException("The list has more than " + config.maxEntities() + " entity records (limits.entities)");
                         }
                         for (Object record : records) {
-                            entityTallies[b].count(mapEntity(block, record, page.root(), provenance), warnings);
+                            Tally t = entityTallies[b];
+                            t.count(mapEntity(block, record, page.root(), provenance, t.records + 1), warnings);
                         }
                     }
                     for (int b = 0; b < config.mapping().anchors.size(); b++) {
@@ -762,37 +763,116 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             return i;
         }
 
-        /** One record as an entity, or why not. */
-        private Object mapEntity(Mapping.Block block, Object record, Object root, Provenance provenance) {
-            String id = null;
-            try {
-                Map<String, Object> entry = block.map(record, root);
-                id = entry.get("id") instanceof String s ? s : null;
-                if (id != null && !ENTRY_ID.matcher(id).matches()) {
-                    return new Skipped(block, null, ENTRY_ID_RULE);
+        /**
+         * One record as an entity. A record that cannot be read completely is never dropped: leaving its entry out
+         * would leave out every restriction it states, while a chain to an anchor of the list still decides trusted
+         * (by design, also without an entity). So:
+         *
+         * <ul>
+         *   <li>when what says whom the record is about ({@link Mapping#IDENTIFYING}) cannot be read, or there is no
+         *       id, listing the record could keep nobody out: the load fails, naming the record and the member;</li>
+         *   <li>when anything else cannot be read, the entity is listed with what could be read, not in good standing
+         *       (SUSPENDED, or the stricter status the record states), and a warning says what was left out and why.</li>
+         * </ul>
+         *
+         * <p>A record that names another framework is about a party of that framework, and is skipped.
+         *
+         * @param number the record's number in its block, for messages
+         * @return a {@link TrustedEntity} read completely, an {@link Incomplete} one, or a {@link Skipped} record
+         * @throws TrustSourceException when the record cannot be listed at all
+         */
+        private Object mapEntity(Mapping.Block block, Object record, Object root, Provenance provenance, int number)
+                throws TrustSourceException {
+            Mapping.Mapped m = block.map(record, root);
+            Map<String, Object> entry = new LinkedHashMap<>(m.entry());
+            Map<String, String> unusable = new LinkedHashMap<>(m.unusable());
+            String id = entry.get("id") instanceof String s ? s : null;
+            String label = label(number, id);
+            for (String member : Mapping.IDENTIFYING) {
+                if (unusable.containsKey(member)) {
+                    throw unreadable(block, label, unusable.get(member));
                 }
-                return TrustedEntityParser.entity(entry, def.frameworkId(), provenance, NO_FILES);
-            } catch (Exception e) {
-                return new Skipped(block, id, e.getMessage());
             }
+            if (id == null) {
+                throw unreadable(block, label, "it yields no id");
+            }
+            if (!ENTRY_ID.matcher(id).matches()) {
+                throw unreadable(block, label, ENTRY_ID_RULE);
+            }
+            if (entry.containsKey("framework")) {
+                try {
+                    TrustedEntityParser.entity(Map.of("id", id, "framework", entry.get("framework")), def.frameworkId(), provenance, NO_FILES);
+                } catch (Exception e) {
+                    return new Skipped(block, id, message(e));
+                }
+            }
+            TrustedEntity entity;
+            try {
+                entity = TrustedEntityParser.entity(entry, def.frameworkId(), provenance, NO_FILES);
+            } catch (Exception e) {
+                // Which members the registry format refuses: each is read on its own, with the record's id.
+                for (String member : List.copyOf(entry.keySet())) {
+                    if (member.equals("id")) {
+                        continue;
+                    }
+                    try {
+                        TrustedEntityParser.entity(Map.of("id", id, member, entry.get(member)), def.frameworkId(), provenance, NO_FILES);
+                    } catch (Exception refused) {
+                        String why = member + ": " + message(refused);
+                        if (Mapping.IDENTIFYING.contains(member)) {
+                            throw unreadable(block, label, why);
+                        }
+                        unusable.put(member, why);
+                        entry.remove(member);
+                    }
+                }
+                try {
+                    entity = TrustedEntityParser.entity(entry, def.frameworkId(), provenance, NO_FILES);
+                } catch (Exception refused) {
+                    throw unreadable(block, label, message(refused));
+                }
+            }
+            if (unusable.isEmpty()) {
+                return entity;
+            }
+            EntityStatus status = entity.status().ordinal() > EntityStatus.SUSPENDED.ordinal() ? entity.status() : EntityStatus.SUSPENDED;
+            return new Incomplete(entity.toBuilder().status(status).build(),
+                    label + " is listed " + status + ": " + Mapping.escape(String.join("; ", unusable.values())));
         }
 
-        /** One record as an anchor, or why not. An anchor is one certificate. */
+        /** A record by its number, and by its id when it has one that may be shown. */
+        private static String label(int number, String id) {
+            return "record " + number + (id == null || !ENTRY_ID.matcher(id).matches() ? "" : " (id " + Mapping.quote(id) + ")");
+        }
+
+        private static TrustSourceException unreadable(Mapping.Block block, String label, String why) {
+            return new TrustSourceException(block.where + ": " + label + " cannot be read: " + Mapping.escape(why)
+                    + "; a record whose id, roles, identifiers or certificates cannot be read fails the load");
+        }
+
+        private static String message(Exception e) {
+            return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        }
+
+        /** One record as an anchor, or why not. An anchor is one certificate. Leaving an anchor out removes trust. */
         private Object mapAnchor(Mapping.Block block, Object record, Object root, Provenance provenance) {
-            String id = null;
+            Mapping.Mapped m = block.map(record, root);
+            String id = m.entry().get("id") instanceof String s ? s : null;
+            String shown = id != null && ENTRY_ID.matcher(id).matches() ? id : null;
+            if (!m.unusable().isEmpty()) {
+                return new Skipped(block, shown, String.join("; ", m.unusable().values()));
+            }
+            if (id != null && shown == null) {
+                return new Skipped(block, null, ENTRY_ID_RULE);
+            }
             try {
-                Map<String, Object> entry = block.map(record, root);
-                id = entry.get("id") instanceof String s ? s : null;
-                if (id != null && !ENTRY_ID.matcher(id).matches()) {
-                    return new Skipped(block, null, ENTRY_ID_RULE);
-                }
-                List<TrustAnchor> parsed = TrustedEntityParser.anchors(entry, def.frameworkId(), provenance, NO_FILES);
+                List<TrustAnchor> parsed = TrustedEntityParser.anchors(m.entry(), def.frameworkId(), provenance, NO_FILES);
                 if (parsed.size() != 1) {
                     return new Skipped(block, id, "its certificate holds " + parsed.size() + " certificates; an anchor is one");
                 }
                 return parsed.getFirst();
             } catch (Exception e) {
-                return new Skipped(block, id, e.getMessage());
+                return new Skipped(block, id, message(e));
             }
         }
 
@@ -803,6 +883,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
         }
 
+        /** An entity listed without what could not be read, not in good standing; and the warning that says so. */
+        private record Incomplete(TrustedEntity entity, String warning) {
+        }
+
         private static Tally[] tallies(List<Mapping.Block> blocks) {
             Tally[] out = new Tally[blocks.size()];
             for (int i = 0; i < out.length; i++) {
@@ -811,7 +895,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             return out;
         }
 
-        /** Per block: how many records the document had, how many mapped, and why the first one did not. */
+        /** Per block: how many records the document had, how many were read completely, and why the first one was not. */
         private static final class Tally {
             final Mapping.Block block;
             int records;
@@ -825,15 +909,21 @@ public final class MappedSourceFactory implements TrustSourceFactory {
 
             void count(Object result, Warnings warnings) {
                 records++;
+                String why = null;
                 if (result instanceof Skipped s) {
-                    String why = "record " + records + (s.id() == null ? "" : " (id " + Mapping.quote(s.id()) + ")") + " is skipped: " + s.reason();
+                    why = "record " + records + (s.id() == null ? "" : " (id " + Mapping.quote(s.id()) + ")") + " is skipped: " + s.reason();
+                } else if (result instanceof Incomplete i) {
+                    why = i.warning();
+                    pending.add(i.entity());
+                } else {
+                    mapped++;
+                    pending.add(result);
+                }
+                if (why != null) {
                     if (firstFailure == null) {
                         firstFailure = why;
                     }
                     warnings.add(block.where + ": " + why);
-                } else {
-                    mapped++;
-                    pending.add(result);
                 }
             }
 
@@ -844,9 +934,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
 
             /**
-             * Records that all fail to map mean that the document's format has changed: the load fails. So does a block
-             * that finds no record in any page, unless it says {@code allowEmpty}: a document of another kind signed
-             * by the same key, or an empty answer, must not pass for a list that has emptied.
+             * Records none of which could be read completely mean that the document's format has changed: the load
+             * fails, and the last good content is better than suspending everyone. So does a block that finds no
+             * record in any page, unless it says {@code allowEmpty}: a document of another kind signed by the same
+             * key, or an empty answer, must not pass for a list that has emptied.
              */
             void check(Warnings warnings) throws TrustSourceException {
                 if (records == 0) {
@@ -856,7 +947,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     }
                 } else if (mapped == 0) {
                     throw new TrustSourceException(block.where + ": none of the " + records + " records at " + block.each.text()
-                            + " could be mapped; " + firstFailure);
+                            + (block.entity ? " could be read completely; " : " could be mapped; ") + firstFailure);
                 }
             }
         }
@@ -942,8 +1033,12 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     if (records.size() > config.maxEntities()) {
                         throw new TrustSourceException("The lookup answered with more than " + config.maxEntities() + " records");
                     }
-                    for (Object record : records) {
-                        if (mapEntity(l.entity(), record, root, provenance) instanceof TrustedEntity e) {
+                    for (int i = 0; i < records.size(); i++) {
+                        // A record about the identifier that cannot be read completely answers with a suspended entity,
+                        // not with "not found"; one whose identifying members cannot be read fails the lookup.
+                        Object mapped = mapEntity(l.entity(), records.get(i), root, provenance, i + 1);
+                        TrustedEntity e = mapped instanceof TrustedEntity te ? te : mapped instanceof Incomplete inc ? inc.entity() : null;
+                        if (e != null) {
                             if (e.identifiers().contains(identifier)) {
                                 found = Optional.of(e);
                                 break;

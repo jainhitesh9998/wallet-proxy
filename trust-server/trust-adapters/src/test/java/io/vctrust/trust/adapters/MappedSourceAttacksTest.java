@@ -349,35 +349,49 @@ class MappedSourceAttacksTest {
 
     static final Map<String, Object> AUTHORIZATIONS = Map.of("each", "$.credentials[*]", "format", "$.format", "type", "$.type");
 
+    /** The ids of the entities a load listed as ACTIVE, and of those it listed as SUSPENDED (second round: rule A). */
+    static List<String> withStatus(SourceLoadResultView r, io.vctrust.trust.core.model.EntityStatus status) {
+        return r.entities().stream().filter(e -> e.status() == status).map(e -> e.id()).toList();
+    }
+
     @Test
-    void f4_anAuthorizationThatLacksAConfiguredMemberSkipsTheRecordAndIsNoWildcard() throws Exception {
+    void f4_anAuthorizationThatLacksAConfiguredMemberMakesTheRecordUnreadableAndIsNoWildcard() throws Exception {
+        // Second round (rule A): a record that cannot be read completely is listed SUSPENDED without what could not be
+        // read, no longer skipped. A skipped record left its party to the anchor alone.
         Map<String, Object> m = entities("authorizations", List.of(AUTHORIZATIONS));
         var r = load(m, List.of(
                 Map.of("credentials", List.of(Map.of("format", "mso_mdoc"))),                                 // type missing
                 Map.of("credentials", List.of(Map.of("fmt", "mso_mdoc", "vct", "org.iso.18013.5.1.mDL"))),    // members renamed
                 Map.of("credentials", List.of(Map.of("format", "mso_mdoc", "type", "org.iso.18013.5.1.mDL"))),
                 Map.of("credentials", List.of())));                                                         // none: absent
-        assertThat(r.ids()).containsExactly("partner:p2", "partner:p3", "partner:fine");
+        assertThat(withStatus(r, io.vctrust.trust.core.model.EntityStatus.ACTIVE)).containsExactly("partner:p2", "partner:p3", "partner:fine");
+        assertThat(withStatus(r, io.vctrust.trust.core.model.EntityStatus.SUSPENDED)).containsExactly("partner:p0", "partner:p1");
+        assertThat(r.entities()).filteredOn(e -> e.status() != io.vctrust.trust.core.model.EntityStatus.ACTIVE)
+                .allSatisfy(e -> assertThat(e.authorizations()).isEmpty());
         assertThat(r.warnings()).containsExactly(
-                "mapping.entities[0]: record 1 is skipped: authorizations: an item yields no type; "
+                "mapping.entities[0]: record 1 (id 'partner:p0') is listed SUSPENDED: authorizations: an item yields no type; "
                         + "an authorization is never left open where the document does not say so",
-                "mapping.entities[0]: record 2 is skipped: authorizations: an item yields no format; "
+                "mapping.entities[0]: record 2 (id 'partner:p1') is listed SUSPENDED: authorizations: an item yields no format; "
                         + "an authorization is never left open where the document does not say so");
     }
 
     @Test
-    void f4_aDateThatIsNotOneSkipsTheRecordAndANumberIsSecondsInTheRangeOfTwelveDigits() throws Exception {
+    void f4_aDateThatIsNotOneMakesTheRecordUnreadableAndANumberIsSecondsInTheRangeOfTwelveDigits() throws Exception {
         Map<String, Object> m = entities("validUntil", "$.valid_until");
         long millis = MappedSourceRulesTest.NOW.toEpochMilli();
         var r = load(m, List.of(Map.of("valid_until", millis), Map.of("valid_until", -1), Map.of("valid_until", 1.5),
                 Map.of("valid_until", Map.of("seconds", 1)), Map.of("valid_until", 999_999_999_999L)));
-        assertThat(r.ids()).containsExactly("partner:p4", "partner:fine");
-        assertThat(r.entities().getFirst().validUntil()).isEqualTo(java.time.Instant.ofEpochSecond(999_999_999_999L));
+        assertThat(withStatus(r, io.vctrust.trust.core.model.EntityStatus.ACTIVE)).containsExactly("partner:p4", "partner:fine");
+        assertThat(withStatus(r, io.vctrust.trust.core.model.EntityStatus.SUSPENDED))
+                .containsExactly("partner:p0", "partner:p1", "partner:p2", "partner:p3");
+        assertThat(r.entities()).filteredOn(e -> e.status() != io.vctrust.trust.core.model.EntityStatus.ACTIVE)
+                .allSatisfy(e -> assertThat(e.validUntil()).isNull());
+        assertThat(r.entities().get(4).validUntil()).isEqualTo(java.time.Instant.ofEpochSecond(999_999_999_999L));
         assertThat(r.warnings()).containsExactly(
-                "mapping.entities[0]: record 1 is skipped: validUntil is not a date: '" + millis + "'",
-                "mapping.entities[0]: record 2 is skipped: validUntil is not a date: '-1'",
-                "mapping.entities[0]: record 3 is skipped: validUntil is not a date: '1.5'",
-                "mapping.entities[0]: record 4 is skipped: validUntil is not a date: '{...}'");
+                "mapping.entities[0]: record 1 (id 'partner:p0') is listed SUSPENDED: validUntil is not a date: '" + millis + "'",
+                "mapping.entities[0]: record 2 (id 'partner:p1') is listed SUSPENDED: validUntil is not a date: '-1'",
+                "mapping.entities[0]: record 3 (id 'partner:p2') is listed SUSPENDED: validUntil is not a date: '1.5'",
+                "mapping.entities[0]: record 4 (id 'partner:p3') is listed SUSPENDED: validUntil is not a date: '{...}'");
         // A list fact that is not a date fails the load.
         TestContext ctx = ctx();
         Map<String, Object> d = MappedSourceRulesTest.doc("a");
@@ -387,7 +401,7 @@ class MappedSourceAttacksTest {
     }
 
     @Test
-    void f4_aListPathOverSomethingThatIsNoListSkipsTheRecordAndConstrainsNothingAway() throws Exception {
+    void f4_aListPathOverSomethingThatIsNoListMakesTheRecordUnreadableAndConstrainsNothingAway() throws Exception {
         TestContext ctx = ctx();
         Map<String, Object> m = MappedSourceRulesTest.mapping();
         m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
@@ -402,34 +416,40 @@ class MappedSourceAttacksTest {
             assertThat(a.id()).isEqualTo("bound-iaca");
             assertThat(a.docTypes()).containsExactly("org.iso.18013.5.1.mDL");
         });
-        assertThat(r.warnings()).containsExactly("mapping.anchors[0]: record 1 is skipped: "
+        // An anchor that cannot be read is still skipped: leaving an anchor out removes trust.
+        assertThat(r.warnings()).containsExactly("mapping.anchors[0]: record 1 (id 'free-iaca') is skipped: "
                 + "docTypes: the path $.doctypes[*] finds text where [*] needs a list or an object");
 
         // The same for a member under something that is not an object, and for a template.
         var e = load(entities("name", "$.display.name", "attributes", Map.of("region", Map.of("template", "UT-{$.region}"))),
                 List.of(Map.of("display", "Alpha"), Map.of("region", Map.of("code", "N")), Map.of("display", Map.of("name", "Gamma"))));
-        assertThat(e.ids()).containsExactly("partner:p2", "partner:fine");
+        assertThat(withStatus(e, io.vctrust.trust.core.model.EntityStatus.ACTIVE)).containsExactly("partner:p2", "partner:fine");
+        assertThat(withStatus(e, io.vctrust.trust.core.model.EntityStatus.SUSPENDED)).containsExactly("partner:p0", "partner:p1");
         assertThat(e.warnings()).containsExactly(
-                "mapping.entities[0]: record 1 is skipped: name: the path $.display.name finds text where .name needs an object",
-                "mapping.entities[0]: record 2 is skipped: attributes.region: the path $.region finds an object where text belongs");
+                "mapping.entities[0]: record 1 (id 'partner:p0') is listed SUSPENDED: name: the path $.display.name finds text where "
+                        + ".name needs an object",
+                "mapping.entities[0]: record 2 (id 'partner:p1') is listed SUSPENDED: attributes.region: the path $.region finds an "
+                        + "object where text belongs");
     }
 
     @Test
-    void f4_aStatusTheMappingCannotReadSkipsTheRecordAndDefaultCoversBoth() throws Exception {
+    void f4_aStatusTheMappingCannotReadMakesTheRecordUnreadableAndDefaultCoversBoth() throws Exception {
         Map<String, Object> translated = entities("status", Map.of("path", "$.state", "values", Map.of("active", "ACTIVE", "suspended", "SUSPENDED")));
         var r = load(translated, List.of(Map.of("state", "withdrawn"), Map.of("state", "suspended")));
         Map<String, Object> without = new LinkedHashMap<>(Map.of("id", "nostate", "credential_issuer", "https://n.example"));
-        assertThat(r.ids()).containsExactly("partner:p1", "partner:fine");
-        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 1 is skipped: status yields nothing "
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:p0 SUSPENDED", "partner:p1 SUSPENDED", "partner:fine ACTIVE");
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 1 (id 'partner:p0') is listed SUSPENDED: status yields nothing "
                 + "(no value at its path, or one its translation does not know); give status a default to say what such a record is");
         // No value at the path is the same.
         TestContext ctx = ctx();
         Map<String, Object> d = MappedSourceRulesTest.doc("a");
         d.put("issuers", List.of(without, Map.of("id", "a", "credential_issuer", "https://a.example", "state", "active")));
         serveJson(ctx, d);
-        assertThat(source(ctx, props("mapping", translated)).load().entities()).extracting(e -> e.id()).containsExactly("partner:a");
-        assertThat(source(ctx, props("mapping", entities("status", "$.state"))).load().entities()).extracting(e -> e.id())
-                .containsExactly("partner:a");
+        assertThat(source(ctx, props("mapping", translated)).load().entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:nostate SUSPENDED", "partner:a ACTIVE");
+        assertThat(source(ctx, props("mapping", entities("status", "$.state"))).load().entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:nostate SUSPENDED", "partner:a ACTIVE");
         // A default says what both are: "no status is active" is written default: ACTIVE.
         Map<String, Object> active = entities("status", Map.of("path", "$.state", "values", Map.of("suspended", "SUSPENDED"), "default", "ACTIVE"));
         assertThat(source(ctx, props("mapping", active)).load().entities()).extracting(e -> e.id() + " " + e.status())
@@ -443,11 +463,13 @@ class MappedSourceAttacksTest {
         var r = load(m, List.of(Map.of("validUntil", "2020-01-01T00:00:00Z", "name", "Renamed"),
                 Map.of("valid_until", "2030-01-01T00:00:00Z", "name", "Kept"),
                 Map.of("valid_until", "2030-01-01T00:00:00Z")));
-        assertThat(r.ids()).containsExactly("partner:p1");
+        assertThat(withStatus(r, io.vctrust.trust.core.model.EntityStatus.ACTIVE)).containsExactly("partner:p1");
+        assertThat(withStatus(r, io.vctrust.trust.core.model.EntityStatus.SUSPENDED)).containsExactly("partner:p0", "partner:p2", "partner:fine");
         assertThat(r.warnings()).containsExactly(
-                "mapping.entities[0]: record 1 is skipped: validUntil is required and yields nothing",
-                "mapping.entities[0]: record 3 is skipped: name is required and yields nothing",
-                "mapping.entities[0]: record 4 is skipped: validUntil is required and yields nothing");
+                "mapping.entities[0]: record 1 (id 'partner:p0') is listed SUSPENDED: validUntil is required and yields nothing",
+                "mapping.entities[0]: record 3 (id 'partner:p2') is listed SUSPENDED: name is required and yields nothing",
+                "mapping.entities[0]: record 4 (id 'partner:fine') is listed SUSPENDED: validUntil is required and yields nothing; "
+                        + "name is required and yields nothing");
         // Anchors too, constraints included.
         TestContext ctx = ctx();
         Map<String, Object> anchors = MappedSourceRulesTest.mapping();
@@ -488,17 +510,19 @@ class MappedSourceAttacksTest {
         TestContext ctx = ctx();
         serveJson(ctx, withContexts(200, 2_000));
         Map<String, Object> m = entities("contexts", "^.contexts[*]");
-        assertThat(loadError(source(ctx, props("mapping", m)))).contains("none of the 200 records at $.issuers[*] could be mapped; "
-                + "record 1 is skipped: contexts: yields more than 1000 values for one record");
+        assertThat(loadError(source(ctx, props("mapping", m)))).contains("none of the 200 records at $.issuers[*] could be read completely; "
+                + "record 1 (id 'partner:p0') is listed SUSPENDED: contexts: yields more than 1000 values for one record");
         serveJson(ctx, withContexts(200, 1_000));
         assertThat(source(ctx, props("mapping", m)).load().entities()).hasSize(200)
                 .allSatisfy(e -> assertThat((List<?>) e.attributes().get(io.vctrust.trust.core.metadata.Oid4vciMetadataMapper.CONTEXTS))
                         .hasSize(1_000));
         // Several forms of one member count together, and so do the items of a nested each.
+        // Certificates and identifiers say whom a record is about: one that cannot be read fails the load (rule A).
         m = entities("certificates", List.of("$.a[*]", "$.b[*]"), "identifiers", List.of(Map.of("each", "^.contexts[*]", "type", "URL", "value", "$")));
-        var r = load(m, List.of(Map.of("a", java.util.Collections.nCopies(600, MappedTesting.der("ds")), "b",
-                java.util.Collections.nCopies(600, MappedTesting.der("ds")))));
-        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 1 is skipped: certificates: yields more than 1000 values for one record");
+        Map<String, Object> m2 = m;
+        assertThatThrownBy(() -> load(m2, List.of(Map.of("a", java.util.Collections.nCopies(600, MappedTesting.der("ds")), "b",
+                java.util.Collections.nCopies(600, MappedTesting.der("ds"))))))
+                .hasMessageContaining("record 1 (id 'partner:p0') cannot be read: certificates: yields more than 1000 values for one record");
         TestContext many = ctx();
         serveJson(many, withContexts(3, 1_001));
         assertThat(loadError(source(many, props("mapping", m)))).contains("identifiers: yields more than 1000 values for one record");

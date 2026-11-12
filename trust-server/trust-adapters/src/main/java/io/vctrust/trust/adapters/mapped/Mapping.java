@@ -46,6 +46,19 @@ final class Mapping {
 
     static final int DEFAULT_MAX_PAGES = 50;
 
+    /**
+     * The members of an entity that say whom a record is about: through them a key is tied to the entry, and the entry
+     * to a question. A record in which one of them cannot be read cannot keep anybody out by being listed.
+     */
+    static final List<String> IDENTIFYING = List.of("id", "roles", "identifiers", "certificates");
+
+    /**
+     * What one record yields: its entry in the registry format, with every member that could be read, and the members
+     * that could not, each with why (in the order the record was read).
+     */
+    record Mapped(Map<String, Object> entry, Map<String, String> unusable) {
+    }
+
     final ListFacts list;
     final Pages pages;
     final List<Block> entities;
@@ -291,76 +304,106 @@ final class Mapping {
         }
 
         /**
-         * One record as an entry in the registry format. Absent is absent; present but unusable skips the record. A
-         * member whose path matches nothing (or null) is left out. One that finds something of the wrong kind (an
-         * object where text belongs, text where a list or an object must be, a date that is not one) is an error, and
-         * the caller skips the record: a malformed {@code validUntil} must not make a party valid forever, nor a list
-         * of doctypes written as one string leave an IACA unconstrained. So is a configured {@code status} that
-         * yields nothing, an authorization item that lacks a member its mapping configures, and a {@code required}
-         * member that yields nothing. No member can name a file ({@code certificateLocation} is not one of them): a
-         * document from elsewhere never makes the service read one.
+         * One record as an entry in the registry format, member by member. Absent is absent; present but unusable
+         * is said for the member. A member whose path matches nothing (or null) is left out. One that finds something
+         * of the wrong kind (an object where text belongs, text where a list or an object must be, a date that is not
+         * one) cannot be read, and is named with why in {@link Mapped#unusable}: a malformed {@code validUntil} must
+         * not make a party valid forever, nor a list of doctypes written as one string leave an IACA unconstrained.
+         * So is a configured {@code status} that yields nothing, an authorization item that lacks a member its mapping
+         * configures, and a {@code required} member that yields nothing. What the caller makes of a record that
+         * cannot be read completely depends on what it is (see {@link #IDENTIFYING}). No member can name a file
+         * ({@code certificateLocation} is not one of them): a document from elsewhere never makes the service read one.
          */
-        Map<String, Object> map(Object record, Object root) {
-            Map<String, Object> out = new LinkedHashMap<>();
+        Mapped map(Object record, Object root) {
+            Reader r = new Reader();
             if (entity) {
-                put(out, "id", text("id", record, root));
-                putList(out, "roles", texts("roles", record, root));
-                put(out, "name", text("name", record, root));
-                putList(out, "display", objects("display", record, root, Set.of("name"), false));
-                putList(out, "identifiers", objects("identifiers", record, root, Set.of("type", "value"), false));
-                putList(out, "certificates", texts("certificates", record, root));
-                putList(out, "authorizations", objects("authorizations", record, root, Set.of(), true));
-                put(out, "status", text("status", record, root));
-                put(out, "validFrom", instant("validFrom", record, root));
-                put(out, "validUntil", instant("validUntil", record, root));
-                putList(out, "contexts", contexts(record, root));
-                Map<String, Object> attributes = new LinkedHashMap<>();
-                @SuppressWarnings("unchecked")
-                Map<String, Value> named = (Map<String, Value>) fields.get("attributes");
-                named.forEach((k, v) -> put(attributes, k, first(v, "attributes." + k, record, root)));
-                if (!attributes.isEmpty()) {
-                    out.put("attributes", attributes);
-                }
-                Value policy = (Value) fields.get("metadataPolicy");
-                Object p = policy == null ? null : first(policy, "metadataPolicy", record, root);
-                if (p != null && !(p instanceof Map<?, ?>)) {
-                    throw new IllegalArgumentException("metadataPolicy is not an object");
-                }
-                put(out, "metadataPolicy", p);
+                // What identifies the record first: what it says about whom matters most.
+                r.read("id", () -> text("id", record, root));
+                r.read("roles", () -> roles(record, root));
+                r.read("identifiers", () -> objects("identifiers", record, root, Set.of("type", "value"), Items.WHOLE));
+                r.read("certificates", () -> texts("certificates", record, root));
+                r.read("name", () -> text("name", record, root));
+                r.read("display", () -> objects("display", record, root, Set.of("name"), Items.LEAVE_OUT));
+                r.read("authorizations", () -> objects("authorizations", record, root, Set.of(), Items.STRICT));
+                r.read("status", () -> text("status", record, root));
+                r.read("validFrom", () -> instant("validFrom", record, root));
+                r.read("validUntil", () -> instant("validUntil", record, root));
+                r.read("contexts", () -> contexts(record, root));
+                r.read("attributes", () -> attributes(record, root));
+                r.read("metadataPolicy", () -> policy(record, root));
             } else {
-                put(out, "id", text("id", record, root));
-                put(out, "domain", text("domain", record, root));
-                put(out, "certificate", text("certificate", record, root));
-                put(out, "entity", text("entity", record, root));
-                put(out, "status", text("status", record, root));
-                Map<String, Object> constraints = new LinkedHashMap<>();
-                putList(constraints, "docTypes", texts("docTypes", record, root));
-                putList(constraints, "crlUrls", texts("crlUrls", record, root));
-                put(constraints, "crl", text("crl", record, root));
-                if (!constraints.isEmpty()) {
-                    out.put("constraints", constraints);
-                }
+                r.read("id", () -> text("id", record, root));
+                r.read("domain", () -> text("domain", record, root));
+                r.read("certificate", () -> text("certificate", record, root));
+                r.read("entity", () -> text("entity", record, root));
+                r.read("status", () -> text("status", record, root));
+                r.read("docTypes", () -> texts("docTypes", record, root));
+                r.read("crlUrls", () -> texts("crlUrls", record, root));
+                r.read("crl", () -> text("crl", record, root));
             }
-            put(out, "framework", text("framework", record, root));
-            if (fields.get("status") != null && out.get("status") == null) {
+            r.read("framework", () -> text("framework", record, root));
+            if (fields.get("status") != null && !r.values.containsKey("status")) {
                 // A state the mapping does not know is not good standing, and a status left out reads as ACTIVE.
-                throw new IllegalArgumentException("status yields nothing (no value at its path, or one its translation does not "
+                r.unusable.putIfAbsent("status", "status yields nothing (no value at its path, or one its translation does not "
                         + "know); give status a default to say what such a record is");
             }
             for (String member : required) {
-                if (!yielded(out, member)) {
-                    throw new IllegalArgumentException(member + " is required and yields nothing");
+                if (!r.values.containsKey(member)) {
+                    r.unusable.putIfAbsent(member, member + " is required and yields nothing");
                 }
             }
-            return out;
+            Map<String, Object> out = new LinkedHashMap<>(r.values);
+            if (!entity) {
+                Map<String, Object> constraints = new LinkedHashMap<>();
+                for (String c : List.of("docTypes", "crlUrls", "crl")) {
+                    if (out.containsKey(c)) {
+                        constraints.put(c, out.remove(c));
+                    }
+                }
+                Object framework = out.remove("framework");
+                if (!constraints.isEmpty()) {
+                    out.put("constraints", constraints);
+                }
+                if (framework != null) {
+                    out.put("framework", framework);
+                }
+            }
+            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable));
         }
 
-        /** Whether a member of the block is in the entry it mapped (an anchor's docTypes, crlUrls and crl in its constraints). */
-        private static boolean yielded(Map<String, Object> entry, String member) {
-            if (entry.containsKey(member)) {
-                return true;
+        /** Reads one member at a time: what it yields, or why it cannot be read. */
+        private static final class Reader {
+            final Map<String, Object> values = new LinkedHashMap<>();
+            final Map<String, String> unusable = new LinkedHashMap<>();
+
+            void read(String member, java.util.function.Supplier<Object> value) {
+                try {
+                    Object v = value.get();
+                    if (v != null && !(v instanceof List<?> l && l.isEmpty()) && !(v instanceof Map<?, ?> m && m.isEmpty())) {
+                        values.put(member, v);
+                    }
+                } catch (RuntimeException e) {
+                    unusable.put(member, e.getMessage() == null ? member + " cannot be read (" + e.getClass().getSimpleName() + ")"
+                            : e.getMessage());
+                }
             }
-            return entry.get("constraints") instanceof Map<?, ?> c && c.containsKey(member);
+        }
+
+        private Map<String, Object> attributes(Object record, Object root) {
+            Map<String, Object> attributes = new LinkedHashMap<>();
+            @SuppressWarnings("unchecked")
+            Map<String, Value> named = (Map<String, Value>) fields.get("attributes");
+            named.forEach((k, v) -> put(attributes, k, first(v, "attributes." + k, record, root)));
+            return attributes;
+        }
+
+        private Object policy(Object record, Object root) {
+            Value policy = (Value) fields.get("metadataPolicy");
+            Object p = policy == null ? null : first(policy, "metadataPolicy", record, root);
+            if (p != null && !(p instanceof Map<?, ?>)) {
+                throw new IllegalArgumentException("metadataPolicy is not an object");
+            }
+            return p;
         }
 
         /** A value form evaluated for one member: what is wrong with what it finds is said for that member. */
@@ -390,12 +433,6 @@ final class Mapping {
 
         private static void put(Map<String, Object> out, String key, Object value) {
             if (value != null) {
-                out.put(key, value);
-            }
-        }
-
-        private static void putList(Map<String, Object> out, String key, List<?> value) {
-            if (!value.isEmpty()) {
                 out.put(key, value);
             }
         }
@@ -440,18 +477,46 @@ final class Mapping {
             return i.toString();
         }
 
-        /**
-         * Nested items: one per match of the item's {@code each}, or one. Without a member in {@code required}, an
-         * item is left out. With {@code strict} (authorizations), an item for which any configured member yields
-         * nothing skips the record: an authorization without its type would cover every type of its format, and
-         * one without anything would leave the entity unconstrained for a lenient client.
-         */
-        private List<Map<String, Object>> objects(String member, Object record, Object root, Set<String> required, boolean strict) {
-            return objects(items(fields.get(member)), member, record, root, required, strict);
+        /** The roles: a value the roles' translation does not know (and no default) is one the mapping cannot read. */
+        private List<String> roles(Object record, Object root) {
+            List<String> out = texts("roles", record, root);
+            for (Value v : values(fields.get("roles"))) {
+                if (v instanceof Value.Translated t) {
+                    Object unknown = t.untranslated(record, root);
+                    if (unknown != null) {
+                        throw new IllegalArgumentException("roles: " + quote(unknown) + " is not one of the values its translation knows, "
+                                + "and it has no default");
+                    }
+                }
+            }
+            return out;
+        }
+
+        /** What an item that is not all there is (see {@link #objects}). */
+        enum Items {
+            /** Left out (display, context URLs): it restricts nothing and identifies nobody. */
+            LEAVE_OUT,
+            /**
+             * Absent when no member that reads the document yields anything; otherwise every member it needs must yield
+             * (identifiers): an identifier whose value is there but not its type would leave the party's key without
+             * its entry.
+             */
+            WHOLE,
+            /**
+             * Every member the mapping configures must yield, and an item yields something (authorizations): an
+             * authorization without its type would cover every type of its format, and one without anything would
+             * leave the entity unconstrained for a lenient client.
+             */
+            STRICT
+        }
+
+        /** Nested items: one per match of the item's {@code each}, or one; {@code needs} are the members an item must have. */
+        private List<Map<String, Object>> objects(String member, Object record, Object root, Set<String> needs, Items rule) {
+            return objects(items(fields.get(member)), member, record, root, needs, rule);
         }
 
         private static List<Map<String, Object>> objects(List<Item> items, String member, Object record, Object root,
-                                                         Set<String> required, boolean strict) {
+                                                         Set<String> needs, Items rule) {
             List<Map<String, Object>> out = new ArrayList<>();
             for (Item item : items) {
                 List<Object> matches = item.each == null ? List.of(record) : select(item.each, member, record, root);
@@ -461,16 +526,24 @@ final class Mapping {
                         continue;
                     }
                     Map<String, Object> o = new LinkedHashMap<>();
+                    List<String> fromDocument = new ArrayList<>();
                     for (Map.Entry<String, Value> e : item.members.entrySet()) {
                         String k = e.getKey();
                         put(o, k, scalar(first(e.getValue(), member + "." + k, match, root), member + "." + k));
-                        if (strict && !o.containsKey(k)) {
+                        if (rule == Items.STRICT && !o.containsKey(k)) {
                             throw new IllegalArgumentException(member + ": an item yields no " + k
                                     + "; an authorization is never left open where the document does not say so");
                         }
+                        if (o.containsKey(k) && !(e.getValue() instanceof Value.Constant)) {
+                            fromDocument.add(k);
+                        }
                     }
-                    if (o.keySet().containsAll(required) && !o.isEmpty()) {
+                    if (o.keySet().containsAll(needs) && !o.isEmpty()) {
                         out.add(o);
+                    } else if (rule == Items.WHOLE && !fromDocument.isEmpty()) {
+                        List<String> missing = needs.stream().filter(k -> !o.containsKey(k)).sorted().toList();
+                        throw new IllegalArgumentException(member + ": an item yields " + String.join(" and ", fromDocument) + " but no "
+                                + String.join(" or ", missing));
                     }
                 }
                 bounded(out, member);
@@ -488,7 +561,7 @@ final class Mapping {
                         out.add(scalar(o, "contexts"));
                     }
                 } else {
-                    out.addAll(objects(List.of((Item) e), "contexts", record, root, Set.of("url"), false));
+                    out.addAll(objects(List.of((Item) e), "contexts", record, root, Set.of("url"), Items.LEAVE_OUT));
                 }
                 bounded(out, "contexts");
             }

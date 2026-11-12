@@ -527,14 +527,16 @@ class MappedSourceRulesTest {
         Map<String, Object> d = doc("a");
         List<Object> issuers = new ArrayList<>((List<?>) d.get("issuers"));
         for (int i = 0; i < 80; i++) {
-            issuers.add(Map.of("name", "no id " + i));
+            // A name that cannot be read: each is listed without it, not in good standing, with a warning.
+            issuers.add(Map.of("id", "n" + i, "name", Map.of("text", "no name " + i), "state", "active"));
         }
         d.put("issuers", issuers);
         serveJson(ctx, d);
         SourceLoadResult r = source(ctx, props()).load();
-        assertThat(r.entities()).hasSize(1);
+        assertThat(r.entities()).hasSize(81);
         assertThat(r.warnings()).hasSize(51);
-        assertThat(r.warnings().getFirst()).isEqualTo("mapping.entities[0]: record 2 is skipped: Entity without id");
+        assertThat(r.warnings().getFirst()).isEqualTo("mapping.entities[0]: record 2 (id 'partner:n0') is listed SUSPENDED: "
+                + "name is an object, not a value");
         assertThat(r.warnings().getLast()).isEqualTo("… and 30 more warnings");
     }
 
@@ -568,8 +570,8 @@ class MappedSourceRulesTest {
             renamed.put("issuers", List.of(Map.of("identifier", "a", "state", "active"), Map.of("identifier", "b", "state", "active")));
             serveJson(ctx, renamed);
             SourceState st = m.refresh("partner");
-            assertThat(st.lastError()).contains("mapping.entities[0]: none of the 2 records at $.issuers[*] could be mapped; "
-                    + "record 1 is skipped: Entity without id");
+            // A record without an id cannot be listed at all (second round, rule A): the first one fails the load.
+            assertThat(st.lastError()).contains("mapping.entities[0]: record 1 cannot be read: it yields no id");
             assertThat(registry.snapshot().entities()).extracting(TrustedEntity::id).containsExactlyInAnyOrder("partner:a", "partner:b");
         }
         // A block that finds no record at all fails too, unless it says that a list without any is a list.
@@ -758,25 +760,26 @@ class MappedSourceRulesTest {
         Map<String, Object> block = (Map<String, Object>) ((List<?>) m.get("entities")).getFirst();
         block.put("validUntil", "$.until");
         block.put("roles", "$.roles[*]");
+        Map<String, Object> ok = Map.of("id", "ok", "roles", List.of("VERIFIER"), "state", "suspended");
         Map<String, Object> d = doc();
-        d.put("issuers", List.of(
-                Map.of("id", "ok", "roles", List.of("VERIFIER"), "state", "suspended"),
-                Map.of("id", "bad role", "roles", List.of("VERIFIER")),
-                Map.of("id", "x", "roles", List.of("PRESIDENT")),
-                Map.of("id", "y", "roles", List.of("VERIFIER"), "until", "forever"),
-                Map.of("roles", List.of("VERIFIER"))));
+        d.put("issuers", List.of(ok, Map.of("id", "y", "roles", List.of("VERIFIER"), "until", "forever", "state", "active")));
         serveJson(ctx, d);
         SourceLoadResult r = source(ctx, props("mapping", m)).load();
-        assertThat(r.entities()).singleElement().satisfies(e -> {
-            assertThat(e.id()).isEqualTo("partner:ok");
-            assertThat(e.status()).isEqualTo(EntityStatus.SUSPENDED);
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status()).containsExactly("partner:ok SUSPENDED", "partner:y SUSPENDED");
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 2 (id 'partner:y') is listed SUSPENDED: validUntil is not a date: 'forever'");
+        // What says whom a record is about, refused by the registry format, fails the load (second round, rule A).
+        Map<Map<String, Object>, String> unreadable = new LinkedHashMap<>();
+        unreadable.put(Map.of("id", "bad role", "roles", List.of("VERIFIER")),
+                "record 2 cannot be read: its id is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
+        unreadable.put(Map.of("id", "x", "roles", List.of("PRESIDENT")), "record 2 (id 'partner:x') cannot be read: roles: Unknown role "
+                + "'PRESIDENT'; one of CREDENTIAL_ISSUER, VERIFIER, WALLET_PROVIDER, AUTHORIZATION_SERVER, ACCREDITATION_AUTHORITY, "
+                + "STATUS_LIST_PROVIDER, OTHER");
+        unreadable.put(Map.of("roles", List.of("VERIFIER")), "record 2 cannot be read: it yields no id");
+        unreadable.forEach((record, message) -> {
+            d.put("issuers", List.of(ok, record));
+            serveJson(ctx, d);
+            assertThat(loadError(source(ctx, props("mapping", m)))).as(message).startsWith("mapping.entities[0]: " + message + "; ");
         });
-        assertThat(r.warnings()).containsExactly(
-                "mapping.entities[0]: record 2 is skipped: its id is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit",
-                "mapping.entities[0]: record 3 (id 'partner:x') is skipped: Unknown role 'PRESIDENT'; one of CREDENTIAL_ISSUER, VERIFIER, "
-                        + "WALLET_PROVIDER, AUTHORIZATION_SERVER, ACCREDITATION_AUTHORITY, STATUS_LIST_PROVIDER, OTHER",
-                "mapping.entities[0]: record 4 is skipped: validUntil is not a date: 'forever'",
-                "mapping.entities[0]: record 5 is skipped: Entity without id");
     }
 
     @Test
@@ -786,14 +789,22 @@ class MappedSourceRulesTest {
         Map<String, Object> m = mapping();
         ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("id", "$.id");
         m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate")));
-        Map<String, Object> d = doc("a", "-dash", ".dot", "~tilde", "9.nine", "a".repeat(129));
+        Map<String, Object> d = doc("a", "9.nine");
         d.put("authorities", List.of(Map.of("kid", "@iaca", "certificate", MappedTesting.der("iaca")),
                 Map.of("kid", "iaca", "certificate", MappedTesting.der("iaca"))));
         serveJson(ctx, d);
         SourceLoadResult r = source(ctx, props("mapping", m)).load();
         assertThat(r.entities()).extracting(TrustedEntity::id).containsExactly("a", "9.nine");
+        // An anchor with such an id is skipped; an entity with one fails the load (second round, rule A).
         assertThat(r.anchors()).extracting(a -> a.id()).containsExactly("iaca");
-        assertThat(r.warnings()).hasSize(5).allMatch(w -> w.endsWith("is skipped: its id is not 1 to 128 letters, digits or . _ : @ ~ - "
-                + "starting with a letter or digit"));
+        assertThat(r.warnings()).containsExactly("mapping.anchors[0]: record 1 is skipped: its id is not 1 to 128 letters, digits or "
+                + ". _ : @ ~ - starting with a letter or digit");
+        for (String id : List.of("-dash", ".dot", "~tilde", "a".repeat(129))) {
+            Map<String, Object> bad = doc("a", id);
+            bad.put("authorities", d.get("authorities"));
+            serveJson(ctx, bad);
+            assertThat(loadError(source(ctx, props("mapping", m)))).as(id).startsWith("mapping.entities[0]: record 2 cannot be read: "
+                    + "its id is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
+        }
     }
 }

@@ -243,6 +243,22 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             return found ? null : fallback;
         }
 
+        /**
+         * The first value at the path that the table does not translate, when there is no default; else null. A member
+         * that says whom a record is about (its roles) cannot leave out what the document states there.
+         */
+        Object untranslated(Object current, Object root) {
+            if (fallback != null) {
+                return null;
+            }
+            for (Object v : path.select(current, root)) {
+                if (v != null && translate(v) == null) {
+                    return v;
+                }
+            }
+            return null;
+        }
+
         /** The value's translation, else the default (null without one). */
         private Object translate(Object v) {
             String key = text(v);

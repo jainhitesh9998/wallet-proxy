@@ -119,14 +119,16 @@ class MappedSourceBindingTest {
                     - { when: "https://b.example/suspended", then: SUSPENDED }
                     - { when: "https://c.example/revoked", then: REVOKED }"""));
         var r = source(props).load();
-        assertThat(r.entities()).extracting(TrustedEntity::id).containsExactlyInAnyOrder("partner:a", "partner:b", "partner:c");
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status()).containsExactlyInAnyOrder("partner:a ACTIVE",
+                "partner:b SUSPENDED", "partner:c REVOKED", "partner:d SUSPENDED");
         TrustedEntity a = r.entities().stream().filter(e -> e.id().equals("partner:a")).findFirst().orElseThrow();
         assertThat(a.roles()).hasSize(2);
         assertThat(a.attributes()).containsEntry("trust_level", "high").containsEntry("sourceList", "a");
         // "unknown" is in no pair and there is no default: the status yields nothing, and a status the mapping
-        // configures but cannot read is not taken for good standing. The record is skipped.
-        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 4 is skipped: status yields nothing (no value at its "
-                + "path, or one its translation does not know); give status a default to say what such a record is");
+        // configures but cannot read is not taken for good standing. The record is listed SUSPENDED (it was skipped
+        // before the second round of fixes, which left its party to whatever anchor it chains to).
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 4 (id 'partner:d') is listed SUSPENDED: status yields "
+                + "nothing (no value at its path, or one its translation does not know); give status a default to say what such a record is");
     }
 
     @Test
