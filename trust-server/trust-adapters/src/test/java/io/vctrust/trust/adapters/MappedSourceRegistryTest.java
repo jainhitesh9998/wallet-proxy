@@ -232,6 +232,38 @@ class MappedSourceRegistryTest {
         }
     }
 
+    // 4: CRL locations ------------------------------------------------------------------------------------------
+
+    @Test
+    void item4_anAnchorWithMoreCrlLocationsThanTheRegistryCountsIsPlacedWithTheFirst8() {
+        // An honest CA that names more locations was skipped, and every party under it refused.
+        Map<String, Object> m = MappedSourceValidationTest.boundMapping();
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "crlUrls", "$.crl_urls[*]")));
+        Map<String, Decision> decided = new LinkedHashMap<>();
+        for (int n : List.of(20, 8)) {
+            Map<String, Object> d = MappedSourceValidationTest.boundList(1, Map.of());
+            d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", der("iaca"), "crl_urls",
+                    MappedSourceEdgesTest.crlUrls(n))));
+            TestContext ctx = ctx();
+            serveJson(ctx, d);
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+                assertThat(state(manager, "partner").lastError()).isNull();
+                assertThat(registry.snapshot().allAnchors()).singleElement()
+                        .satisfies(a -> assertThat(a.crlUrls()).isEqualTo(MappedSourceEdgesTest.crlUrls(8)));
+                if (n == 20) {
+                    assertThat(state(manager, "partner").warnings()).singleElement().asString().startsWith("Anchor 'shared-iaca' names 20 "
+                            + "CRL locations (crlUrls); an anchor counts with at most 8");
+                } else {
+                    assertThat(state(manager, "partner").warnings()).isEmpty();
+                }
+                decided.put(n + " locations", MappedSourceValidationTest.decide(registry, MDL));
+            }
+        }
+        assertThat(decided.get("20 locations")).isEqualTo(Decision.TRUSTED).isEqualTo(decided.get("8 locations"));
+    }
+
     // 5: what else assumed the old registry: this service's own snapshot -------------------------------------------------
 
     static Map<String, Object> withItem(Map<String, Object> item) {

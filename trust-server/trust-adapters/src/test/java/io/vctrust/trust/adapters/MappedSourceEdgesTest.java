@@ -138,7 +138,7 @@ class MappedSourceEdgesTest {
         assertThat(r.resolve(Identifier.did("did:example:c"))).hasValueSatisfying(e -> assertThat(e.roles()).hasSize(1));
     }
 
-    // 2: a mapped document decides how many CRL locations the service fetches -------------------------------------------
+    // 2: a mapped document decided how many CRL locations the service fetches ------------------------------------------
 
     static List<String> crlUrls(int n) {
         List<String> urls = new ArrayList<>();
@@ -149,41 +149,36 @@ class MappedSourceEdgesTest {
     }
 
     @Test
-    void item2_aMappedAnchorYieldsAtMostFourCrlLocations() throws Exception {
+    void item2_aMappedDocumentNoLongerDecidesHowManyCrlLocationsTheServiceFetches() throws Exception {
+        // Twenty anchors that each take the document's thousand CRL locations (a 41 kB document) made the service fetch
+        // 20,000 of them in one refresh. Round three skipped a mapped anchor with more than four; the registry now
+        // counts the first 8 of every anchor, whatever its source (follow-up, item 4: the source's own limit is gone,
+        // and an honest CA that names five is no longer refused; MappedSourceRegistryTest.item4_...).
         Map<String, Object> m = boundMapping();
-        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "$.domain", "certificate", "$.certificate",
-                "crlUrls", "$.crl_urls[*]")));
-        Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER")));
-        d.put("authorities", List.of(
-                Map.of("kid", "shared-iaca", "domain", "mdoc-iaca", "certificate", der("iaca"), "crl_urls", crlUrls(5)),
-                Map.of("kid", "rp-ca", "domain", "verifier-access", "certificate", der("rp-ca"), "crl_urls", crlUrls(4))));
-        TestContext ctx = ctx();
-        serveJson(ctx, d);
-        var r = source(ctx, props("mapping", m)).load();
-        assertThat(r.anchors()).singleElement().satisfies(a -> {
-            assertThat(a.id()).isEqualTo("rp-ca");
-            assertThat((List<?>) a.constraints().get("crlUrls")).hasSize(4);
-        });
-        assertThat(r.warnings()).containsExactly("mapping.anchors[0]: record 1 (id 'shared-iaca') is skipped: crlUrls: 5 CRL locations, "
-                + "more than 4 for one anchor");
-        // Twenty anchors that each take the document's thousand CRL locations (a 41 kB document) made the service
-        // fetch 20,000 of them in one refresh: none is listed with more than four.
-        Map<String, Object> many = new LinkedHashMap<>(m);
-        many.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
                 "crlUrls", "^.crl_urls[*]")));
         List<Object> authorities = new ArrayList<>();
         for (int i = 0; i < 20; i++) {
             authorities.add(Map.of("kid", "iaca-" + i, "certificate", der("iaca")));
         }
+        Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER")));
         d.put("authorities", authorities);
         d.put("crl_urls", crlUrls(1_000));
+        TestContext ctx = ctx();
         serveJson(ctx, d);
         TrustRegistry registry = new TrustRegistry();
-        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", many)))) {
-            assertThat(registry.snapshot().allAnchors()).isEmpty();
-            assertThat(state(manager, "partner").lastError()).contains("none of the 20 records at $.authorities[*] could be mapped; "
-                    + "record 1 (id 'iaca-0') is skipped: crlUrls: 1000 CRL locations, more than 4 for one anchor");
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            assertThat(state(manager, "partner").lastError()).isNull();
+            assertThat(registry.snapshot().allAnchors()).hasSize(20).allSatisfy(a -> assertThat(a.crlUrls()).isEqualTo(crlUrls(8)));
+            assertThat(registry.snapshot().allAnchors().stream().flatMap(a -> a.crlUrls().stream()).distinct()).hasSize(8);
+            assertThat(state(manager, "partner").warnings()).hasSize(20)
+                    .allSatisfy(w -> assertThat(w).contains("names 1000 CRL locations (crlUrls); an anchor counts with at most 8"));
         }
+        // A member still yields at most 1000 values for one record.
+        d.put("crl_urls", crlUrls(1_001));
+        serveJson(ctx, d);
+        assertThat(loadError(source(ctx, props("mapping", m)))).contains("record 1 (id 'iaca-0') is skipped: crlUrls: yields more than "
+                + "1000 values for one record");
     }
 
     // 3: nodes that weigh nothing ------------------------------------------------------------------------------------

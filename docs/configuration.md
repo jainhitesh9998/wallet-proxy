@@ -480,7 +480,7 @@ anchors:
     entity: { template: "partner:{$.issuer_id}" }
     status: $.status
     docTypes: $.doctypes[*]
-    crlUrls: $.crl_urls[*]               # at most 4
+    crlUrls: $.crl_urls[*]               # as the list states them; the registry counts the first 8
     crl: $.crl
 lookup:                                  # optional: ask about one party at a time (a registry too large to list)
   url: "https://registry.partner.example/v1/issuers/{identifier}"
@@ -562,8 +562,6 @@ instant depends on where it was written). A member cannot be read either when:
   filter emptied it, or its items are `null`;
 - it is named in `required` and yields nothing. This is how a renamed member upstream is caught: a `valid_until` that
   became `validUntil` would otherwise read as "no expiry";
-- it is an anchor's `crlUrls`, and yields more than 4 locations: each is fetched on every refresh of the revocation
-  data, and a document of a few kilobytes would otherwise decide how many requests the service sends;
 - it holds a PEM text in which a `-----BEGIN` block does not yield a certificate (a damaged block next to a good one,
   a key): the certificate it was would be bound to nobody;
 - a path of it selects more than 1000 nodes for the record (`null`s and values no translation knows count too), or it
@@ -666,11 +664,13 @@ configuration is read.
   most 32 deep, every number with at most 40 significant digits and a decimal exponent from -40 to 40 (`1e999999999`
   is eleven characters, and a gigabyte as text); for one record, at most 1000 nodes selected by a path of a member and
   1000 values of a member, at most 8,192 characters in one value (1,048,576 in a certificate, a PEM bundle or a CRL),
-  65,536 characters of mapped text and 4,096 nodes in all, and 4 CRL locations for an anchor; for the whole load (and
+  65,536 characters of mapped text and 4,096 nodes in all; for the whole load (and
   for one lookup answer), at most `limits.text` characters and nodes; a load still fetching pages after
   `limits.duration` fails; at most 50 warnings, then their number. Past a bound of a record, that record cannot be read
   completely (above); past a bound of the load, the load fails rather than load part of a list. The documented
-  examples and the four fixture lists of the tests are far inside these: their records hold a few dozen nodes.
+  examples and the four fixture lists of the tests are far inside these: their records hold a few dozen nodes. An
+  anchor's `crlUrls` are mapped as the list states them; the registry counts the first 8 of an anchor of any source,
+  and says in a warning of the source what it left out.
 - *A mapping that produces nothing fails.* When the document has records for a block and none of them could be read
   completely, its format has probably changed: the load fails and the source keeps its last good content. So does a
   block that finds no record in any page, unless it says `allowEmpty: true`: another document of the same signer, or

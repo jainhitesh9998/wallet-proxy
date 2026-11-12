@@ -110,9 +110,6 @@ final class Mapping {
      */
     static final int MAX_RECORD_NODES = 4_096;
 
-    /** The most CRL locations a mapped anchor names (more make it unreadable): each is fetched on every refresh. */
-    static final int MAX_CRL_URLS = 4;
-
     /**
      * What mapped values weigh: one node for each value, {@code null}, list and object in them, empty or not, and the
      * characters of their text (text, numbers and booleans as written, and the names of an object's members). Weighed
@@ -513,7 +510,9 @@ final class Mapping {
                 r.read("entity", () -> text("entity", record, root));
                 r.read("status", () -> text("status", record, root));
                 r.read("docTypes", () -> docTypes(record, root));
-                r.read("crlUrls", () -> crlUrls(record, root));
+                // As the document states them, within the bounds of every member: the registry counts the first 8 of an
+                // anchor, and says so in a warning of this source (TrustAnchor.MAX_CRL_URLS).
+                r.read("crlUrls", () -> texts("crlUrls", record, root));
                 r.read("crl", () -> text("crl", record, root));
             }
             if (fields.get("status") != null && !r.values.containsKey("status")) {
@@ -694,19 +693,6 @@ final class Mapping {
                     out.add(scalar(o, member));
                 }
                 bounded(out, member);
-            }
-            return out;
-        }
-
-        /**
-         * Where the CA publishes its CRL: at most {@link #MAX_CRL_URLS}. Each is fetched on every refresh of the
-         * revocation data, so that a document of a few kilobytes that gives each of its anchors a thousand locations
-         * would decide how many requests the service sends.
-         */
-        private List<String> crlUrls(Object record, Object root) {
-            List<String> out = texts("crlUrls", record, root);
-            if (out.size() > MAX_CRL_URLS) {
-                throw new IllegalArgumentException("crlUrls: " + out.size() + " CRL locations, more than " + MAX_CRL_URLS + " for one anchor");
             }
             return out;
         }
