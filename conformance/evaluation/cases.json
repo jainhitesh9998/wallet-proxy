@@ -500,6 +500,32 @@
             "value": "verifier-named.vectors.example"
           }
         ]
+      },
+      "vec-hash-hex-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Revoked, names a Document Signer of the registered IACA by its SHA-256 in hexadecimal (ds-hash-hex)",
+        "status": "REVOKED",
+        "identifiers": [
+          {
+            "type": "X509_SHA256",
+            "value": "07:29:53:6D:DF:F3:72:92:73:E8:8E:E5:0A:5A:58:CB:62:25:4B:69:48:7D:9E:1B:F4:A0:44:2D:E4:9F:EE:28"
+          }
+        ]
+      },
+      "vec-hash-b64-revoked": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Revoked verifier, names its signer by its SHA-256 in padded standard base64 (rp-hash-b64)",
+        "status": "REVOKED",
+        "identifiers": [
+          {
+            "type": "X509_SHA256",
+            "value": "RwyjSnUy0aehNoXJJwotHUcb+AmkNweZeGiSwMRYKxU="
+          }
+        ]
       }
     }
   },
@@ -2355,6 +2381,49 @@
         "context": {
           "protocol": "oid4vci",
           "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "Document Signer under the registered IACA, named by a revoked entity by its SHA-256 written in hexadecimal: the hash is read as the evaluators compute it",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-hash-hex"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "verifier under a shared anchor, named by a revoked entry by its SHA-256 written in padded standard base64",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:rp-hash-b64",
+          "x5c": [
+            "pki:rp-hash-b64"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "x509_hash client_id written in hexadecimal, without a certificate: read as the same hash on both sides, and refused for want of the certificate",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:470ca34a7532d1a7a13685c9270a2d1d471bf809a4370799786892c0c4582b15"
+        },
+        "context": {
+          "protocol": "oid4vp"
         }
       }
     }

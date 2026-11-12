@@ -1,0 +1,89 @@
+{
+  "description": "How an identifier is compared, by the service (Identifier.java) and by the client library (identifierKey in evaluation/local.ts): every value of an entry of \"same\" reads as its \"key\", every value of \"unchanged\" as itself. An X509_SHA256 value that is a SHA-256 digest (32 bytes) written in hexadecimal (any case, with \":\" between all the bytes or none) or in base64 or base64url (padded or not; the last character as an encoder writes it) reads as unpadded base64url, the form both evaluators compute; anything else is compared as written, and in the registry format makes the entry unreadable. X509_SKI and JWK_THUMBPRINT have one form, unpadded base64url, and are compared as written. IdentifierFormsTest.java and identifiers.test.ts hold both sides to this file.",
+  "same": [
+    {
+      "type": "X509_SHA256",
+      "key": "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSo",
+      "values": [
+        "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSo",
+        "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSo=",
+        "G3Xx4ld8Q5oP8/ybtD2+k5rTwnc4WL1wH376TGb2HSo=",
+        "G3Xx4ld8Q5oP8/ybtD2+k5rTwnc4WL1wH376TGb2HSo",
+        "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d2a",
+        "1B75F1E2577C439A0FF3FC9BB43DBE939AD3C2773858BD701F7EFA4C66F61D2A",
+        "1B:75:F1:E2:57:7C:43:9A:0F:F3:FC:9B:B4:3D:BE:93:9A:D3:C2:77:38:58:BD:70:1F:7E:FA:4C:66:F6:1D:2A",
+        "1b:75:f1:e2:57:7c:43:9a:0f:f3:fc:9b:b4:3d:be:93:9a:d3:c2:77:38:58:bd:70:1f:7e:fa:4c:66:f6:1d:2a",
+        "1b75f1E2577c439A0fF3fC9bB43Dbe939Ad3C2773858bD701f7Efa4c66f61d2A"
+      ]
+    },
+    {
+      "type": "DNS",
+      "key": "verifier.example",
+      "values": [
+        "verifier.example",
+        "Verifier.Example",
+        "VERIFIER.EXAMPLE"
+      ]
+    },
+    {
+      "type": "DID",
+      "key": "did:web:issuer.example",
+      "values": [
+        "did:web:issuer.example",
+        "did:web:issuer.example#key-1"
+      ]
+    }
+  ],
+  "unchanged": [
+    {
+      "type": "X509_SHA256",
+      "values": [
+        "",
+        "AAAA",
+        "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d",
+        "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d2a00",
+        "1b:75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d2a",
+        "1b 75 f1 e2 57 7c 43 9a 0f f3 fc 9b b4 3d be 93 9a d3 c2 77 38 58 bd 70 1f 7e fa 4c 66 f6 1d 2a",
+        "1b-75-f1-e2-57-7c-43-9a-0f-f3-fc-9b-b4-3d-be-93-9a-d3-c2-77-38-58-bd-70-1f-7e-fa-4c-66-f6-1d-2a",
+        "0x1b75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d2a",
+        "sha256:1b75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d2a",
+        "x509_hash:G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSo",
+        " G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSo",
+        "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSo\n",
+        "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSp",
+        "G3Xx4ld8Q5oP8/ybtD2-k5rTwnc4WL1wH376TGb2HSo",
+        "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSo==",
+        "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HS",
+        "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSoA",
+        "１b75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d2a"
+      ]
+    },
+    {
+      "type": "X509_SKI",
+      "values": [
+        "AB:CD:EF:01",
+        "q3vfAQ==",
+        "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c277"
+      ]
+    },
+    {
+      "type": "JWK_THUMBPRINT",
+      "values": [
+        "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d2a",
+        "G3Xx4ld8Q5oP8/ybtD2+k5rTwnc4WL1wH376TGb2HSo="
+      ]
+    },
+    {
+      "type": "URL",
+      "values": [
+        "https://Issuer.example/a/"
+      ]
+    },
+    {
+      "type": "CLIENT_ID",
+      "values": [
+        "My-Client"
+      ]
+    }
+  ]
+}

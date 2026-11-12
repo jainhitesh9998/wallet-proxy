@@ -14,6 +14,7 @@ import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustDomain;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.spi.ResourceLoader;
+import io.vctrust.trust.core.util.Base64Url;
 import io.vctrust.trust.core.util.Enums;
 import io.vctrust.trust.core.x509.Certificates;
 
@@ -23,6 +24,7 @@ import java.security.cert.X509Certificate;
 import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -215,7 +217,48 @@ public final class TrustedEntityParser {
         String type = i.required("type");
         String value = i.required("value");
         IdentifierType t = i.parse(IdentifierType.class, type, "identifier type");
+        // A hash or key identifier written in a form the evaluators do not compute binds nothing: a REVOKED entry
+        // written so would never apply. Identifier reads a SHA-256 written any common way; the other two have one form.
+        switch (t) {
+            case X509_SHA256 -> {
+                if (Identifier.sha256Digest(value) == null) {
+                    throw i.fail("'value' is not a SHA-256 digest (32 bytes in hexadecimal, with ':' between all the bytes or none, "
+                            + "or in base64 or base64url): '" + shown(value) + "'");
+                }
+            }
+            case X509_SKI -> {
+                if (!unpaddedBase64Url(value)) {
+                    throw i.fail("'value' is not a subject key identifier in unpadded base64url (the form the evaluators compute): '"
+                            + shown(value) + "'");
+                }
+            }
+            case JWK_THUMBPRINT -> {
+                if (value.length() != 43 || !unpaddedBase64Url(value)) {
+                    throw i.fail("'value' is not a JWK thumbprint (an RFC 7638 SHA-256 thumbprint in unpadded base64url, 43 characters): '"
+                            + shown(value) + "'");
+                }
+            }
+            default -> {
+                // compared as Identifier compares them
+            }
+        }
         return new Identifier(t, value);
+    }
+
+    /**
+     * Whether a value is bytes in unpadded base64url exactly as an encoder writes them: no padding, no other alphabet,
+     * no separators, and no bits set past the last byte. Hexadecimal without separators is also base64url, and cannot be
+     * told from it.
+     */
+    static boolean unpaddedBase64Url(String value) {
+        if (value.isEmpty() || !value.chars().allMatch(c -> c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_')) {
+            return false;
+        }
+        try {
+            return Base64Url.encode(Base64.getUrlDecoder().decode(value)).equals(value);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     /** {@code name} (the English name) or {@code display}, not both: the parser would read only one of them. */

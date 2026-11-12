@@ -312,6 +312,19 @@ An anchor entry has these:
 `metadata`, `metadataPolicy`, `attributes`, an anchor's `constraints` and an authorization's `constraints` are
 free-form: their members are not checked, beyond the three of `constraints` above and that each has a value.
 
+**Hash and key identifiers** are compared in the form the evaluators compute from a certificate or a key. Written
+another way, an entry would bind nothing, and a `REVOKED` one would never apply:
+
+| Type | Form | Written another way |
+| --- | --- | --- |
+| `X509_SHA256` | The SHA-256 of the DER certificate (32 bytes) in unpadded base64url, the OpenID4VP `x509_hash` value | Read as that form when it is the digest in hexadecimal (any case, with `:` between all the bytes or none, as `openssl x509 -fingerprint -sha256` prints it) or in base64 or base64url, padded or not. Anything else cannot be read |
+| `X509_SKI` | The subject key identifier's bytes in unpadded base64url | Cannot be read when it cannot be unpadded base64url: with `:`, spaces, `+`, `/` or `=`, or a length no encoding has. Hexadecimal without separators is base64url too and cannot be told from it: it is read, and matches only if it is the base64url form |
+| `JWK_THUMBPRINT` | The RFC 7638 thumbprint (SHA-256) in unpadded base64url, 43 characters | Cannot be read |
+
+The service and the library read an `X509_SHA256` value so wherever they meet one: in the registry, in a query (an
+`x509_hash` client identifier), and in trust an app pins. `conformance/evaluation/identifiers.json` holds both to the
+same forms.
+
 Entries belong to the framework of their source; a `framework` key is accepted only when it names that framework,
 and an entry naming another one cannot be read. `certificateLocation` may name a `classpath:` or `file:`
 location only in a registry that is itself a local file; in a registry fetched over the network and in entries sent
@@ -327,6 +340,7 @@ written: an entity written with `staus: REVOKED` would otherwise be active, and 
   list, a date that is a number, `certificates` that is one certificate rather than a list of them;
 - a member is written without a value (`status:` with nothing after it);
 - a role, status or identifier type is not one of the names above, or a date is not a date;
+- an `X509_SHA256`, `X509_SKI` or `JWK_THUMBPRINT` identifier is not in a form of the table above;
 - a certificate is not one, or the text of one holds anything else in PEM armour (a private key, a damaged block);
 - it has `certificateJsonField` without `certificateLocation`, or both `name` and `display`;
 - it names another framework, has no `id` (an entity) or no `domain` or certificate (an anchor), or is not an object.

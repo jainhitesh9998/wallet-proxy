@@ -34,6 +34,13 @@ format 4 without the claim, and no decision names a mechanism.
 spellings that must read the same, and ones that must be refused. `RoleSpellingsTest` and `roles.test.ts` hold each
 side to it, and each side's own list of spellings must be exactly the file's.
 
+`identifiers.json` is how both compare an identifier: spellings that must read as one key (a certificate's SHA-256 in
+hexadecimal, with or without colons, or in padded or standard base64 reads as the unpadded base64url the evaluators
+compute; a DNS name without case; a DID without its fragment), and values that are compared as written (a hash that is
+not a 32-byte digest, a subject key identifier or JWK thumbprint in another form). `IdentifierFormsTest.java`
+(`Identifier`) and `identifiers.test.ts` (`identifierKey`) hold each side to it; in the registry format an `X509_SHA256`
+value that is not such a digest makes the entry unreadable (`RegistryFormatTest.java`).
+
 ```sh
 cd trust-server
 mvn test -Dtest='*VectorsTest' -Dsurefire.failIfNoSpecifiedTests=false                          # fails when either pair is stale
@@ -82,7 +89,9 @@ CRL distribution point, and `reissued-ca-2`), a Document Signer under it (`reiss
 `generate-standing.sh` and `generate-roles.sh` add signers for the cases about which entity a decision is about:
 certificates that a revoked, a suspended, an ended, or both a revoked and an active entity pin or name by hash
 (`ds-pin-*`, `rp-pin-both`, `rp-named-*`), and certificates of entries that name no role or another role
-(`rp-noroles-*`, `rp-verifier-*`).
+(`rp-noroles-*`, `rp-verifier-*`). `generate-hashes.sh` adds two signers that revoked entities name by their SHA-256
+written another way than the evaluators compute it: in hexadecimal with colons (`ds-hash-hex`) and in padded standard
+base64 (`rp-hash-b64`).
 The private keys are here because they are test keys; they protect nothing. Two certificates are real, for name
 handling: `real-eudi-pid-ca.pem` and `real-waltid-pid-provider.pem` (see `real-world/`).
 

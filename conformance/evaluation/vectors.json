@@ -6036,6 +6036,171 @@
           ]
         }
       }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-hash-hex-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_SHA256:BylTbd_zcpJz6I7lClpYy2IlS2lIfZ4b9KBELeSf7ig"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-hash-hex-revoked",
+          "errors" : [
+            "entity.not_authorized",
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_SHA256:BylTbd_zcpJz6I7lClpYy2IlS2lIfZ4b9KBELeSf7ig"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        }
+      },
+      "name" : "Document Signer under the registered IACA, named by a revoked entity by its SHA-256 written in hexadecimal: the hash is read as the evaluators compute it",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB/DCCAaOgAwIBAgIJAOZE4cwqykJyMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwOTA2MzJaFw00NjAxMTEwOTA2MzJaMFcxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMTMwMQYDVQQDDCpVdG9waWEgRFMgbmFtZWQgYnkgaXRzIGhhc2ggaW4gaGV4YWRlY2ltYWwwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQmKENARlZm7sL7ZFQ/NDxjSpeAKAmW8q0BPyi6cjoU755znfIaKPHNiU9SXiztuumhMtHlVjOVbR1hF74ZFODto3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRWoZWJCQo/B/qv7h3FWz/QRVdZ2zAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNHADBEAiBif9OH7ATKqCkOUfQDsb/nk4J9Eklt3flscoUsCUISdwIgYjpbkQ9ekESRVvSiAYmGA1Gi3xLDaDn5CE3IAQNEnr0="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-hash-b64-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:RwyjSnUy0aehNoXJJwotHUcb-AmkNweZeGiSwMRYKxU"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-hash-b64-revoked",
+          "errors" : [
+            "entity.status",
+            "x509.revocation_unknown"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:RwyjSnUy0aehNoXJJwotHUcb-AmkNweZeGiSwMRYKxU"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "verifier under a shared anchor, named by a revoked entry by its SHA-256 written in padded standard base64",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp"
+        },
+        "role" : "verifier",
+        "subject" : {
+          "identifier" : "x509_hash:RwyjSnUy0aehNoXJJwotHUcb-AmkNweZeGiSwMRYKxU",
+          "x5c" : [
+            "MIIB5jCCAYugAwIBAgIJALznzm2MnIStMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwOTA2MzJaFw00NjAxMTEwOTA2MzJaMFYxCzAJBgNVBAYTAlVUMRgwFgYDVQQKDA9IYXNoZWQgVmVyaWZpZXIxLTArBgNVBAMMJFZlcmlmaWVyIG5hbWVkIGJ5IGl0cyBoYXNoIGluIGJhc2U2NDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABPvBLW+9EmxONCMnhr4Og9Kq+Q9t5qH+dKhen2e7r2guapNkNKwDrm6Ya0hc2bLCoLabB2JYnXI/ZwcTQ7kaZ3ejYDBeMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBRCYbaJQ0hD18PNwakGJIweF4AWzDAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAKBggqhkjOPQQDAgNJADBGAiEA0cwu0liFsfut83Hu76p1p/jazy2nPfAYbZGQnmDzufICIQDoql2qaTlU5lh8fKqUvqs8qHWHoSfHDzOHQdVFNh6n7Q=="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-hash-b64-revoked",
+          "errors" : [
+            "client_id.x5c_required",
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:RwyjSnUy0aehNoXJJwotHUcb-AmkNweZeGiSwMRYKxU"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-hash-b64-revoked",
+          "errors" : [
+            "client_id.x5c_required",
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:RwyjSnUy0aehNoXJJwotHUcb-AmkNweZeGiSwMRYKxU"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "x509_hash client_id written in hexadecimal, without a certificate: read as the same hash on both sides, and refused for want of the certificate",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp"
+        },
+        "role" : "verifier",
+        "subject" : {
+          "identifier" : "x509_hash:470ca34a7532d1a7a13685c9270a2d1d471bf809a4370799786892c0c4582b15"
+        }
+      }
     }
   ],
   "description" : "Generated by EvaluationVectorsTest from cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",
@@ -6493,6 +6658,68 @@
           ],
           "status" : "ACTIVE",
           "validUntil" : "2020-01-01T00:00:00Z"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked verifier, names its signer by its SHA-256 in padded standard base64 (rp-hash-b64)"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-hash-b64-revoked",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "RwyjSnUy0aehNoXJJwotHUcb-AmkNweZeGiSwMRYKxU"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "VERIFIER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, names a Document Signer of the registered IACA by its SHA-256 in hexadecimal (ds-hash-hex)"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-hash-hex-revoked",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "BylTbd_zcpJz6I7lClpYy2IlS2lIfZ4b9KBELeSf7ig"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
         },
         {
           "attributes" : { },
@@ -7862,6 +8089,68 @@
           ],
           "status" : "ACTIVE",
           "validUntil" : "2020-01-01T00:00:00Z"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked verifier, names its signer by its SHA-256 in padded standard base64 (rp-hash-b64)"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-hash-b64-revoked",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "RwyjSnUy0aehNoXJJwotHUcb-AmkNweZeGiSwMRYKxU"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "VERIFIER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, names a Document Signer of the registered IACA by its SHA-256 in hexadecimal (ds-hash-hex)"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-hash-hex-revoked",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "BylTbd_zcpJz6I7lClpYy2IlS2lIfZ4b9KBELeSf7ig"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
         },
         {
           "attributes" : { },

@@ -213,6 +213,60 @@ class RegistryFormatTest {
         assertThat(r.anchors().getFirst().crlUrls()).containsExactly("https://pki.example/ca.crl");
     }
 
+    /** An entity with one identifier, written as JSON (which is YAML) so that any value can be written. */
+    SourceLoadResult withIdentifier(String type, String value) throws TrustSourceException {
+        return load(io.vctrust.trust.core.json.Json.write(Map.of("entities", List.of(Map.of("id", "acme",
+                "identifiers", List.of(Map.of("type", type, "value", value)))))));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aHashOrKeyIdentifierIsWrittenInAFormItCanBeComparedIn() throws Exception {
+        // X509_SHA256: a digest written in any of the ways the shared list gives reads as base64url; anything else cannot be
+        // read, where before it was kept as written and bound no certificate.
+        java.nio.file.Path root = java.nio.file.Path.of("").toAbsolutePath();
+        while (!java.nio.file.Files.isDirectory(root.resolve("conformance"))) {
+            root = root.getParent();
+        }
+        Map<String, Object> forms = io.vctrust.trust.core.json.Json.parseObject(
+                java.nio.file.Files.readAllBytes(root.resolve("conformance/evaluation/identifiers.json")));
+        for (Map<String, Object> same : (List<Map<String, Object>>) forms.get("same")) {
+            if ("X509_SHA256".equals(same.get("type"))) {
+                for (String value : (List<String>) same.get("values")) {
+                    assertThat(withIdentifier("X509_SHA256", value).entities().getFirst().identifiers()).as(value)
+                            .singleElement().satisfies(i -> assertThat(i.value()).isEqualTo(same.get("key")));
+                }
+            }
+        }
+        for (Map<String, Object> unchanged : (List<Map<String, Object>>) forms.get("unchanged")) {
+            if ("X509_SHA256".equals(unchanged.get("type"))) {
+                for (String value : (List<String>) unchanged.get("values")) {
+                    assertThatThrownBy(() -> withIdentifier("X509_SHA256", value)).as("'%s'", value)
+                            .hasMessageContaining("identifiers[0]: 'value' is not a SHA-256 digest");
+                }
+            }
+        }
+        // X509_SKI: the key identifier's bytes in unpadded base64url, as both evaluators compute it. Hexadecimal without
+        // separators cannot be told from base64url, and is read (and matches nothing unless it is that form).
+        for (String value : List.of("q3vf", "q3vfAQ", "q3vfAQ8", "1b75f1e2577c439a0ff3fc9bb43dbe939ad3c277", "_-8")) {
+            assertThat(withIdentifier("X509_SKI", value).entities().getFirst().identifiers()).as(value)
+                    .singleElement().satisfies(i -> assertThat(i.value()).isEqualTo(value));
+        }
+        for (String value : List.of("", "AB:CD:EF:01", "ab cd ef", "q3vfAQ==", "q3vf+Q", "q3vf/Q", "q3vfA", "q3vfAR", "q3vfAQ9")) {
+            assertThatThrownBy(() -> withIdentifier("X509_SKI", value)).as("'%s'", value)
+                    .hasMessageContaining("identifiers[0]: 'value' is not a subject key identifier in unpadded base64url");
+        }
+        // JWK_THUMBPRINT: an RFC 7638 SHA-256 thumbprint in unpadded base64url, 43 characters.
+        String thumbprint = "G3Xx4ld8Q5oP8_ybtD2-k5rTwnc4WL1wH376TGb2HSo";
+        assertThat(withIdentifier("JWK_THUMBPRINT", thumbprint).entities().getFirst().identifiers()).singleElement()
+                .satisfies(i -> assertThat(i.value()).isEqualTo(thumbprint));
+        for (String value : List.of("1b75f1e2577c439a0ff3fc9bb43dbe939ad3c2773858bd701f7efa4c66f61d2a", "G3Xx4ld8Q5oP8/ybtD2+k5rTwnc4WL1wH376TGb2HSo=",
+                thumbprint + "=", thumbprint.substring(0, 42), thumbprint.substring(0, 42) + "p", "q3vf", "")) {
+            assertThatThrownBy(() -> withIdentifier("JWK_THUMBPRINT", value)).as("'%s'", value)
+                    .hasMessageContaining("identifiers[0]: 'value' is not a JWK thumbprint");
+        }
+    }
+
     @Test
     void aCertificateFetchedFromALocationIsHeldToTheSameRules() throws Exception {
         ctx.http.json("https://pki.example/ca.json", "{\"pem\": " + io.vctrust.trust.core.json.Json.write(CA_PEM) + ", \"other\": 7}");

@@ -13,7 +13,7 @@ import { validateCertificateChain, type LocalAnchor, type ValidateOptions } from
 import { anchorCrlUrls, crlUrlsToFetch, type HeldCrl } from '../x509/revocation.js';
 import type { Crl } from '../x509/crl.js';
 import { verifyX509Signature } from '../x509/signature.js';
-import { bytesEqual } from '../util/bytes.js';
+import { base64UrlEncode, bytesEqual, fromHex } from '../util/bytes.js';
 import { findVerificationMethod, hasRelationship, didError, parseDid } from '../did/did.js';
 import { jwkThumbprint } from '../crypto/keys.js';
 import type { TrustRules } from './rules.js';
@@ -49,13 +49,37 @@ export interface LocalTrustData {
 /**
  * The key an identifier is matched by. Identifiers are compared as the specifications compare them: URLs (credential
  * issuer identifiers, client identifiers, federation entity identifiers) byte for byte, with no normalization
- * (RFC 8414 section 3.3, OpenID4VCI 1.0 section 12.2.1); DNS names without regard to case; DIDs without a fragment.
- * The service applies the same rule (Identifier.java), so a port in any language matches with a string comparison.
+ * (RFC 8414 section 3.3, OpenID4VCI 1.0 section 12.2.1); DNS names without regard to case; DIDs without a fragment; a
+ * certificate's SHA-256 (X509_SHA256) as unpadded base64url however the digest is written ({@link sha256Digest}).
+ * The service applies the same rule (Identifier.java), so a port in any language matches with a string comparison;
+ * conformance/evaluation/identifiers.json holds both to it. The snapshot carries identifiers in this form already; an
+ * app's pinned trust may write a hash another way.
  */
 export function identifierKey(type: string, value: string): string {
   if (type === 'DID') return value.split('#')[0]!;
   if (type === 'DNS') return value.toLowerCase();
+  if (type === 'X509_SHA256') return sha256Digest(value) ?? value;
   return value;
+}
+
+/** 32 bytes in hexadecimal, in any case, with ':' between all the bytes or none (as openssl prints a fingerprint). */
+const HEX_DIGEST = /^(?:[0-9A-Fa-f]{64}|[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31})$/;
+/**
+ * 32 bytes in base64 or base64url, padded or not. 43 characters hold 258 bits: the last character of an encoding of 32
+ * bytes leaves its 2 low bits zero, so it is one of AEIMQUYcgkosw048; one that does not encodes no digest.
+ */
+const BASE64_DIGEST = /^(?:[A-Za-z0-9+/]{42}|[A-Za-z0-9_-]{42})[AEIMQUYcgkosw048]=?$/;
+
+/**
+ * A SHA-256 digest (32 bytes) in the one form it is compared in, unpadded base64url (what both evaluators compute from a
+ * certificate, and the OpenID4VP x509_hash value), from hexadecimal in any case with ':' between all the bytes or none,
+ * or base64 or base64url, padded or not. Undefined for anything else: such a value is compared as written, and matches
+ * nothing. As on the service (Identifier.sha256Digest).
+ */
+function sha256Digest(value: string): string | undefined {
+  if (HEX_DIGEST.test(value)) return base64UrlEncode(fromHex(value.replace(/:/g, '')));
+  if (BASE64_DIGEST.test(value)) return value.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return undefined;
 }
 
 /** A plain https URL: lower-case host of letters, digits, '-' and '.', optional port, then path, query or nothing. */
@@ -156,7 +180,7 @@ const pickName = (e: EntityView) => (e.display.find((d) => d.locale?.startsWith(
  * key, a bare JWK) binds no entity this way.
  */
 const boundToCertificate = (e: EntityView, leafHash: string | undefined) => leafHash !== undefined
-  && (e.identifiers.some((i) => i.type === 'X509_SHA256' && i.value === leafHash) || (e.certificates ?? []).some((c) => c.sha256 === leafHash));
+  && (e.identifiers.some((i) => i.type === 'X509_SHA256' && identifierKey(i.type, i.value) === leafHash) || (e.certificates ?? []).some((c) => c.sha256 === leafHash));
 const goodStanding = (e: EntityView, now: Date) => e.status === 'ACTIVE' && !(e.validUntil && now > new Date(e.validUntil)) && !(e.validFrom && now < new Date(e.validFrom));
 const error = (code: string, message: string): Reason => ({ code, message, severity: 'ERROR' });
 const warning = (code: string, message: string): Reason => ({ code, message, severity: 'WARNING' });
