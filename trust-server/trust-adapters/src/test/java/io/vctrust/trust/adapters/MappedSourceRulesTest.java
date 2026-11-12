@@ -802,22 +802,20 @@ class MappedSourceRulesTest {
         serveJson(ctx, d);
         SourceLoadResult r = source(ctx, props("mapping", m)).load();
         assertThat(r.entities()).extracting(TrustedEntity::id).containsExactly("a", "9.nine");
-        // An anchor with such an id is skipped; an entity with one fails the load (second round, rule A).
-        assertThat(r.anchors()).extracting(a -> a.id()).containsExactly("iaca");
-        assertThat(r.warnings()).containsExactly("mapping.anchors[0]: record 1 is skipped: its id is not 1 to 128 letters, digits or "
-                + ". _ : @ ~ - starting with a letter or digit");
-        // Third round (item 8): an entity with such an id is listed under an id derived from it, SUSPENDED, and the
-        // load goes on (it failed before).
+        // Fourth round (item 1): an id is a label. One the rule refuses is listed under its derived id, an anchor's as
+        // an entity's, and nothing else about the record changes (an anchor was skipped, and an entity suspended).
+        assertThat(r.anchors()).extracting(a -> a.id()).containsExactly(MappedSourceProbesTest.derived("@iaca"), "iaca");
+        assertThat(r.warnings()).containsExactly("1 id is listed under derived ids (sha256: and the SHA-256 of the id written), not "
+                + "being 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit: the first, '@iaca', as '"
+                + MappedSourceProbesTest.derived("@iaca") + "'");
         for (String id : List.of("-dash", ".dot", "~tilde", "a".repeat(129))) {
             Map<String, Object> bad = doc("a", id);
             bad.put("authorities", d.get("authorities"));
             serveJson(ctx, bad);
             SourceLoadResult loaded = source(ctx, props("mapping", m)).load();
             assertThat(loaded.entities()).as(id).extracting(e -> e.id() + " " + e.status())
-                    .containsExactly("a ACTIVE", MappedSourceEdgesTest.derived(id) + " SUSPENDED");
-            assertThat(loaded.warnings()).as(id).anyMatch(w -> w.startsWith("mapping.entities[0]: record 2 (id '" + MappedSourceEdgesTest.derived(id)
-                    + "') is listed SUSPENDED: its id '") && w.contains("it is not 1 to 128 letters, digits or . _ : @ ~ - starting with a "
-                    + "letter or digit"));
+                    .containsExactly("a ACTIVE", MappedSourceProbesTest.derived(id) + " ACTIVE");
+            assertThat(loaded.warnings()).as(id).singleElement().asString().startsWith("2 ids are listed under derived ids");
         }
     }
 }

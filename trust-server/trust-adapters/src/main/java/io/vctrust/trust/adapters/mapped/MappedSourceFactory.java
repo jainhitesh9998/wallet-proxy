@@ -88,7 +88,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     static final Duration DEFAULT_LOOKUP_MAX_AGE = Duration.ofHours(24);
     /** The identifiers the admin API accepts for an entry: an id from a document is held to the same rule. */
     private static final Pattern ENTRY_ID = TrustedEntityParser.ENTRY_ID;
-    private static final String ENTRY_ID_RULE = "its id is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit";
+    /** What a derived id looks like ({@link MappedSource#derivedId}): an id the document writes so is derived too. */
+    private static final Pattern DERIVED = Pattern.compile("sha256:[0-9a-f]{64}");
     private static final Pattern HEADER_NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
     /** A document from elsewhere names no file: whatever would load one is refused. */
     private static final ResourceLoader NO_FILES = location -> {
@@ -432,6 +433,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             Facts facts = null;
             Set<String> visited = new HashSet<>();
             List<Unread> unread = new ArrayList<>();
+            Ids ids = new Ids();
             Document page = null;
             int pages = 0;
             try {
@@ -459,7 +461,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         }
                         for (Object record : records) {
                             Tally t = entityTallies[b];
-                            t.count(mapEntity(block, record, page.root(), provenance, t.records + 1, text), warnings);
+                            t.count(mapEntity(block, record, page.root(), provenance, t.records + 1, text, ids), warnings);
                         }
                     }
                     for (int b = 0; b < config.mapping().anchors.size(); b++) {
@@ -470,7 +472,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                             throw new TrustSourceException("The list has more than " + config.maxAnchors() + " anchor records (limits.anchors)");
                         }
                         for (Object record : records) {
-                            Object mapped = mapAnchor(block, record, page.root(), provenance, text);
+                            Object mapped = mapAnchor(block, record, page.root(), provenance, text, ids);
                             if (mapped instanceof Skipped s && !s.certificates().isEmpty()) {
                                 unread.add(new Unread(anchorTallies[b].records + 1, s));
                             }
@@ -508,6 +510,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             for (Tally t : entityTallies) {
                 t.check(warnings);
             }
+            ids.warn(warnings);
             for (Tally t : anchorTallies) {
                 t.check(warnings);
             }
@@ -992,18 +995,17 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          *       id, listing the record could keep nobody out: the load fails, naming the record and the member;</li>
          *   <li>when anything else cannot be read, the entity is listed with what could be read, not in good standing
          *       (SUSPENDED, or the stricter status the record states), and a warning says what was left out and why;</li>
-         *   <li>so when its id is text that cannot be an entry's id ({@link #refusedId}; an id becomes a path
-         *       segment, a database key and a field of the audit log): it is listed under an id derived from it
-         *       ({@link #derivedId}), not in good standing, and the warning gives both. Failing the load for it, or
-         *       leaving it out, would keep nobody out.</li>
          * </ul>
+         *
+         * <p>Its id is a label ({@link Ids}): one that cannot be an entry's id as written is listed as the id derived
+         * from it, and nothing else about the record changes.
          *
          * @param number the record's number in its block, for messages
          * @return a {@link TrustedEntity} read completely, a {@link Noted} or an {@link Incomplete} one
          * @throws TrustSourceException when the record cannot be listed at all
          */
-        private Object mapEntity(Mapping.Block block, Object record, Object root, Provenance provenance, int number, Text text)
-                throws TrustSourceException {
+        private Object mapEntity(Mapping.Block block, Object record, Object root, Provenance provenance, int number, Text text,
+                                 Ids ids) throws TrustSourceException {
             Mapping.Mapped m = block.map(record, root);
             text.charge(m.weight());
             Map<String, Object> entry = new LinkedHashMap<>(m.entry());
@@ -1025,13 +1027,11 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 // list that is there and empty means none stated (allowEmpty), and the record has one ("roles": []).
                 throw unreadable(block, label, "it yields no role");
             }
-            String notAnId = refusedId(id);
-            if (notAnId != null) {
-                String derived = derivedId(id);
-                unusable.put("id", "its id " + Mapping.quote(id) + " is listed as '" + derived + "': it " + notAnId);
-                entry.put("id", derived);
-                id = derived;
-                label = label(number, derived);
+            String listed = ids.label(id);
+            if (!listed.equals(id)) {
+                entry.put("id", listed);
+                id = listed;
+                label = label(number, listed);
             }
             TrustedEntity entity;
             try {
@@ -1089,21 +1089,51 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         /**
-         * Why {@code id} cannot be an entry's id, or null when it can: the admin API's rule ({@link #ENTRY_ID}), whose
-         * characters include {@code @} (an email address is a common id). A name that ends in {@code @} and another
-         * framework's id is the registry's to place: it lists such an entity under {@code <id>@<its framework>}.
+         * The id a record is listed under when its own cannot be an entry's id as written: {@code sha256:} and the
+         * whole SHA-256 of the id as written, in UTF-8, in hexadecimal. The whole digest, so that two different ids
+         * cannot become one entry.
          */
-        private static String refusedId(String id) {
-            return ENTRY_ID.matcher(id).matches() ? null : "is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit";
-        }
-
-        /** The id an entity is listed under when its own cannot be one: {@code sha256:} and 32 hex digits of its SHA-256. */
         static String derivedId(String id) {
             try {
                 byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(StandardCharsets.UTF_8));
-                return "sha256:" + java.util.HexFormat.of().formatHex(digest).substring(0, 32);
+                return "sha256:" + java.util.HexFormat.of().formatHex(digest);
             } catch (java.security.NoSuchAlgorithmException e) {
                 throw new IllegalStateException(e);
+            }
+        }
+
+        /**
+         * An id of the document is a label, and one rule gives it, wherever the document uses one: for an entity, for
+         * an anchor, for a lookup answer, and for the entity an anchor names. An id the admin API's rule accepts
+         * ({@link #ENTRY_ID}: an entry's id becomes a path segment, a database key and a field of the audit log) is
+         * kept as written; any other (a URL, a DID with {@code %3A}, a name with a space or a letter outside ASCII, a
+         * base64 key identifier) is replaced by its {@link #derivedId}, and so is one written as a derived id, so that
+         * no id the document writes can be the one another becomes. Nothing else about the record changes: its status
+         * is what the document states, and a CA tied to an id is tied to the entity that id became. Listing such a
+         * record not in good standing, as round three did, cut that tie: the anchor named nobody, and the chain to the
+         * CA decided alone.
+         */
+        private static final class Ids {
+            private final Set<String> replaced = new HashSet<>();
+            private String first;
+
+            String label(String written) {
+                if (written == null || ENTRY_ID.matcher(written).matches() && !DERIVED.matcher(written).matches()) {
+                    return written;
+                }
+                if (replaced.add(written) && first == null) {
+                    first = written;
+                }
+                return derivedId(written);
+            }
+
+            /** One warning a load: how many ids were replaced, and the first, with what it became. */
+            void warn(Warnings warnings) {
+                if (first != null) {
+                    warnings.add(replaced.size() + (replaced.size() == 1 ? " id is" : " ids are") + " listed under derived ids (sha256: and "
+                            + "the SHA-256 of the id written), not being 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or "
+                            + "digit: the first, " + Mapping.quote(first) + ", as '" + derivedId(first) + "'");
+                }
             }
         }
 
@@ -1125,26 +1155,29 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          * One record as an anchor, or why not. An anchor is one certificate. Leaving an anchor out removes trust; a
          * record that is left out still says which certificate it is about, when that can be read ({@link #unread}).
          */
-        private Object mapAnchor(Mapping.Block block, Object record, Object root, Provenance provenance, Text text)
+        private Object mapAnchor(Mapping.Block block, Object record, Object root, Provenance provenance, Text text, Ids ids)
                 throws TrustSourceException {
             Mapping.Mapped m = block.map(record, root);
             text.charge(m.weight());
-            String id = m.entry().get("id") instanceof String s ? s : null;
-            String shown = id != null && ENTRY_ID.matcher(id).matches() ? id : null;
-            if (!m.unusable().isEmpty()) {
-                return skipped(block, shown, String.join("; ", m.unusable().values()), m.entry());
+            // Its id and the entity it names are labels, as an entity's id is (Ids): the CA stays tied to that entity.
+            Map<String, Object> entry = new LinkedHashMap<>(m.entry());
+            for (String member : List.of("id", "entity")) {
+                if (entry.get(member) instanceof String written) {
+                    entry.put(member, ids.label(written));
+                }
             }
-            if (id != null && shown == null) {
-                return skipped(block, null, ENTRY_ID_RULE, m.entry());
+            String id = entry.get("id") instanceof String s ? s : null;
+            if (!m.unusable().isEmpty()) {
+                return skipped(block, id, String.join("; ", m.unusable().values()), entry);
             }
             try {
-                List<TrustAnchor> parsed = TrustedEntityParser.anchors(m.entry(), def.frameworkId(), provenance, NO_FILES);
+                List<TrustAnchor> parsed = TrustedEntityParser.anchors(entry, def.frameworkId(), provenance, NO_FILES);
                 if (parsed.size() != 1) {
-                    return skipped(block, id, "its certificate holds " + parsed.size() + " certificates; an anchor is one", m.entry());
+                    return skipped(block, id, "its certificate holds " + parsed.size() + " certificates; an anchor is one", entry);
                 }
                 return parsed.getFirst();
             } catch (Exception e) {
-                return skipped(block, shown, message(e), m.entry());
+                return skipped(block, id, message(e), entry);
             }
         }
 
@@ -1416,7 +1449,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         // A record about the identifier that cannot be read completely answers with a suspended entity,
                         // not with "not found"; one whose identifying members cannot be read fails the lookup.
                         long before = text.used;
-                        Object mapped = mapEntity(l.entity(), records.get(i), root, provenance, i + 1, text);
+                        Object mapped = mapEntity(l.entity(), records.get(i), root, provenance, i + 1, text, new Ids());
                         TrustedEntity e = mapped instanceof TrustedEntity te ? te : mapped instanceof Incomplete inc ? inc.entity()
                                 : mapped instanceof Noted n ? n.entity() : null;
                         if (e != null) {

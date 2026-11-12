@@ -556,7 +556,6 @@ class MappedSourceEdgesTest {
         unreadable.put("a status the mapping cannot read", Map.of("kid", "row-7", "certificate", der("iaca"), "state", "withdrawn-2023"));
         unreadable.put("doctypes that cannot be read", Map.of("kid", "row-7", "certificate", der("iaca"), "state", "withdrawn",
                 "doctypes", MDL));
-        unreadable.put("an id that cannot be one", Map.of("kid", "row 7", "certificate", der("iaca"), "state", "withdrawn"));
         unreadable.forEach((what, row7) -> {
             for (boolean listedFirst : List.of(true, false)) {
                 Map<String, Object> row1 = Map.of("kid", "row-1", "certificate", der("iaca"), "state", "active");
@@ -568,11 +567,24 @@ class MappedSourceEdgesTest {
                 try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
                     assertThat(decide(registry, MDL)).as(what).isNotEqualTo(Decision.TRUSTED);
                     assertThat(state(manager, "partner").lastError()).as(what).startsWith("Anchor 'row-1' and record " + (listedFirst ? 2 : 1)
-                            + " of mapping.anchors[0]" + (what.contains("id") ? "" : " (id 'row-7')") + " have the same certificate in "
-                            + "domain mdoc-iaca, and the record cannot be read: which one holds cannot be told");
+                            + " of mapping.anchors[0] (id 'row-7') have the same certificate in domain mdoc-iaca, and the record cannot be "
+                            + "read: which one holds cannot be told");
                 }
             }
         });
+        // "row 7", an id the rule refuses, was a case above (such an anchor was skipped). Since the fourth round an id is a
+        // label: the row is listed under its derived id, and two readable rows about one certificate must agree.
+        Map<String, Object> d7 = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates", null));
+        d7.put("authorities", List.of(Map.of("kid", "row-1", "certificate", der("iaca"), "state", "active"),
+                Map.of("kid", "row 7", "certificate", der("iaca"), "state", "withdrawn")));
+        TestContext c7 = ctx();
+        serveJson(c7, d7);
+        TrustRegistry r7 = new TrustRegistry();
+        try (TrustSourceManager manager = manager(r7, source(c7, props("mapping", m)))) {
+            assertThat(decide(r7, MDL)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(state(manager, "partner").lastError()).startsWith("Anchors 'row-1' and '" + derived("row 7").substring(0, 40) + "…' "
+                    + "have the same certificate in domain mdoc-iaca and a different status");
+        }
         // An unreadable row of another certificate is skipped, as before; so is one whose certificate cannot be read.
         for (Object certificate : List.of(der("rp-ca"), "not a certificate")) {
             Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates", null));
@@ -702,7 +714,7 @@ class MappedSourceEdgesTest {
     static String derived(String id) {
         try {
             byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            return "sha256:" + java.util.HexFormat.of().formatHex(digest).substring(0, 32);
+            return "sha256:" + java.util.HexFormat.of().formatHex(digest);   // the whole digest since the fourth round
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
@@ -710,10 +722,12 @@ class MappedSourceEdgesTest {
 
     @Test
     void item8_anEntityWhoseIdTheRegistryCannotTakeIsListedUnderADerivedIdAndKeptOut() throws Exception {
-        // The revoked issuer, bound by its signing certificate under the shared IACA, with an id the registry cannot take.
+        // The revoked issuer, bound by its signing certificate under the shared IACA, with an id the rule refuses.
+        // Fourth round (item 1): such an id is a label, replaced by its derived id, and nothing else changes: the status
+        // is the document's (it was SUSPENDED, or the stricter status stated, with a warning a record).
         Map<String, String> why = new LinkedHashMap<>();
-        why.put("dmv two", "is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
-        why.put("d".repeat(130), "is not 1 to 128 letters");
+        why.put("dmv two", "not being 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
+        why.put("d".repeat(130), "not being 1 to 128 letters");
         why.forEach((id, reason) -> {
             TestContext ctx = ctx();
             serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", id, "state", "revoked")));
@@ -727,8 +741,7 @@ class MappedSourceEdgesTest {
                 assertThat(e.certificates()).hasSize(1);
                 assertThat(registry.snapshot().entity("partner:college")).isPresent();
                 assertThat(state(manager, "partner").warnings()).as(id).singleElement().asString()
-                        .startsWith("mapping.entities[0]: record 1 (id '" + derived + "') is listed REVOKED: its id 'partner:")
-                        .contains("' is listed as '" + derived + "': it " + reason);
+                        .startsWith("1 id is listed under derived ids").contains(reason).endsWith(", as '" + derived + "'");
             }
         });
         // dmv@other was a case above (a derived id) while the registry dropped a name that ends in @ and another
@@ -741,12 +754,13 @@ class MappedSourceEdgesTest {
             assertThat(decide(placed, MDL)).isEqualTo(Decision.NOT_TRUSTED);
             assertThat(placed.snapshot().entity("partner:dmv@other@partner").orElseThrow().status()).isEqualTo(EntityStatus.REVOKED);
         }
-        // In good standing otherwise, it is listed SUSPENDED; an @ followed by the source's own framework is an id.
+        // In good standing, it is listed so (it was SUSPENDED until the fourth round); an @ followed by the source's own
+        // framework is an id.
         TestContext ctx = ctx();
         serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv two")));
         var r = loadQuietly(source(ctx, props("mapping", boundMapping())));
         assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
-                .containsExactly(derived("partner:dmv two") + " SUSPENDED", "partner:college ACTIVE");
+                .containsExactly(derived("partner:dmv two") + " ACTIVE", "partner:college ACTIVE");
         serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv@partner")));
         r = loadQuietly(source(ctx, props("mapping", boundMapping())));
         assertThat(r.entities()).extracting(e -> e.id() + " " + e.status()).containsExactly("partner:dmv@partner ACTIVE", "partner:college ACTIVE");
@@ -757,7 +771,7 @@ class MappedSourceEdgesTest {
         ctx.http.json(BASE + "did%3Aexample%3Ab", Json.write(Map.of("id", "b c", "did", "did:example:b")));
         assertThat(resolver.resolve(Identifier.did("did:example:b"))).hasValueSatisfying(e -> {
             assertThat(e.id()).isEqualTo(derived("b c"));
-            assertThat(e.status()).isEqualTo(EntityStatus.SUSPENDED);
+            assertThat(e.status()).isEqualTo(EntityStatus.ACTIVE);
         });
     }
 

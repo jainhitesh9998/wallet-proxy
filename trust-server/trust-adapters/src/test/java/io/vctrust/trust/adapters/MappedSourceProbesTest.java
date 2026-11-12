@@ -158,4 +158,114 @@ class MappedSourceProbesTest {
         assertThat(loadError(source(ctx, props("mapping", m2)))).startsWith("mapping.entities[0]: record 1 (id 'dmv') cannot be read: "
                 + "identifiers: identifiers[0]: 'value' is not a SHA-256 digest");
     }
+
+    // 1: an id is a label ------------------------------------------------------------------------------------------
+
+    /** An id as the source lists it when it cannot be one as written: {@code sha256:} and the whole SHA-256, in hexadecimal. */
+    static String derived(String id) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "sha256:" + java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Issuers bound to nothing but their CA, which names its entity ({@code entity: $.issuer_id}); ids as written. */
+    static Map<String, Object> tiedByTheCa() {
+        return Json.parseObject("""
+                {"entities": [{"each": "$.issuers[*]", "id": "$.id", "roles": ["CREDENTIAL_ISSUER"],
+                   "identifiers": [{"type": "URL", "value": "$.url"}],
+                   "authorizations": [{"each": "$.credentials[*]", "format": "$.format", "type": "$.type"}],
+                   "status": {"path": "$.state", "values": {"active": "ACTIVE", "suspended": "SUSPENDED"}, "default": "REVOKED"},
+                   "validUntil": "$.valid_until"}],
+                 "anchors": [{"each": "$.cas[*]", "id": "$.kid", "domain": "mdoc-iaca", "certificate": "$.certificate",
+                   "entity": "$.issuer_id"}]}""");
+    }
+
+    static Map<String, Object> tied(String id, Map<String, Object> party) {
+        Map<String, Object> dmv = new LinkedHashMap<>(Map.of("id", id, "url", "https://issuer.utopia.example", "state", "active",
+                "credentials", List.of(Map.of("format", "mso_mdoc", "type", MDL))));
+        dmv.putAll(party);
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("issuers", List.of(dmv, Map.of("id", "college", "url", "https://college.example", "state", "active")));
+        d.put("cas", List.of(Map.of("kid", "utopia-iaca", "certificate", der("iaca"), "issuer_id", id)));
+        return d;
+    }
+
+    @Test
+    void item1_aCaTiedToAnEntityWhoseIdIsReplacedIsTiedToWhatTheIdBecameAndTheEntityKeepsItsStatus() {
+        for (String id : List.of("Utopia DMV", "https://dmv.utopia.example")) {
+            Map<String, Map<String, Object>> cases = new LinkedHashMap<>();
+            cases.put("revoked", Map.of("state", "revoked"));
+            cases.put("active", Map.of());
+            cases.put("suspended by a date that cannot be read", Map.of("valid_until", NOW.toEpochMilli()));
+            cases.forEach((what, party) -> {
+                TestContext ctx = ctx();
+                serveJson(ctx, tied(id, party));
+                TrustRegistry registry = new TrustRegistry();
+                try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", tiedByTheCa())))) {
+                    String as = id + ", " + what;
+                    assertThat(state(m, "partner").lastError()).as(as).isNull();
+                    TrustedEntity listed = registry.snapshot().entity(derived(id)).orElseThrow();
+                    assertThat(listed.status()).as(as).isEqualTo(what.equals("revoked") ? EntityStatus.REVOKED
+                            : what.equals("active") ? EntityStatus.ACTIVE : EntityStatus.SUSPENDED);
+                    assertThat(registry.snapshot().allAnchors()).singleElement().satisfies(a -> assertThat(a.entityId()).isEqualTo(derived(id)));
+                    // The chain to the CA is the entity's: revoked or suspended, kept out; active, as it is authorized.
+                    assertThat(MappedSourceValidationTest.decide(registry, MappedSourceValidationTest.PID)).as(as).isEqualTo(Decision.NOT_TRUSTED);
+                    assertThat(MappedSourceValidationTest.decide(registry, MDL)).as(as)
+                            .isEqualTo(what.equals("active") ? Decision.TRUSTED : Decision.NOT_TRUSTED);
+                }
+            });
+        }
+    }
+
+    @Test
+    void item1_aListWhoseIdsAreUrlsLoadsAsItStatesAndAnAnchorIdIsALabelToo() throws Exception {
+        // A federation-style list: every party named by its URL, every one active. Each was suspended, and the block
+        // failed the load ("none of the records could be read completely").
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("issuers", List.of(Map.of("id", "https://dmv.utopia.example", "url", "https://dmv.utopia.example", "state", "active",
+                        "credentials", List.of(Map.of("format", "mso_mdoc", "type", MDL))),
+                Map.of("id", "https://college.example/issuer", "url", "https://college.example/issuer", "state", "active")));
+        // A CA named by a base64 key identifier, tied to the first.
+        d.put("cas", List.of(Map.of("kid", "q83vEjRWeJ+/kQ==", "certificate", der("iaca"), "issuer_id", "https://dmv.utopia.example")));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", tiedByTheCa())))) {
+            assertThat(state(m, "partner").lastError()).isNull();
+            assertThat(registry.snapshot().entities()).extracting(e -> e.id() + " " + e.status())
+                    .containsExactlyInAnyOrder(derived("https://dmv.utopia.example") + " ACTIVE", derived("https://college.example/issuer") + " ACTIVE");
+            assertThat(registry.snapshot().allAnchors()).singleElement().satisfies(a -> {
+                assertThat(a.id()).isEqualTo(derived("q83vEjRWeJ+/kQ=="));
+                assertThat(a.entityId()).isEqualTo(derived("https://dmv.utopia.example"));
+            });
+            assertThat(MappedSourceValidationTest.decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
+            assertThat(MappedSourceValidationTest.decide(registry, MappedSourceValidationTest.PID)).isEqualTo(Decision.NOT_TRUSTED);
+            // One warning for the load, not one a record.
+            assertThat(state(m, "partner").warnings()).containsExactly("3 ids are listed under derived ids (sha256: and the SHA-256 of the "
+                    + "id written), not being 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit: the first, "
+                    + "'https://dmv.utopia.example', as '" + derived("https://dmv.utopia.example") + "'");
+        }
+    }
+
+    @Test
+    void item1_twoDifferentIdsNeverBecomeOneEntryAndOneIdTwiceIsOne() throws Exception {
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("issuers", List.of(Map.of("id", "utopia dmv", "url", "https://a.example", "state", "active"),
+                Map.of("id", "Utopia DMV", "url", "https://b.example", "state", "active"),
+                // An id written as the derived id of another stays apart from it: such an id is derived again.
+                Map.of("id", derived("utopia dmv"), "url", "https://c.example", "state", "active"),
+                Map.of("id", "utopia dmv", "url", "https://d.example", "state", "revoked")));
+        d.put("cas", List.of(Map.of("kid", "utopia-iaca", "certificate", der("iaca"))));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", tiedByTheCa())))) {
+            assertThat(registry.snapshot().entities()).extracting(e -> e.id() + " " + e.status()).containsExactlyInAnyOrder(
+                    derived("utopia dmv") + " REVOKED", derived("Utopia DMV") + " ACTIVE", derived(derived("utopia dmv")) + " ACTIVE");
+            assertThat(registry.snapshot().entity(derived("utopia dmv")).orElseThrow().identifiers()).hasSize(2);
+        }
+    }
 }

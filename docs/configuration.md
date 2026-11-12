@@ -582,12 +582,17 @@ What then happens depends on the record:
 - **An entity whose `id`, `roles`, `identifiers` or `certificates` cannot be read**, or that yields no `id`, or no
   role (unless its roles are there and empty under `allowEmpty`), **fails the load**, with a message that names the
   block, the record and the member. These say whom the record is about. The source keeps its last good content.
-- **An entity whose id is text that cannot be an entry's id** (not 1 to 128 letters, digits or `. _ : @ ~ -`
-  starting with a letter or digit, the admin API's rule) **is listed under a derived id**: `sha256:` and the first 32
-  hexadecimal digits of the SHA-256 of the mapped id, `SUSPENDED` (or the stricter status it states), with a warning
-  that gives both ids. The load goes on. An id the rule accepts is kept as written, `@` included (an email address is a
-  common id); one that ends in `@` and another framework's id (`acme@other`) is the registry's to place, under the
-  name of the source's framework (`acme@other@national`), as for every source.
+- **An id is a label.** One rule gives the id of an entity, of an anchor, of a lookup answer, and the id an anchor's
+  `entity` names. An id the admin API's rule accepts (1 to 128 letters, digits or `. _ : @ ~ -`, starting with a letter
+  or digit) is kept as written, `@` included (an email address is a common id; one that ends in `@` and another
+  framework's id, `acme@other`, is the registry's to place, under the source's framework: `acme@other@national`). Any
+  other id (a URL, a DID with `%3A`, a name with a space or a letter outside ASCII, a base64 key identifier) is
+  replaced by its derived id: `sha256:` and the whole SHA-256 of the id as written (UTF-8), in hexadecimal; so is an
+  id the list writes in that very form, so that no id the list writes can be the one another becomes. Nothing else
+  about the record changes: its status is the one the list states, and a CA tied to `utopia dmv` is tied to the
+  entity `utopia dmv` became. Two different ids never become one entry; one id twice is one entry (the strictest of
+  its records standing). One warning a load says how many ids were replaced, and the first with its derived id; the
+  party's `name` and `display` are shown as before.
 - **An entity in which anything else cannot be read is listed `SUSPENDED`**, with what identifies it and every member
   that could be read, but none that could not, and a warning that names the record, the members and why. A status
   stricter than `SUSPENDED` that the record states (`REVOKED`, `EXPIRED`) is kept. `SUSPENDED` means here: the list
@@ -595,8 +600,8 @@ What then happens depends on the record:
   certificates, identifiers and anchor still find it. Leaving it out instead would leave its party to whatever anchor
   its certificate chains to, and a chain to an anchor is trusted also without an entity. An entity record has three
   outcomes only: listed as the document states it, listed not in good standing, or the load fails.
-- **An anchor** that cannot be read completely, or lacks its `domain` or `certificate`, or whose id is not one, **is
-  skipped** with a warning: leaving an anchor out removes trust. Unless its certificate can be read and another
+- **An anchor** that cannot be read completely, or lacks its `domain` or `certificate`, **is skipped** with a
+  warning: leaving an anchor out removes trust. Unless its certificate can be read and another
   record of the load lists the same certificate in the same domain (in any domain, when its own cannot be read):
   then the load fails, naming both, since two records about one certificate must agree, and one that cannot be read
   cannot be said to.
