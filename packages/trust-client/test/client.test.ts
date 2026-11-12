@@ -288,6 +288,49 @@ describe('lookups: the proxy first, the standard mechanism when it cannot serve'
     await expect(client(fakeFetch(snapshotRoute()).fetch).getIssuerMetadata('http://issuer.example')).rejects.toThrow(/https/);
   });
 
+  describe('the authorization servers relayed with unsigned metadata are held to what a direct fetch is held to', () => {
+    const AS = 'https://as.issuer.example';
+    const asWellKnown = `${AS}/.well-known/oauth-authorization-server`;
+    const named = (servers: string[], relayed: Record<string, unknown>) => ({ ...envelope,
+      credentialIssuerMetadata: { ...envelope.credentialIssuerMetadata, authorization_servers: servers }, authorizationServers: relayed });
+    const routes = (env: unknown) => ({ ...snapshotRoute(), ...issuerRoutes, [proxyPath]: () => signedByService('trust-metadata+jwt', env),
+      [asWellKnown]: () => json({ issuer: AS, token_endpoint: `${AS}/own-token` }) });
+    const relayedCopy = { issuer: AS, token_endpoint: `${AS}/relayed-token` };
+    /** The server is asked itself, and its own answer is used. */
+    const askedItself = async (entry: unknown) => {
+      const { fetch, calls } = fakeFetch(routes(named([AS], { [AS]: entry })));
+      const md = await client(fetch).getIssuerMetadata(ISSUER);
+      expect(md.source).toBe('proxy');
+      expect(md.authorizationServers).toEqual({ [AS]: { issuer: AS, token_endpoint: `${AS}/own-token` } });
+      expect(calls.filter((x) => x === `GET ${asWellKnown}`)).toHaveLength(1);
+    };
+
+    it('a usable entry is taken without a request to the server; one for a server the metadata does not name is not', async () => {
+      const { fetch, calls } = fakeFetch(routes(named([AS], { [AS]: relayedCopy, 'https://other.example': { issuer: 'https://other.example' } })));
+      const md = await client(fetch).getIssuerMetadata(ISSUER);
+      expect([md.source, md.authorizationServers]).toEqual(['proxy', { [AS]: relayedCopy }]);
+      expect(calls.filter((x) => x === `GET ${asWellKnown}`)).toHaveLength(0);
+    });
+
+    it("an entry whose issuer is another server's is not used", () => askedItself({ ...relayedCopy, issuer: 'https://other.example' }));
+
+    it('an entry without an issuer, or that is not an object, is not used', async () => {
+      await askedItself({ token_endpoint: `${AS}/relayed-token` });
+      await askedItself('not an object');
+    });
+
+    it('a plain-http server is not taken from the relay: discovery at the issuer reports it and does not reach it', async () => {
+      const plain = 'http://as.issuer.example';
+      const { fetch, calls } = fakeFetch({ ...routes(named([plain], { [plain]: { issuer: plain, token_endpoint: `${plain}/token` } })),
+        'https://issuer.example/.well-known/openid-credential-issuer/tenant': () => json({ credential_issuer: ISSUER, credential_endpoint: `${ISSUER}/credential`,
+          credential_configurations_supported: {}, authorization_servers: [plain] }) });
+      const md = await client(fetch).getIssuerMetadata(ISSUER);
+      expect([md.source, md.authorizationServers]).toEqual(['fallback', {}]);
+      expect(md.warnings.join()).toMatch(/Authorization server http:\/\/as\.issuer\.example: .*must be an https URL/);
+      expect(calls.some((x) => x.startsWith(`GET ${plain}`))).toBe(false);
+    });
+  });
+
   it('serves the last metadata it had when neither the proxy nor the issuer answers', async () => {
     let online = true;
     let now = Date.now();

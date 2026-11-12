@@ -62,29 +62,41 @@ export class IssuerMetadataLookup {
     const env = await ctx.snapshots.verifySigned<IssuerMetadataResult>(String(r.body).trim(), 'trust-metadata+jwt');
     if (env?.credentialIssuer !== credentialIssuer) throw new TrustIntegrityError('The proxied metadata is about another issuer');
     const result: IssuerMetadataResult = { ...env, trust, source: 'proxy' };
+    const policy = trust.entity?.metadataPolicy;
     if (check && (result.signedMetadata || check.mode === 'require')) {
       // Signed metadata is verified here, against the issuer's own signature, whoever relayed it.
       if (!result.signedMetadata) throw new TrustServiceError(`${credentialIssuer} serves no signed metadata, which this ecosystem requires`, 422, 'signed_metadata_required');
       const v = await verifySignedMetadata(result.signedMetadata, credentialIssuer, check);
-      const policy = trust.entity?.metadataPolicy;
       result.credentialIssuerMetadata = policy?.openid_credential_issuer ? applyMetadataPolicy(v.metadata, policy.openid_credential_issuer) : v.metadata;
       result.signedMetadataVerified = true;
-      // The authorization servers are the signed metadata's. The envelope carries the metadata of the servers the
-      // service found, signed by it for this client and bound to this issuer: an entry for exactly a server's
-      // identifier is used when it passes what a direct fetch is held to; a server it has no such entry for is asked
-      // itself. Either copy then gets the registry's policy (the service applied it to its copy already; the policy
-      // operators give the same result when applied twice).
-      const servers = Array.isArray(v.metadata.authorization_servers) && v.metadata.authorization_servers.length
-        ? (v.metadata.authorization_servers as string[]).slice(0, 3) : [credentialIssuer];
-      const relayed = env.authorizationServers;
-      result.authorizationServers = {};
-      for (const as of servers) {
-        const asMd = relayedAuthorizationServer(relayed, as, ctx.insecureHosts)
-          ?? await fetchAuthorizationServerMetadata(as, ctx.fetch, ctx.timeoutMs, ctx.insecureHosts);
-        result.authorizationServers[as] = policy?.oauth_authorization_server ? applyMetadataPolicy(asMd, policy.oauth_authorization_server) : asMd;
-      }
+      // The authorization servers are the signed metadata's.
+      result.authorizationServers = await this.authorizationServers(v.metadata.authorization_servers, credentialIssuer, env.authorizationServers, policy);
+    } else {
+      // The authorization servers are those of the issuer metadata the service relayed.
+      result.authorizationServers = await this.authorizationServers(result.credentialIssuerMetadata?.authorization_servers, credentialIssuer,
+        env.authorizationServers, policy);
     }
     return result;
+  }
+
+  /**
+   * The metadata of the authorization servers an issuer's metadata names (the issuer itself when it names none; at
+   * most three, as on the service). The envelope carries the metadata of the servers the service found, signed by it
+   * for this client and bound to this issuer: an entry for exactly a server's identifier is used when it passes what
+   * a direct fetch is held to; a server it has no such entry for is asked itself. Either copy then gets the registry's
+   * policy (the service applied it to its copy already; the policy operators give the same result when applied twice).
+   */
+  private async authorizationServers(named: unknown, credentialIssuer: string, relayed: unknown,
+                                     policy: Record<string, Record<string, unknown>> | undefined): Promise<Record<string, Record<string, unknown>>> {
+    const { ctx } = this;
+    const servers = Array.isArray(named) && named.length ? (named as string[]).slice(0, 3) : [credentialIssuer];
+    const out: Record<string, Record<string, unknown>> = {};
+    for (const as of servers) {
+      const asMd = relayedAuthorizationServer(relayed, as, ctx.insecureHosts)
+        ?? await fetchAuthorizationServerMetadata(as, ctx.fetch, ctx.timeoutMs, ctx.insecureHosts);
+      out[as] = policy?.oauth_authorization_server ? applyMetadataPolicy(asMd, policy.oauth_authorization_server) : asMd;
+    }
+    return out;
   }
 
   /** Standard OpenID4VCI discovery from the issuer itself, with the registry's metadata policy from the snapshot applied. */
