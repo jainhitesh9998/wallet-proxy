@@ -791,7 +791,8 @@ class MappedSourceRulesTest {
         ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("id", "$.id");
         m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate")));
         Map<String, Object> d = doc("a", "9.nine");
-        d.put("authorities", List.of(Map.of("kid", "@iaca", "certificate", MappedTesting.der("iaca")),
+        // Two CAs: one certificate in a row that is skipped and in one that is listed fails the load (third round, item 7).
+        d.put("authorities", List.of(Map.of("kid", "@iaca", "certificate", MappedTesting.der("rogue-iaca")),
                 Map.of("kid", "iaca", "certificate", MappedTesting.der("iaca"))));
         serveJson(ctx, d);
         SourceLoadResult r = source(ctx, props("mapping", m)).load();

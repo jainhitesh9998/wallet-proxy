@@ -428,6 +428,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             Facts first = null;
             Facts facts = null;
             Set<String> visited = new HashSet<>();
+            List<Unread> unread = new ArrayList<>();
             Document page = null;
             int pages = 0;
             try {
@@ -466,7 +467,11 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                             throw new TrustSourceException("The list has more than " + config.maxAnchors() + " anchor records (limits.anchors)");
                         }
                         for (Object record : records) {
-                            anchorTallies[b].count(mapAnchor(block, record, page.root(), provenance, text), warnings);
+                            Object mapped = mapAnchor(block, record, page.root(), provenance, text);
+                            if (mapped instanceof Skipped s && !s.certificates().isEmpty()) {
+                                unread.add(new Unread(anchorTallies[b].records + 1, s));
+                            }
+                            anchorTallies[b].count(mapped, warnings);
                         }
                     }
                     for (Tally t : entityTallies) {
@@ -504,6 +509,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 t.check(warnings);
             }
             anchors = onePerId(anchors);
+            unread(anchors, unread);
             entities = strictest(entities, warnings);
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("pages", pages);
@@ -1016,7 +1022,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 try {
                     TrustedEntityParser.entity(Map.of("id", id, "framework", entry.get("framework")), def.frameworkId(), provenance, NO_FILES);
                 } catch (Exception e) {
-                    return new Skipped(block, id, message(e));
+                    return new Skipped(block, id, message(e), List.of(), null);
                 }
             }
             TrustedEntity entity;
@@ -1067,7 +1073,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
         }
 
-        /** One record as an anchor, or why not. An anchor is one certificate. Leaving an anchor out removes trust. */
+        /**
+         * One record as an anchor, or why not. An anchor is one certificate. Leaving an anchor out removes trust; a
+         * record that is left out still says which certificate it is about, when that can be read ({@link #unread}).
+         */
         private Object mapAnchor(Mapping.Block block, Object record, Object root, Provenance provenance, Text text)
                 throws TrustSourceException {
             Mapping.Mapped m = block.map(record, root);
@@ -1075,26 +1084,77 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             String id = m.entry().get("id") instanceof String s ? s : null;
             String shown = id != null && ENTRY_ID.matcher(id).matches() ? id : null;
             if (!m.unusable().isEmpty()) {
-                return new Skipped(block, shown, String.join("; ", m.unusable().values()));
+                return skipped(block, shown, String.join("; ", m.unusable().values()), m.entry());
             }
             if (id != null && shown == null) {
-                return new Skipped(block, null, ENTRY_ID_RULE);
+                return skipped(block, null, ENTRY_ID_RULE, m.entry());
             }
             try {
                 List<TrustAnchor> parsed = TrustedEntityParser.anchors(m.entry(), def.frameworkId(), provenance, NO_FILES);
                 if (parsed.size() != 1) {
-                    return new Skipped(block, id, "its certificate holds " + parsed.size() + " certificates; an anchor is one");
+                    return skipped(block, id, "its certificate holds " + parsed.size() + " certificates; an anchor is one", m.entry());
                 }
                 return parsed.getFirst();
             } catch (Exception e) {
-                return new Skipped(block, id, message(e));
+                return skipped(block, shown, message(e), m.entry());
             }
         }
 
-        private record Skipped(Mapping.Block block, String id, String reason) {
+        /** A skipped anchor record, with the certificates and the domain it names as far as they can be read. */
+        private static Skipped skipped(Mapping.Block block, String id, String reason, Map<String, Object> entry) {
+            List<java.security.cert.X509Certificate> certificates = List.of();
+            if (entry.get("certificate") instanceof String text) {
+                try {
+                    certificates = AdapterSupport.parseCertificateText(text);
+                } catch (RuntimeException e) {
+                    // a certificate that cannot be read names no CA that another record could list
+                }
+            }
+            String domain = null;
+            if (entry.get("domain") instanceof String d) {
+                try {
+                    domain = io.vctrust.trust.core.model.TrustDomain.of(d).name();
+                } catch (RuntimeException e) {
+                    // a domain that cannot be read could be any: the certificate alone is compared
+                }
+            }
+            return new Skipped(block, id, reason, certificates, domain);
+        }
+
+        /**
+         * A record that is skipped, and why. For an anchor record, the certificates it names (empty when none can be
+         * read) and its domain (null when it cannot be read).
+         */
+        private record Skipped(Mapping.Block block, String id, String reason, List<java.security.cert.X509Certificate> certificates,
+                               String domain) {
             /** The reason may quote the document unquoted (the registry format's parser names what it refuses): escaped. */
             Skipped {
                 reason = reason == null ? "it cannot be read" : Mapping.escape(reason);
+            }
+        }
+
+        /** An anchor record that is skipped, by its number in its block. */
+        private record Unread(int number, Skipped record) {
+        }
+
+        /**
+         * Two records about one certificate must agree, as {@link #onePerId} requires of readable ones; a record that
+         * cannot be read cannot be said to agree. A CA listed active as {@code row-1} and, by {@code row-7}, in a way
+         * the mapping cannot read (a withdrawal in an unknown status, doctypes in another shape) would otherwise be
+         * trusted through {@code row-1}: the load fails, naming both. A skipped record whose domain cannot be read is
+         * compared by its certificate alone.
+         */
+        private static void unread(List<TrustAnchor> listed, List<Unread> unread) throws TrustSourceException {
+            for (Unread u : unread) {
+                for (TrustAnchor a : listed) {
+                    if (u.record().certificates().contains(a.certificate())
+                            && (u.record().domain() == null || u.record().domain().equals(a.domain().name()))) {
+                        throw new TrustSourceException("Anchor " + Mapping.quote(a.id()) + " and record " + u.number() + " of "
+                                + u.record().block().where + (u.record().id() == null ? "" : " (id " + Mapping.quote(u.record().id()) + ")")
+                                + " have the same certificate in domain " + a.domain().name() + ", and the record cannot be read: which "
+                                + "one holds cannot be told");
+                    }
+                }
             }
         }
 

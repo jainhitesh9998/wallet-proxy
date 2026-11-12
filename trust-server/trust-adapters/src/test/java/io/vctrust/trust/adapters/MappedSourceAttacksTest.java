@@ -409,8 +409,10 @@ class MappedSourceAttacksTest {
         m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
                 "docTypes", "$.doctypes[*]")));
         Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        // Two CAs (third round, item 7: one certificate in a row that cannot be read and in another that is listed
+        // fails the load; MappedSourceEdgesTest.item7_...).
         d.put("authorities", List.of(
-                Map.of("kid", "free-iaca", "certificate", MappedTesting.der("iaca"), "doctypes", "org.iso.18013.5.1.mDL"),
+                Map.of("kid", "free-iaca", "certificate", MappedTesting.der("rogue-iaca"), "doctypes", "org.iso.18013.5.1.mDL"),
                 Map.of("kid", "bound-iaca", "certificate", MappedTesting.der("iaca"), "doctypes", List.of("org.iso.18013.5.1.mDL"))));
         serveJson(ctx, d);
         var r = source(ctx, props("mapping", m)).load();

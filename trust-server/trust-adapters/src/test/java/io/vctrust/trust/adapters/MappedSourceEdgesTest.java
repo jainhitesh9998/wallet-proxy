@@ -543,4 +543,51 @@ class MappedSourceEdgesTest {
         assertThat(loadError(source(ctx(), props("mapping", m)))).contains("mapping.anchors[0].crlUrls: allowEmpty applies to a list that "
                 + "restricts");
     }
+
+    // 7: an unreadable row for a certificate that another row lists ----------------------------------------------------
+
+    @Test
+    void item7_anUnreadableAnchorRowForACertificateAnotherRowListsFailsTheLoad() {
+        Map<String, Object> m = boundMapping();
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "status", Map.of("path", "$.state", "values", Map.of("active", "ACTIVE", "withdrawn", "REVOKED")),
+                "docTypes", "$.doctypes[*]")));
+        Map<String, Map<String, Object>> unreadable = new LinkedHashMap<>();
+        unreadable.put("a status the mapping cannot read", Map.of("kid", "row-7", "certificate", der("iaca"), "state", "withdrawn-2023"));
+        unreadable.put("doctypes that cannot be read", Map.of("kid", "row-7", "certificate", der("iaca"), "state", "withdrawn",
+                "doctypes", MDL));
+        unreadable.put("an id that cannot be one", Map.of("kid", "row 7", "certificate", der("iaca"), "state", "withdrawn"));
+        unreadable.forEach((what, row7) -> {
+            for (boolean listedFirst : List.of(true, false)) {
+                Map<String, Object> row1 = Map.of("kid", "row-1", "certificate", der("iaca"), "state", "active");
+                Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates", null));
+                d.put("authorities", listedFirst ? List.of(row1, row7) : List.of(row7, row1));
+                TestContext ctx = ctx();
+                serveJson(ctx, d);
+                TrustRegistry registry = new TrustRegistry();
+                try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+                    assertThat(decide(registry, MDL)).as(what).isNotEqualTo(Decision.TRUSTED);
+                    assertThat(state(manager, "partner").lastError()).as(what).startsWith("Anchor 'row-1' and record " + (listedFirst ? 2 : 1)
+                            + " of mapping.anchors[0]" + (what.contains("id") ? "" : " (id 'row-7')") + " have the same certificate in "
+                            + "domain mdoc-iaca, and the record cannot be read: which one holds cannot be told");
+                }
+            }
+        });
+        // An unreadable row of another certificate is skipped, as before; so is one whose certificate cannot be read.
+        for (Object certificate : List.of(der("rp-ca"), "not a certificate")) {
+            Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates", null));
+            d.put("authorities", List.of(Map.of("kid", "row-1", "certificate", der("iaca"), "state", "active"),
+                    Map.of("kid", "row-7", "certificate", certificate, "state", "withdrawn-2023")));
+            TestContext ctx = ctx();
+            serveJson(ctx, d);
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+                assertThat(state(manager, "partner").lastError()).isNull();
+                assertThat(registry.snapshot().allAnchors()).extracting(a -> a.id()).containsExactly("row-1");
+                assertThat(state(manager, "partner").warnings()).singleElement().asString().startsWith("mapping.anchors[0]: record 2 "
+                        + "(id 'row-7') is skipped");
+                assertThat(decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
+            }
+        }
+    }
 }
