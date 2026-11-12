@@ -196,7 +196,9 @@ shows the error.
 
 What a source tells clients about where its list comes from (the `sourceUri` in the `provenance` of what it loads,
 and the `trustedListUri` that `vical`, `etsi-tl` and `etsi-lote` put on their anchors and entities, which a DCQL
-`trusted_authorities` entry of type `etsi_tl` is matched against) is its location only when that is an `http(s)` URL.
+`trusted_authorities` entry of type `etsi_tl` is matched against) is its location only when that is an `http(s)` URL,
+and then without any user information, query or fragment: a credential for fetching a list
+(`https://user:secret@host/list`, `?token=...`) stays with the service.
 A `file:`, `classpath:` or plain path on the service's host is not published at all. A source that loads a local copy
 of a public list, such as an air-gapped service that mirrors an ETSI trusted list, names the list's public URL in
 `publicUri` (an optional property of `static`, `x509-bundle`, `vical`, `etsi-tl` and `etsi-lote`): that is published

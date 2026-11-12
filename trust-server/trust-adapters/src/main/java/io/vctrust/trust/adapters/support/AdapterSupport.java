@@ -46,9 +46,33 @@ public final class AdapterSupport {
         return publicUri != null ? publicUri : publishedLocation(location);
     }
 
-    /** A location published as it is, for a list no {@code publicUri} speaks for (one a list of lists points to): a web location, or nothing (null). */
+    /**
+     * A list's own location as it is published, for a list no {@code publicUri} speaks for (also one a list of lists
+     * points to): a web location, or nothing (null).
+     *
+     * <p>A web location is published without user information, query and fragment: that is where a credential for
+     * fetching a list is put ({@code https://user:secret@host/list}, {@code ?token=...}), and what is published goes
+     * to every client. A location without them is published exactly as written. One that cannot be read as a URL is
+     * not published.
+     */
     public static String publishedLocation(String location) {
-        return ResourceLoader.isRemote(location) ? location : null;
+        if (!ResourceLoader.isRemote(location)) {
+            return null;
+        }
+        try {
+            URI uri = new URI(location);
+            if (uri.getRawUserInfo() == null && uri.getRawQuery() == null && uri.getRawFragment() == null) {
+                return location;
+            }
+            String authority = uri.getRawAuthority();
+            if (authority == null) {
+                return null;
+            }
+            return uri.getScheme() + "://" + authority.substring(authority.lastIndexOf('@') + 1)
+                    + (uri.getRawPath() == null ? "" : uri.getRawPath());
+        } catch (URISyntaxException e) {
+            return null;
+        }
     }
 
     /**

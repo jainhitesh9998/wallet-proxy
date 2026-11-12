@@ -3,6 +3,7 @@ package io.vctrust.trust.adapters;
 import io.vctrust.trust.adapters.etsi.EtsiTrustedListSourceFactory;
 import io.vctrust.trust.adapters.lote.LoteSourceFactory;
 import io.vctrust.trust.adapters.statik.StaticTrustSourceFactory;
+import io.vctrust.trust.adapters.support.AdapterSupport;
 import io.vctrust.trust.adapters.vical.VicalSourceFactory;
 import io.vctrust.trust.adapters.x509.X509BundleSourceFactory;
 import io.vctrust.trust.core.did.DidResolver;
@@ -145,6 +146,27 @@ class PublishedLocationTest {
         for (Fixture f : fixtures()) {
             publishes(f.load(REMOTE, null), f, REMOTE, f.type() + " from " + REMOTE);
         }
+    }
+
+    /** A credential for fetching a list sits in the user information or the query of its URL; neither goes to clients. */
+    @Test
+    void aWebLocationIsPublishedWithoutWhatACredentialIsPutIn() throws Exception {
+        String secret = "s3cret-4c1f";
+        for (String location : List.of("https://reader:" + secret + "@lists.example/list", "https://lists.example/list?token=" + secret,
+                "https://reader:" + secret + "@lists.example/list?token=" + secret + "#" + secret)) {
+            for (Fixture f : fixtures()) {
+                SourceLoadResult r = f.load(location, null);
+                publishes(r, f, REMOTE, f.type() + " from a location with a credential");
+                assertThat(r.entities().toString() + r.anchors()).as(f.type() + ": the credential").doesNotContain(secret);
+            }
+        }
+        assertThat(AdapterSupport.publishedLocation("https://lists.example:8443/a%20b/list?x=1")).isEqualTo("https://lists.example:8443/a%20b/list");
+        assertThat(AdapterSupport.publishedLocation("https://[2001:db8::1]/list?x=1")).isEqualTo("https://[2001:db8::1]/list");
+        assertThat(AdapterSupport.publishedLocation("https://lists.example?x=1")).isEqualTo("https://lists.example");
+        // Written without them, a location is published byte for byte: it is what a verifier's etsi_tl entry is compared with.
+        assertThat(AdapterSupport.publishedLocation("https://Lists.Example/TL.xml")).isEqualTo("https://Lists.Example/TL.xml");
+        // What cannot be read as a URL is not published, with or without a credential in it.
+        assertThat(AdapterSupport.publishedLocation("https://lists.example/a b?token=" + secret)).isNull();
     }
 
     @Test
