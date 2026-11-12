@@ -15,6 +15,7 @@ import io.vctrust.trust.core.x509.CertificateProfiles;
 import io.vctrust.trust.core.x509.ValidationIssue;
 import io.vctrust.trust.core.x509.PathValidationResult;
 import io.vctrust.trust.core.model.TrustFramework;
+import io.vctrust.trust.core.policy.TrustMechanisms;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.core.spi.HttpFetcher;
@@ -178,6 +179,19 @@ public class TrustCoreConfiguration {
     @Bean
     X509PathValidator x509PathValidator() {
         return new X509PathValidator();
+    }
+
+    /**
+     * The operator's trust mechanisms, read strictly: a mechanism this service does not understand exactly stops it
+     * here, with a message that names the mechanism, rather than being applied in part or not at all.
+     */
+    @Bean
+    TrustMechanisms trustMechanisms(TrustProperties props) {
+        TrustMechanisms mechanisms = TrustMechanisms.fromConfiguration(props.getMechanisms().stream().map(PropertyTrees::normalize).toList());
+        if (!mechanisms.isEmpty()) {
+            log.info("Trust mechanisms, tried in this order: {}", mechanisms.ids());
+        }
+        return mechanisms;
     }
 
     /** CRL distribution points are mostly http; CRLs are signed, so the CRL service may fetch them over http. */

@@ -22,6 +22,11 @@ public class TrustProperties {
     private List<Framework> frameworks = new ArrayList<>();
     private List<Source> sources = new ArrayList<>();
     private List<Client> clients = new ArrayList<>();
+    /**
+     * Trust mechanisms (TrustMechanisms): rules for classes of questions, tried in order. Kept as the configuration tree
+     * and read strictly at startup, so that a member Spring would silently drop is an error instead.
+     */
+    private List<Map<String, Object>> mechanisms = new ArrayList<>();
     private List<String> corsOrigins = new ArrayList<>(List.of("*"));
 
     public static class Service {
@@ -505,6 +510,8 @@ public class TrustProperties {
     public void setSources(List<Source> v) { this.sources = v; }
     public List<Client> getClients() { return clients; }
     public void setClients(List<Client> v) { this.clients = v; }
+    public List<Map<String, Object>> getMechanisms() { return mechanisms; }
+    public void setMechanisms(List<Map<String, Object>> v) { this.mechanisms = v; }
     public List<String> getCorsOrigins() { return corsOrigins; }
     public void setCorsOrigins(List<String> v) { this.corsOrigins = v; }
 }

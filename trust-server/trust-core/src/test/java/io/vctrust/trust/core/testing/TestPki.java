@@ -140,6 +140,41 @@ public final class TestPki {
                 }), kp);
     }
 
+    /**
+     * A certificate with exactly the given extensions besides the key identifiers: a CA ({@code ca}) or not, key usage
+     * bits ({@code keyUsage}, BouncyCastle's {@link KeyUsage} constants; null: no key usage extension), extended key
+     * usages, CRL distribution points, valid from a day ago for {@code validity}.
+     */
+    public static Issued custom(String dn, Issued issuer, boolean ca, Integer keyUsage, List<String> ekus, List<String> crlUrls, Duration validity) {
+        KeyPair kp = ecKey();
+        try {
+            JcaX509ExtensionUtils ext = new JcaX509ExtensionUtils();
+            Instant notBefore = Instant.now().minus(Duration.ofDays(1));
+            X509v3CertificateBuilder b = new JcaX509v3CertificateBuilder(X500Name.getInstance(issuer.certificate().getSubjectX500Principal().getEncoded()),
+                    BigInteger.valueOf(SERIAL.incrementAndGet()), Date.from(notBefore), Date.from(notBefore.plus(validity)), new X500Name(dn), kp.getPublic());
+            b.addExtension(Extension.subjectKeyIdentifier, false, ext.createSubjectKeyIdentifier(kp.getPublic()));
+            b.addExtension(Extension.authorityKeyIdentifier, false, ext.createAuthorityKeyIdentifier(issuer.certificate()));
+            b.addExtension(Extension.basicConstraints, true, ca ? new BasicConstraints(0) : new BasicConstraints(false));
+            if (keyUsage != null) {
+                b.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
+            }
+            if (!ekus.isEmpty()) {
+                b.addExtension(Extension.extendedKeyUsage, false, new ExtendedKeyUsage(ekus.stream()
+                        .map(o -> KeyPurposeId.getInstance(new ASN1ObjectIdentifier(o))).toArray(KeyPurposeId[]::new)));
+            }
+            if (!crlUrls.isEmpty()) {
+                b.addExtension(Extension.cRLDistributionPoints, false, new CRLDistPoint(crlUrls.stream()
+                        .map(u -> new DistributionPoint(new DistributionPointName(new GeneralNames(
+                                new GeneralName(GeneralName.uniformResourceIdentifier, u))), null, null))
+                        .toArray(DistributionPoint[]::new)));
+            }
+            return new Issued(new JcaX509CertificateConverter().getCertificate(
+                    b.build(new JcaContentSignerBuilder("SHA256withECDSA").build(issuer.keys().getPrivate()))), kp);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** A CRL entry; {@code reason} is an RFC 5280 CRLReason code (0 = unspecified, no extension). */
     public record Revoked(BigInteger serial, Instant date, int reason) {
         public static Revoked of(Issued cert, int reason) {

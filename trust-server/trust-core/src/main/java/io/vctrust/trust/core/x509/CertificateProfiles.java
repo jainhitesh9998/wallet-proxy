@@ -127,4 +127,27 @@ public final class CertificateProfiles {
     public static CertificateProfile forDomain(TrustDomain domain) {
         return BY_DOMAIN.getOrDefault(domain.name(), NONE);
     }
+
+    /**
+     * {@code profile} with an operator's requirements on top (a trust mechanism's {@code x509.profile}). The built-in
+     * checks keep applying, and the result keeps the built-in's name: requirements only add refusals.
+     */
+    public static CertificateProfile withRequirements(CertificateProfile profile, CertificateRequirements requirements) {
+        if (requirements == null) {
+            return profile;
+        }
+        return new CertificateProfile() {
+            @Override
+            public String name() {
+                return profile.name();
+            }
+
+            @Override
+            public List<ValidationIssue> check(List<X509Certificate> path, X509Certificate anchor, ProfileContext ctx) {
+                List<ValidationIssue> issues = new ArrayList<>(profile.check(path, anchor, ctx));
+                issues.addAll(requirements.check(path, anchor));
+                return issues;
+            }
+        };
+    }
 }
