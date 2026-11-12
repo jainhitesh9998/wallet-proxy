@@ -10,9 +10,10 @@ Documentation: <https://jainhitesh9998.github.io/wallet-proxy/> (guides, REST AP
 references).
 
 A **trust service** compiles trust lists of any kind (X.509 trust anchors for ISO mdoc / mDL, ETSI trusted lists,
-OpenID Federation, EBSI, a plain registry) into one registry, signs a snapshot of it for each client, and proxies the
-lookups a wallet needs about the parties it deals with: issuer metadata, DID documents, certificate revocation lists,
-credential status lists, JSON-LD contexts.
+OpenID Federation, EBSI, a plain registry, or another service's JSON list
+[mapped by configuration](docs/configuration.md#mapped-sources)) into one registry, signs a snapshot of it for each
+client, and proxies the lookups a wallet needs about the parties it deals with: issuer metadata, DID documents,
+certificate revocation lists, credential status lists, JSON-LD contexts.
 
 A **client library** (`@vctrust/trust-client`) is how an app consumes it. Trust decisions are made on the device,
 from the signed snapshot. Lookups go through the proxy first and fall back to the standard mechanism of each

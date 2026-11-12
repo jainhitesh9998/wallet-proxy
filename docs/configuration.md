@@ -840,12 +840,8 @@ In a second terminal, at the repository root:
 
 ```sh
 curl -s -H 'Authorization: Bearer ops-key' localhost:8096/admin/v1/sources \
-  | jq '.[] | {id, type, lastError, entityCount, anchorCount, listInfo, warnings}
-        | .listInfo.details |= (to_entries | sort_by(.key) | from_entries)'
+  | jq '.[] | {id, type, lastError, entityCount, anchorCount, listInfo, warnings}'
 ```
-
-The service writes the members of `listInfo.details` in no fixed order (it can differ from one start to the next);
-`jq` sorts them here.
 
 ```json
 {
@@ -861,8 +857,8 @@ The service writes the members of `listInfo.details` in no fixed order (it can d
     "nextUpdate": "2030-01-01T00:00:00Z",
     "signature": "NOT_SIGNED",
     "details": {
-      "format": "json",
-      "pages": 1
+      "pages": 1,
+      "format": "json"
     }
   },
   "warnings": []
