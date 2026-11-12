@@ -699,6 +699,85 @@ class MappedSourceEdgesTest {
                 .satisfies(e -> assertThat(e.status()).isEqualTo(EntityStatus.SUSPENDED));
     }
 
+    static String derived(String id) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "sha256:" + java.util.HexFormat.of().formatHex(digest).substring(0, 32);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
+    void item8_anEntityWhoseIdTheRegistryCannotTakeIsListedUnderADerivedIdAndKeptOut() throws Exception {
+        // The revoked issuer, bound by its signing certificate under the shared IACA, with an id the registry cannot take.
+        Map<String, String> why = new LinkedHashMap<>();
+        why.put("dmv@other", "has an @ not followed by this source's framework");   // the name "other" keeps for its own
+        why.put("dmv two", "is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
+        why.put("d".repeat(130), "is not 1 to 128 letters");
+        why.forEach((id, reason) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", id, "state", "revoked")));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", boundMapping())))) {
+                // dmv@other: the registry refused the entry as the source listed it, and the IACA alone decided: TRUSTED.
+                assertThat(decide(registry, MDL)).as(id).isEqualTo(Decision.NOT_TRUSTED);
+                assertThat(state(manager, "partner").lastError()).as(id).isNull();
+                String derived = derived("partner:" + id);
+                var e = registry.snapshot().entity(derived).orElseThrow();
+                assertThat(e.status()).isEqualTo(EntityStatus.REVOKED);
+                assertThat(e.certificates()).hasSize(1);
+                assertThat(registry.snapshot().entity("partner:college")).isPresent();
+                assertThat(state(manager, "partner").warnings()).as(id).singleElement().asString()
+                        .startsWith("mapping.entities[0]: record 1 (id '" + derived + "') is listed REVOKED: its id 'partner:")
+                        .contains("' is listed as '" + derived + "': it " + reason);
+            }
+        });
+        // In good standing otherwise, it is listed SUSPENDED; an @ followed by the source's own framework is an id.
+        TestContext ctx = ctx();
+        serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv two")));
+        var r = loadQuietly(source(ctx, props("mapping", boundMapping())));
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly(derived("partner:dmv two") + " SUSPENDED", "partner:college ACTIVE");
+        serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv@partner")));
+        r = loadQuietly(source(ctx, props("mapping", boundMapping())));
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status()).containsExactly("partner:dmv@partner ACTIVE", "partner:college ACTIVE");
+        assertThat(r.warnings()).isEmpty();
+        // A lookup answer too.
+        Map<String, Object> p = lookupOnly();
+        OnDemandResolver resolver = (OnDemandResolver) source(ctx, p);
+        ctx.http.json(BASE + "did%3Aexample%3Ab", Json.write(Map.of("id", "b c", "did", "did:example:b")));
+        assertThat(resolver.resolve(Identifier.did("did:example:b"))).hasValueSatisfying(e -> {
+            assertThat(e.id()).isEqualTo(derived("b c"));
+            assertThat(e.status()).isEqualTo(EntityStatus.SUSPENDED);
+        });
+    }
+
+    @Test
+    void item8_frameworkCannotBeMapped() {
+        TestContext ctx = ctx();
+        serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "framework", "other", "state", "revoked")));
+        Map<String, Object> m = boundMapping();
+        block(m).put("framework", "$.framework");
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            // A record naming another framework was skipped, and a skipped revoked record left its party to the anchor.
+            assertThat(decide(registry, MDL)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(state(manager, "partner").lastError()).isEqualTo("Source 'partner' (mapped): mapping.entities[0]: framework cannot be "
+                    + "mapped: every record of a source belongs to the source's framework");
+        }
+        Map<String, Object> anchored = boundMapping();
+        anchored.put("anchors", List.of(Map.of("each", "$.authorities[*]", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "framework", "partner")));
+        assertThat(loadError(source(ctx, props("mapping", anchored)))).contains("mapping.anchors[0]: framework cannot be mapped");
+        // What a document says about frameworks is not read: the revoked issuer is listed, in the source's framework.
+        registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", boundMapping())))) {
+            assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().frameworkId()).isEqualTo("partner");
+            assertThat(decide(registry, MDL)).isEqualTo(Decision.NOT_TRUSTED);
+        }
+    }
+
     static io.vctrust.trust.core.spi.SourceLoadResult loadQuietly(io.vctrust.trust.core.spi.TrustSource s) {
         try {
             return s.load();

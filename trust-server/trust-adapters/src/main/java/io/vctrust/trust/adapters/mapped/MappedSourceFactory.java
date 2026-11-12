@@ -985,13 +985,14 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          *   <li>when what says whom the record is about ({@link Mapping#IDENTIFYING}) cannot be read, or there is no
          *       id, listing the record could keep nobody out: the load fails, naming the record and the member;</li>
          *   <li>when anything else cannot be read, the entity is listed with what could be read, not in good standing
-         *       (SUSPENDED, or the stricter status the record states), and a warning says what was left out and why.</li>
+         *       (SUSPENDED, or the stricter status the record states), and a warning says what was left out and why;</li>
+         *   <li>so when its id is text the registry cannot take as an entry's id ({@link #refusedId}): it is listed
+         *       under an id derived from it ({@link #derivedId}), not in good standing, and the warning gives both.
+         *       Refused, or left out by the registry, the record would restrict nobody.</li>
          * </ul>
          *
-         * <p>A record that names another framework is about a party of that framework, and is skipped.
-         *
          * @param number the record's number in its block, for messages
-         * @return a {@link TrustedEntity} read completely, an {@link Incomplete} one, or a {@link Skipped} record
+         * @return a {@link TrustedEntity} read completely, a {@link Noted} or an {@link Incomplete} one
          * @throws TrustSourceException when the record cannot be listed at all
          */
         private Object mapEntity(Mapping.Block block, Object record, Object root, Provenance provenance, int number, Text text)
@@ -1010,20 +1011,18 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (id == null) {
                 throw unreadable(block, label, "it yields no id");
             }
-            if (!ENTRY_ID.matcher(id).matches()) {
-                throw unreadable(block, label, ENTRY_ID_RULE);
-            }
             if (!entry.containsKey("roles")) {
                 // The evaluator considers only the entries that have the role asked about: listed without one, the
                 // record would restrict nobody, and its party's key would be left to whatever anchor it chains to.
                 throw unreadable(block, label, "it yields no role");
             }
-            if (entry.containsKey("framework")) {
-                try {
-                    TrustedEntityParser.entity(Map.of("id", id, "framework", entry.get("framework")), def.frameworkId(), provenance, NO_FILES);
-                } catch (Exception e) {
-                    return new Skipped(block, id, message(e), List.of(), null);
-                }
+            String notAnId = refusedId(id);
+            if (notAnId != null) {
+                String derived = derivedId(id);
+                unusable.put("id", "its id " + Mapping.quote(id) + " is listed as '" + derived + "': it " + notAnId);
+                entry.put("id", derived);
+                id = derived;
+                label = label(number, derived);
             }
             TrustedEntity entity;
             try {
@@ -1060,6 +1059,34 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             return new Incomplete(entity.toBuilder().status(status).build(),
                     label + " is listed " + status + ": " + Mapping.escape(String.join("; ", unusable.values()))
                             + (leftOut == null ? "" : "; and " + leftOut));
+        }
+
+        /**
+         * Why the registry cannot take {@code id} as an entry's id, or null when it can. The admin API's rule
+         * ({@link #ENTRY_ID}); and a name that ends in {@code @} and the id of another framework, which the registry keeps
+         * for the entries of that framework (an entry listed there when another framework has its id) and does not load
+         * from any other. Which frameworks the service has is not this source's to know: an id with an {@code @} in it
+         * is taken only when it has one, followed by the id of the source's own framework.
+         */
+        private String refusedId(String id) {
+            if (!ENTRY_ID.matcher(id).matches()) {
+                return "is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit";
+            }
+            int at = id.indexOf('@');
+            if (at >= 0 && (at != id.lastIndexOf('@') || def.frameworkId() == null || !id.substring(at + 1).equals(def.frameworkId()))) {
+                return "has an @ not followed by this source's framework: such a name is kept for the framework it ends in";
+            }
+            return null;
+        }
+
+        /** The id an entity is listed under when its own cannot be one: {@code sha256:} and 32 hex digits of its SHA-256. */
+        static String derivedId(String id) {
+            try {
+                byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(StandardCharsets.UTF_8));
+                return "sha256:" + java.util.HexFormat.of().formatHex(digest).substring(0, 32);
+            } catch (java.security.NoSuchAlgorithmException e) {
+                throw new IllegalStateException(e);
+            }
         }
 
         /** A record by its number, and by its id when it has one that may be shown. */

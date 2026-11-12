@@ -355,12 +355,25 @@ final class Mapping {
         private static final Set<String> CONTROL = Set.of("each", "allowEmpty", "required");
         static final Set<String> ENTITY_MEMBERS = Set.of("each", "allowEmpty", "required", "id", "roles", "name", "display",
                 "identifiers", "certificates", "authorizations", "status", "validFrom", "validUntil", "contexts", "attributes",
-                "metadataPolicy", "framework");
+                "metadataPolicy");
         static final Set<String> ANCHOR_MEMBERS = Set.of("each", "allowEmpty", "required", "id", "domain", "certificate", "entity",
-                "status", "docTypes", "crlUrls", "crl", "framework");
+                "status", "docTypes", "crlUrls", "crl");
+
+        /**
+         * A record of a mapped source belongs to the source's framework: {@code framework} is not a member. Mapped, a
+         * record that named another framework would be refused by the registry format's parser and left out, and a
+         * revoked party left out is one its anchor alone decides about.
+         */
+        private static void noFramework(Object raw, String where) {
+            if (raw instanceof Map<?, ?> m && m.containsKey("framework")) {
+                throw new IllegalArgumentException(where + ": framework cannot be mapped: every record of a source belongs to the "
+                        + "source's framework");
+            }
+        }
 
         /** @param eachRequired false for a lookup's answer, where {@code each} defaults to the whole document */
         static Block entity(Object raw, String where, boolean eachRequired) {
+            noFramework(raw, where);
             Map<String, Object> m = members(raw, where, ENTITY_MEMBERS);
             JsonPath each = each(m, where, eachRequired);
             if (!eachRequired && m.containsKey("allowEmpty")) {
@@ -387,7 +400,6 @@ final class Mapping {
             f.put("contexts", contextEntries(m.get("contexts"), where + ".contexts"));
             f.put("attributes", named(m.get("attributes"), where + ".attributes"));
             f.put("metadataPolicy", optional(m, "metadataPolicy", where));
-            f.put("framework", optional(m, "framework", where));
             for (Value v : values(f.get("roles"))) {
                 check(v, EntityRole.class, "role", where + ".roles");
             }
@@ -399,6 +411,7 @@ final class Mapping {
         }
 
         static Block anchor(Object raw, String where) {
+            noFramework(raw, where);
             Map<String, Object> m = members(raw, where, ANCHOR_MEMBERS);
             JsonPath each = each(m, where, true);
             List<String> required = requiredMembers(m, where, ANCHOR_MEMBERS);
@@ -411,7 +424,6 @@ final class Mapping {
             f.put("docTypes", many(m.get("docTypes"), where + ".docTypes", true));
             f.put("crlUrls", many(m.get("crlUrls"), where + ".crlUrls", false));
             f.put("crl", optional(m, "crl", where));
-            f.put("framework", optional(m, "framework", where));
             check((Value) f.get("status"), EntityStatus.class, "status", where + ".status");
             return new Block(where, each, false, flag(m, "allowEmpty", where), required, f);
         }
@@ -504,7 +516,6 @@ final class Mapping {
                 r.read("crlUrls", () -> crlUrls(record, root));
                 r.read("crl", () -> text("crl", record, root));
             }
-            r.read("framework", () -> text("framework", record, root));
             if (fields.get("status") != null && !r.values.containsKey("status")) {
                 // A state the mapping does not know is not good standing, and a status left out reads as ACTIVE.
                 r.unusable.putIfAbsent("status", "status yields nothing (no value at its path, or one its translation does not "
@@ -523,12 +534,8 @@ final class Mapping {
                         constraints.put(c, out.remove(c));
                     }
                 }
-                Object framework = out.remove("framework");
                 if (!constraints.isEmpty()) {
                     out.put("constraints", constraints);
-                }
-                if (framework != null) {
-                    out.put("framework", framework);
                 }
             }
             return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable), List.copyOf(r.leftOut), r.weight.units());

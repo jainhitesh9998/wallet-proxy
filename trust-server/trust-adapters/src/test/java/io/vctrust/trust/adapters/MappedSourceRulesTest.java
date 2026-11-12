@@ -599,12 +599,13 @@ class MappedSourceRulesTest {
                 Map.of("id", "c", "credential_issuer", "https://c.example")));
         serveJson(ctx, d);
         TrustRegistry registry = new TrustRegistry();
+        // Third round (item 8): framework cannot be mapped at all. A record naming another framework was skipped, and a
+        // skipped revoked record left its party to its anchor (MappedSourceEdgesTest.item8_frameworkCannotBeMapped).
         try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
-            assertThat(registry.snapshot().entities()).extracting(TrustedEntity::id).containsExactly("partner:b", "partner:c");
-            assertThat(registry.snapshot().entities()).allMatch(e -> e.frameworkId().equals("partner"));
-            assertThat(state(manager, "partner").warnings()).anyMatch(w -> w.contains("names framework 'other', but its source loads into 'partner'"));
+            assertThat(registry.snapshot().entities()).isEmpty();
+            assertThat(state(manager, "partner").lastError()).contains("mapping.entities[0]: framework cannot be mapped");
         }
-        // What the document says about frameworks is not read unless mapped: everything lands in the source's framework.
+        // What the document says about frameworks is not read: everything lands in the source's framework.
         try (TrustSourceManager manager = manager(registry, source(ctx, props()))) {
             assertThat(registry.snapshot().entities()).hasSize(3).allMatch(e -> e.frameworkId().equals("partner"));
         }
@@ -770,8 +771,6 @@ class MappedSourceRulesTest {
         assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 2 (id 'partner:y') is listed SUSPENDED: validUntil is not a date: 'forever'");
         // What says whom a record is about, refused by the registry format, fails the load (second round, rule A).
         Map<Map<String, Object>, String> unreadable = new LinkedHashMap<>();
-        unreadable.put(Map.of("id", "bad role", "roles", List.of("VERIFIER")),
-                "record 2 cannot be read: its id is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
         unreadable.put(Map.of("id", "x", "roles", List.of("PRESIDENT")), "record 2 (id 'partner:x') cannot be read: roles: Unknown role "
                 + "'PRESIDENT'; one of CREDENTIAL_ISSUER, VERIFIER, WALLET_PROVIDER, AUTHORIZATION_SERVER, ACCREDITATION_AUTHORITY, "
                 + "STATUS_LIST_PROVIDER, OTHER");
@@ -781,6 +780,12 @@ class MappedSourceRulesTest {
             serveJson(ctx, d);
             assertThat(loadError(source(ctx, props("mapping", m)))).as(message).startsWith("mapping.entities[0]: " + message + "; ");
         });
+        // An id the registry format refuses is listed under an id derived from it, not in good standing (third round,
+        // item 8; the load failed before): MappedSourceEdgesTest.item8_anEntityWhoseIdTheRegistryCannotTake...
+        d.put("issuers", List.of(ok, Map.of("id", "bad role", "roles", List.of("VERIFIER"))));
+        serveJson(ctx, d);
+        assertThat(source(ctx, props("mapping", m)).load().entities()).extracting(e -> e.id().startsWith("sha256:") + " " + e.status())
+                .containsExactly("false SUSPENDED", "true REVOKED");   // no state: the mapping's default
     }
 
     @Test
@@ -801,12 +806,18 @@ class MappedSourceRulesTest {
         assertThat(r.anchors()).extracting(a -> a.id()).containsExactly("iaca");
         assertThat(r.warnings()).containsExactly("mapping.anchors[0]: record 1 is skipped: its id is not 1 to 128 letters, digits or "
                 + ". _ : @ ~ - starting with a letter or digit");
+        // Third round (item 8): an entity with such an id is listed under an id derived from it, SUSPENDED, and the
+        // load goes on (it failed before).
         for (String id : List.of("-dash", ".dot", "~tilde", "a".repeat(129))) {
             Map<String, Object> bad = doc("a", id);
             bad.put("authorities", d.get("authorities"));
             serveJson(ctx, bad);
-            assertThat(loadError(source(ctx, props("mapping", m)))).as(id).startsWith("mapping.entities[0]: record 2 cannot be read: "
-                    + "its id is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
+            SourceLoadResult loaded = source(ctx, props("mapping", m)).load();
+            assertThat(loaded.entities()).as(id).extracting(e -> e.id() + " " + e.status())
+                    .containsExactly("a ACTIVE", MappedSourceEdgesTest.derived(id) + " SUSPENDED");
+            assertThat(loaded.warnings()).as(id).anyMatch(w -> w.startsWith("mapping.entities[0]: record 2 (id '" + MappedSourceEdgesTest.derived(id)
+                    + "') is listed SUSPENDED: its id '") && w.contains("it is not 1 to 128 letters, digits or . _ : @ ~ - starting with a "
+                    + "letter or digit"));
         }
     }
 }

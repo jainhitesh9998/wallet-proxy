@@ -150,13 +150,13 @@ class MappedSourceValidationTest {
                 "certificates", List.of(der("ds"), "not a certificate")));
         unreadable.put("its certificates are one text, not a list", members("state", "revoked", "certificates", der("ds")));
         unreadable.put("it yields no id", members("state", "revoked", "id", null, "identifier", "dmv"));
-        unreadable.put("its id breaks the admin API's rule", members("state", "revoked", "id", "dmv two"));
+        // (An id that breaks the admin API's rule was a case here: since the third round (item 8) such a record is listed
+        // under an id derived from it, MappedSourceEdgesTest.item8_anEntityWhoseIdTheRegistryCannotTake...)
         Map<String, String> messages = Map.of(
                 "its certificates hold something that is not one", "mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: ",
                 "its certificates are one text, not a list", "mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: "
                         + "the path $.certificates[*] finds text where [*] needs a list or an object",
-                "it yields no id", "mapping.entities[0]: record 1 cannot be read: it yields no id",
-                "its id breaks the admin API's rule", "mapping.entities[0]: record 1 cannot be read: its id is not 1 to 128 letters");
+                "it yields no id", "mapping.entities[0]: record 1 cannot be read: it yields no id");
         unreadable.forEach((what, members) -> {
             TestContext ctx = ctx();
             serveJson(ctx, boundList(1, members("state", "revoked")));
@@ -586,16 +586,15 @@ class MappedSourceValidationTest {
 
     @Test
     void e_noMessageIsLongerThan2000Characters() {
-        // A framework name the source does not load into, in every record: the first failure named all of it.
+        // A JWS algorithm of 8,000 characters: the failure named all of it. (A framework name the source does not load
+        // into was the vehicle here; since the third round (item 8) framework cannot be mapped.)
         TestContext ctx = ctx();
-        Map<String, Object> d = MappedSourceRulesTest.doc();
-        d.put("issuers", List.of(Map.of("id", "a", "credential_issuer", "https://a.example", "framework", "f".repeat(8_000))));
-        serveJson(ctx, d);
+        MappedSourceRulesTest.serveJws(ctx, withHeader("{\"alg\":\"" + "f".repeat(8_000) + "\",\"kid\":\"k1\"}"));
         TrustRegistry registry = new TrustRegistry();
-        try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", MappedSourceAttacksTest.entities("framework", "$.framework"))))) {
+        try (TrustSourceManager m = manager(registry, source(ctx, props("format", "jws", "verify", Map.of("jwks",
+                MappedTesting.jwks(MappedTesting.key("k1"))))))) {
             String error = state(m, "partner").lastError();
-            assertThat(error).startsWith("mapping.entities[0]: none of the 1 records at $.issuers[*] could be read completely; record 1 "
-                    + "(id 'partner:a') is skipped: Entity partner:a names framework 'ffff").hasSize(2_000).endsWith("…");
+            assertThat(error).startsWith("The list is signed with ffff").hasSize(2_000).endsWith("…");
         }
     }
 
