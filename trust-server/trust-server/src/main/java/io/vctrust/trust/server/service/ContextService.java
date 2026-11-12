@@ -4,6 +4,7 @@ import io.vctrust.trust.core.json.Json;
 import io.vctrust.trust.core.metadata.Oid4vciMetadataMapper;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.spi.HttpFetcher;
+import io.vctrust.trust.core.util.ForeignText;
 import io.vctrust.trust.core.util.Hashes;
 import io.vctrust.trust.server.cache.ResourceCache;
 import io.vctrust.trust.server.config.TrustProperties;
@@ -183,8 +184,10 @@ public class ContextService {
         String second = secondEntity + "=" + secondPin;
         String key = url + "|" + (first.compareTo(second) < 0 ? first + "|" + second : second + "|" + first);
         if (reportedDisputes.add(key)) {
+            // The location, the pins and the entity ids are as the lists wrote them.
             log.error("JSON-LD context {} is pinned to {} by entity '{}' and to {} by entity '{}'; it is left out of the snapshots of "
-                    + "clients that see both", url, firstPin, firstEntity, secondPin, secondEntity);
+                    + "clients that see both", ForeignText.escape(url), ForeignText.escape(firstPin), ForeignText.escape(firstEntity),
+                    ForeignText.escape(secondPin), ForeignText.escape(secondEntity));
         }
     }
 
@@ -198,19 +201,21 @@ public class ContextService {
         try {
             f = cache.get(url, () -> fetch(url), x -> cfg.getContextTtl()).value();
         } catch (Exception e) {
-            log.warn("JSON-LD context {} is unavailable: {}", url, e.getMessage());
+            log.warn("JSON-LD context {} is unavailable: {}", ForeignText.escape(url), ForeignText.escape(e.getMessage()));
             return pinnedSha256 == null ? null : new Context(pinnedSha256, null, 0);
         }
         String before = lastSeen.put(url, f.sha256());
         if (pinnedSha256 != null && !pinnedSha256.equals(f.sha256())) {
             // Reported when first seen and whenever the served content changes, not on every snapshot.
             if (!f.sha256().equals(before)) {
-                log.error("JSON-LD context {} does not match its pinned digest {} (it is {}); it is not served", url, pinnedSha256, f.sha256());
+                log.error("JSON-LD context {} does not match its pinned digest {} (it is {}); it is not served", ForeignText.escape(url),
+                        ForeignText.escape(pinnedSha256), f.sha256());
             }
             return new Context(pinnedSha256, null, 0);
         }
         if (before != null && !before.equals(f.sha256())) {
-            log.warn("JSON-LD context {} changed: {} is now {}. Credentials signed under the old content no longer verify; pin the digest to refuse such changes", url, before, f.sha256());
+            log.warn("JSON-LD context {} changed: {} is now {}. Credentials signed under the old content no longer verify; pin the digest to refuse such changes",
+                    ForeignText.escape(url), before, f.sha256());
         }
         return new Context(f.sha256(), f.document(), f.bytes());
     }

@@ -9,6 +9,7 @@ import io.vctrust.trust.core.spi.OnDemandResolver;
 import io.vctrust.trust.core.spi.SourceLoadResult;
 import io.vctrust.trust.core.spi.TrustSource;
 import io.vctrust.trust.core.spi.TrustSourceException;
+import io.vctrust.trust.core.util.ForeignText;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -189,7 +190,9 @@ public class TrustSourceManager implements AutoCloseable {
                     return e.map(found -> inFramework(found, found.id(), s.definition().frameworkId()));
                 }
             } catch (TrustSourceException e) {
-                log.debug("On-demand resolution of {} by {} failed: {}", identifier, s.id(), e.getMessage());
+                // The identifier is the asker's, the message may quote the registry's answer.
+                log.debug("On-demand resolution of {} by {} failed: {}", ForeignText.escape(identifier.toString()), s.id(),
+                        ForeignText.escape(e.getMessage()));
             }
         }
         return Optional.empty();
@@ -209,16 +212,18 @@ public class TrustSourceManager implements AutoCloseable {
             }
             results.put(s.id(), r);
             states.put(s.id(), new SourceState(s.id(), s.type(), s.definition().frameworkId(), true, start, clock.instant(),
-                    null, r.entities().size(), r.anchors().size(), r.listInfo(), r.warnings(), null));
+                    null, r.entities().size(), r.anchors().size(), r.listInfo(), escaped(r.warnings()), null));
             log.info("Loaded trust source '{}' ({}): {} entities, {} anchors", s.id(), s.type(),
                     r.entities().size(), r.anchors().size());
         } catch (Exception e) {
-            log.warn("Trust source '{}' ({}) failed to load: {}", s.id(), s.type(), e.getMessage());
+            // A source's message can quote its list, or whatever answered at the list's location.
+            String error = ForeignText.escape(e.getMessage());
+            log.warn("Trust source '{}' ({}) failed to load: {}", s.id(), s.type(), error);
             SourceLoadResult last = results.get(s.id());
             states.put(s.id(), new SourceState(s.id(), s.type(), s.definition().frameworkId(), true, start,
-                    prev == null ? null : prev.lastSuccess(), e.getMessage(),
+                    prev == null ? null : prev.lastSuccess(), error,
                     last == null ? 0 : last.entities().size(), last == null ? 0 : last.anchors().size(),
-                    last == null ? null : last.listInfo(), last == null ? List.of() : last.warnings(), null));
+                    last == null ? null : last.listInfo(), last == null ? List.of() : escaped(last.warnings()), null));
         }
     }
 
@@ -327,9 +332,12 @@ public class TrustSourceManager implements AutoCloseable {
                 }
             }
         }
-        if (!refused.equals(conflicts)) {
-            refused.forEach((source, messages) -> messages.forEach(m -> log.warn("Trust source '{}': {}", source, m)));
-            conflicts = refused;
+        // What the registry could not take quotes ids and locations as the lists wrote them.
+        Map<String, List<String>> reported = new LinkedHashMap<>();
+        refused.forEach((source, messages) -> reported.put(source, escaped(messages)));
+        if (!reported.equals(conflicts)) {
+            reported.forEach((source, messages) -> messages.forEach(m -> log.warn("Trust source '{}': {}", source, m)));
+            conflicts = reported;
         }
         List<TrustedEntity> merged = List.copyOf(entities.values());
         List<TrustAnchor> anchored = List.copyOf(anchors.values());
@@ -359,6 +367,11 @@ public class TrustSourceManager implements AutoCloseable {
                 + " CRL locations (crlUrls); an anchor counts with at most " + TrustAnchor.MAX_CRL_URLS + ", and the other "
                 + (urls.size() - TrustAnchor.MAX_CRL_URLS) + " are not used, from " + urls.get(TrustAnchor.MAX_CRL_URLS) + " on");
         return bounded;
+    }
+
+    /** Warnings as a source's state and the log show them: text from a list, escaped and cut ({@link ForeignText}). */
+    private static List<String> escaped(List<String> warnings) {
+        return warnings.stream().map(ForeignText::escape).toList();
     }
 
     private static String reservedName(String id, String owner) {

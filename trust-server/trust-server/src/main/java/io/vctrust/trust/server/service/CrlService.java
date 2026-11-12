@@ -3,6 +3,7 @@ package io.vctrust.trust.server.service;
 import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.spi.HttpFetcher;
+import io.vctrust.trust.core.util.ForeignText;
 import io.vctrust.trust.core.util.Hashes;
 import io.vctrust.trust.core.x509.Certificates;
 import io.vctrust.trust.core.x509.RevocationChecker;
@@ -218,7 +219,7 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
         try {
             refresh();
         } catch (Exception e) {
-            log.warn("CRL refresh failed: {}", e.toString());
+            log.warn("CRL refresh failed: {}", ForeignText.escape(e.toString()));
         }
     }
 
@@ -230,7 +231,7 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
         if (!skipped.equals(leftOut)) {
             skipped.forEach((key, message) -> {
                 if (!message.equals(leftOut.get(key))) {
-                    log.warn("{}", message);
+                    log.warn("{}", ForeignText.escape(message));
                 }
             });
             leftOut = Map.copyOf(skipped);
@@ -253,7 +254,7 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
                 try {
                     next.put(p.getKey(), p.getValue().get());
                 } catch (Exception ex) {
-                    log.warn("CRL load failed: {}", ex.toString());
+                    log.warn("CRL load failed: {}", ForeignText.escape(ex.toString()));
                 }
             }
         }
@@ -285,10 +286,12 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
                         + prev.crl().thisUpdate() + ")");
             }
             Instant nextFetch = t.url() == null ? now.plus(cfg.getRefresh()) : now.plus(refreshAfter(crl, now));
-            log.debug("Loaded CRL {} for {} ({} entries)", where, t.issuer(), crl.revokedCount());
+            log.debug("Loaded CRL {} for {} ({} entries)", ForeignText.escape(where), t.issuer(), crl.revokedCount());
             return new AnchorCrl(t.issuer(), t.certificate(), t.anchors(), t.url(), crl, now, null, nextFetch);
         } catch (Exception e) {
-            log.warn("CRL {} for anchor {}: {}", where, t.certificate().getSubjectX500Principal().getName(), e.getMessage());
+            // The location is a list's, the subject a CA's, and the message may quote what answered there.
+            log.warn("CRL {} for anchor {}: {}", ForeignText.escape(where), ForeignText.escape(t.certificate().getSubjectX500Principal().getName()),
+                    ForeignText.escape(e.getMessage()));
             Duration retry = cfg.getRefresh().compareTo(ERROR_RETRY) < 0 ? cfg.getRefresh() : ERROR_RETRY;
             // Keep a previously verified CRL while it is still current.
             Crl keep = prev != null && prev.crl() != null && (prev.crl().nextUpdate() == null || prev.crl().nextUpdate().isAfter(now))
@@ -452,7 +455,8 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
             m.put("fetchedAt", a.fetchedAt());
             m.put("nextFetch", a.nextFetch());
             if (a.error() != null) {
-                m.put("error", a.error());
+                // The error quotes the location and what answered there.
+                m.put("error", ForeignText.escape(a.error()));
             }
             m.put("current", a.currentAt(now));
             m.put("inSnapshots", a.shippedAt(now, snapshotMaxBytes));
