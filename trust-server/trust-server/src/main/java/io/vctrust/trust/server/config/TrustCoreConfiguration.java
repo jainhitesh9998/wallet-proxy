@@ -201,10 +201,13 @@ public class TrustCoreConfiguration {
                 props.getCache().settings(false), clock);
     }
 
-    /** CRLs from the trust list and distribution points. */
+    /**
+     * CRLs from the trust list and distribution points. With revocation switched off, none: every certificate's status
+     * is then unknown, and says so, which a client profile or mechanism that requires a known status refuses.
+     */
     @Bean
-    RevocationChecker revocationChecker(CrlService crls) {
-        return new RevocationChecker(crls, "trust-service");
+    RevocationChecker revocationChecker(CrlService crls, TrustProperties props) {
+        return new RevocationChecker(props.getRevocation().isEnabled() ? crls : RevocationChecker.CrlSource.SWITCHED_OFF, "trust-service");
     }
 
     @Bean
@@ -230,7 +233,7 @@ public class TrustCoreConfiguration {
         };
         // The same mechanisms the snapshots carry: the service's own decisions are the clients' decisions.
         return new TrustEvaluator(registry, manager, cached, validator, clock, props.getService().getDecisionTtl(),
-                props.getRevocation().isEnabled() ? revocation : null, mechanisms);
+                revocation, mechanisms);
     }
 
     /**

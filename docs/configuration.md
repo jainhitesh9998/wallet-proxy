@@ -396,7 +396,7 @@ refusal does not say which address a host resolved to.
 
 | Property | Default | Meaning |
 | --- | --- | --- |
-| `trust.revocation.enabled` | `true` | Fetch the anchors' CRLs, check revocation in the service's decisions, ship anchor CRLs in snapshots |
+| `trust.revocation.enabled` | `true` | Fetch the anchors' CRLs, check revocation in the service's decisions, ship anchor CRLs in snapshots. `false`: none of these, and both relays are off. The service's own decisions then give every certificate below the anchor the status `UNKNOWN` ("revocation checking is switched off on this service"), reported as `x509.revocation_unknown`: a warning, and an error (`NOT_TRUSTED`) for a client with `require-revocation-status: true` or under a mechanism with `revocation: required`, as on a device that can get no CRL. A certificate pinned as an anchor itself has no status |
 | `trust.revocation.refresh` | `PT1H` | Anchor CRLs are fetched again at the earlier of this and their next update |
 | `trust.revocation.max-crl-bytes` / `snapshot-max-crl-bytes` | 1 MiB / 256 KiB | Largest CRL fetched; largest shipped in a snapshot. A larger anchor CRL is left out, and a device then fetches it itself: for a certificate the anchor issued from the anchor's `crlUrls` (or a root's own distribution point when it lists none), or from a distribution point the certificate names. An anchor that names no location, whose certificates name none either, gives the device nowhere to look |
 | `trust.revocation.fetch-anchor-crls` | `true` | Fetch each anchor's CRL from its `crlUrls` or its own distribution point. `false`: only CRLs pushed with an anchor (`constraints.crl`) are held, for a service without outbound access |

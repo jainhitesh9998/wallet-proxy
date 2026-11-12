@@ -22,6 +22,7 @@ import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -148,11 +149,39 @@ public final class RevocationChecker {
 
     /** Where CRLs come from. */
     public interface CrlSource {
+        /**
+         * The source of a service with revocation checking switched off: it knows no CRL and fetches none. Chains are
+         * still checked against it rather than not at all: every certificate below the anchor has the status UNKNOWN,
+         * for this reason, so a client profile or a mechanism that requires a known status refuses the chain, as a
+         * device does that can get no CRL.
+         */
+        CrlSource SWITCHED_OFF = new CrlSource() {
+            @Override
+            public List<Crl> heldFor(X509Certificate issuer) {
+                return List.of();
+            }
+
+            @Override
+            public Crl fetch(String url) throws IOException {
+                throw new IOException(unavailable());
+            }
+
+            @Override
+            public String unavailable() {
+                return "revocation checking is switched off on this service";
+            }
+        };
+
         /** CRLs held for certificates issued by {@code issuer} (e.g. the CRLs of a trust anchor). */
         List<Crl> heldFor(X509Certificate issuer);
 
         /** The CRL published at a distribution point; throws when it cannot be obtained. */
         Crl fetch(String url) throws IOException;
+
+        /** Null when this source can be asked; otherwise why no certificate's status can be had from it. */
+        default String unavailable() {
+            return null;
+        }
     }
 
     /** Issues to add to the path validation result, and the per-certificate statuses. */
@@ -162,9 +191,12 @@ public final class RevocationChecker {
     private final CrlSource crls;
     private final String source;
 
-    /** @param source reported as {@link CertificateRevocation#source()} */
+    /**
+     * @param crls   where CRLs come from; {@link CrlSource#SWITCHED_OFF} when revocation checking is switched off
+     * @param source reported as {@link CertificateRevocation#source()}
+     */
     public RevocationChecker(CrlSource crls, String source) {
-        this.crls = crls;
+        this.crls = Objects.requireNonNull(crls, "crls: CrlSource.SWITCHED_OFF when revocation checking is switched off");
         this.source = source;
     }
 
@@ -200,6 +232,10 @@ public final class RevocationChecker {
     }
 
     private CertificateRevocation checkOne(int index, X509Certificate c, X509Certificate issuer, Instant time) {
+        String unavailable = crls.unavailable();
+        if (unavailable != null) {
+            return status(index, c, CertificateRevocation.Status.UNKNOWN, unavailable, null, null, null, null, null);
+        }
         String why = null;
         Set<String> tried = new HashSet<>();
         for (Crl crl : crls.heldFor(issuer)) {

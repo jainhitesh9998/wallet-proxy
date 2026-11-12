@@ -77,19 +77,23 @@ public class TrustEvaluator {
     private final RevocationChecker revocation;
     private final TrustMechanisms mechanisms;
 
+    /** An evaluator with revocation checking switched off: every certificate below an anchor has an unknown status. */
     public TrustEvaluator(TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
                           X509PathValidator pathValidator, Clock clock, Duration decisionTtl) {
-        this(registry, sources, didResolver, pathValidator, clock, decisionTtl, null);
+        this(registry, sources, didResolver, pathValidator, clock, decisionTtl,
+                new RevocationChecker(RevocationChecker.CrlSource.SWITCHED_OFF, "trust-service"));
     }
 
-    /** @param revocation certificate revocation checking for chains (null: not checked) */
+    /** @param revocation certificate revocation checking for chains (see the full constructor) */
     public TrustEvaluator(TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
                           X509PathValidator pathValidator, Clock clock, Duration decisionTtl, RevocationChecker revocation) {
         this(registry, sources, didResolver, pathValidator, clock, decisionTtl, revocation, TrustMechanisms.NONE);
     }
 
     /**
-     * @param revocation certificate revocation checking for chains (null: not checked)
+     * @param revocation certificate revocation checking for chains. Never null: with revocation checking switched off,
+     *                   a checker over {@link RevocationChecker.CrlSource#SWITCHED_OFF}, which gives every certificate an
+     *                   unknown status, so that a profile or mechanism that requires a known one still refuses the chain
      * @param mechanisms the operator's trust mechanisms, the same the snapshot carries to clients
      */
     public TrustEvaluator(TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
@@ -101,7 +105,8 @@ public class TrustEvaluator {
         this.pathValidator = pathValidator;
         this.clock = clock;
         this.decisionTtl = decisionTtl;
-        this.revocation = revocation;
+        this.revocation = Objects.requireNonNull(revocation,
+                "revocation: a checker over RevocationChecker.CrlSource.SWITCHED_OFF when revocation checking is switched off");
         this.mechanisms = mechanisms == null ? TrustMechanisms.NONE : mechanisms;
     }
 
