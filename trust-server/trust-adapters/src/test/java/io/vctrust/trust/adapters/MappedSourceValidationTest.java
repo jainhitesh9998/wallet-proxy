@@ -803,6 +803,83 @@ class MappedSourceValidationTest {
         }
     }
 
+    // I: signing certificates and unverified lists -------------------------------------------------------------------
+
+    /** A certificate that {@code issuer} issued, allowed to sign, with the given extended key usages. */
+    static io.vctrust.trust.core.testing.TestPki.Issued withEku(String dn, io.vctrust.trust.core.testing.TestPki.Issued issuer,
+                                                                org.bouncycastle.asn1.x509.KeyPurposeId... purposes) throws Exception {
+        java.security.KeyPair keys = io.vctrust.trust.core.testing.TestPki.ecKey();
+        var b = new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+                org.bouncycastle.asn1.x500.X500Name.getInstance(issuer.certificate().getSubjectX500Principal().getEncoded()),
+                java.math.BigInteger.valueOf(System.nanoTime()), java.util.Date.from(NOW.minus(Duration.ofDays(1))),
+                java.util.Date.from(NOW.plus(Duration.ofDays(365))), new org.bouncycastle.asn1.x500.X500Name(dn), keys.getPublic());
+        var ext = new org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils();
+        b.addExtension(org.bouncycastle.asn1.x509.Extension.subjectKeyIdentifier, false, ext.createSubjectKeyIdentifier(keys.getPublic()));
+        b.addExtension(org.bouncycastle.asn1.x509.Extension.authorityKeyIdentifier, false, ext.createAuthorityKeyIdentifier(issuer.certificate()));
+        b.addExtension(org.bouncycastle.asn1.x509.Extension.keyUsage, true,
+                new org.bouncycastle.asn1.x509.KeyUsage(org.bouncycastle.asn1.x509.KeyUsage.digitalSignature));
+        b.addExtension(org.bouncycastle.asn1.x509.Extension.extendedKeyUsage, false, new org.bouncycastle.asn1.x509.ExtendedKeyUsage(purposes));
+        var signer = new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withECDSA").build(issuer.keys().getPrivate());
+        return new io.vctrust.trust.core.testing.TestPki.Issued(
+                new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(b.build(signer)), keys);
+    }
+
+    @Test
+    void i_aTlsServerCertificateDoesNotSignTheListUnlessItIsItselfPinned() throws Exception {
+        int sign = org.bouncycastle.asn1.x509.KeyUsage.digitalSignature;
+        int caUsage = org.bouncycastle.asn1.x509.KeyUsage.keyCertSign | org.bouncycastle.asn1.x509.KeyUsage.cRLSign;
+        io.vctrust.trust.core.testing.TestPki.Issued root = MappedSourceAttacksTest.certificate("CN=Partner CA,C=UT", null, true, sign | caUsage);
+        io.vctrust.trust.core.testing.TestPki.Issued tls = withEku("CN=www.partner.example,C=UT", root,
+                org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_serverAuth, org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_clientAuth);
+        io.vctrust.trust.core.testing.TestPki.Issued listSigner = withEku("CN=Partner List Signer,C=UT", root,
+                org.bouncycastle.asn1.x509.KeyPurposeId.id_kp_codeSigning);
+        TestContext ctx = ctx();
+        TrustSource s = source(ctx, props("format", "jws", "verify", Map.of("certificates",
+                List.of(io.vctrust.trust.core.x509.Certificates.toPem(root.certificate())))));
+        // A web server's certificate from the CA that issues the list signer's too: its key usage allows a signature.
+        MappedSourceRulesTest.serveJws(ctx, MappedSourceRulesTest.signedWithChain(tls, tls, MappedSourceRulesTest.doc("a", "evil")));
+        assertThat(MappedSourceRulesTest.loadError(s)).contains("The list's signing certificate is a TLS server certificate "
+                + "(extended key usage serverAuth) that is not pinned");
+        MappedSourceRulesTest.serveJws(ctx, MappedSourceRulesTest.signedWithChain(listSigner, listSigner, MappedSourceRulesTest.doc("a")));
+        assertThat(s.load().entities()).hasSize(1);
+        // Pinned itself, it may.
+        TrustSource pinned = source(ctx, props("format", "jws", "verify", Map.of("certificates",
+                List.of(io.vctrust.trust.core.x509.Certificates.toPem(tls.certificate())))));
+        MappedSourceRulesTest.serveJws(ctx, MappedSourceRulesTest.signedWithChain(tls, tls, MappedSourceRulesTest.doc("a")));
+        assertThat(pinned.load().entities()).hasSize(1);
+    }
+
+    @Test
+    void i_anUnverifiedListIsStillHeldToTheChecksThatNeedNoKey() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        Map<String, Object> verify = Map.of("typ", "partner-list+jwt", "issuer", "https://registry.partner.example",
+                "audience", "wallet-proxy-b");
+        TrustSource s = source(ctx, props("format", "jws", "allowUnverified", true, "verify", verify));
+        Map<String, Object> claims = new LinkedHashMap<>(MappedSourceRulesTest.doc("a"));
+        claims.put("iss", "https://registry.partner.example");
+        claims.put("aud", "wallet-proxy-b");
+        com.nimbusds.jose.JWSHeader typed = new com.nimbusds.jose.JWSHeader.Builder(com.nimbusds.jose.JWSAlgorithm.ES256).keyID("k1")
+                .type(new com.nimbusds.jose.JOSEObjectType("partner-list+jwt")).build();
+        MappedSourceRulesTest.serveJws(ctx, MappedTesting.sign(typed, MappedTesting.signer(k1), claims));
+        assertThat(s.load().entities()).hasSize(1);
+        // Another document of the publisher (another typ), served in its place.
+        MappedSourceRulesTest.serveJws(ctx, MappedTesting.sign(k1, claims));
+        assertThat(MappedSourceRulesTest.loadError(s)).contains("typ is absent, not 'partner-list+jwt' (verify.typ)");
+        // And the claims, as for a verified list.
+        Map<String, Map<String, Object>> wrong = new LinkedHashMap<>();
+        wrong.put("(verify.issuer)", Map.of("iss", "https://sandbox.partner.example"));
+        wrong.put("not to 'wallet-proxy-b'", Map.of("aud", "someone-else"));
+        wrong.put("expired at", Map.of("exp", NOW.minus(Duration.ofHours(1)).getEpochSecond()));
+        wrong.put("not valid before", Map.of("nbf", NOW.plus(Duration.ofHours(1)).getEpochSecond()));
+        for (Map.Entry<String, Map<String, Object>> w : wrong.entrySet()) {
+            Map<String, Object> c = new LinkedHashMap<>(claims);
+            c.putAll(w.getValue());
+            MappedSourceRulesTest.serveJws(ctx, MappedTesting.sign(typed, MappedTesting.signer(k1), c));
+            assertThat(MappedSourceRulesTest.loadError(s)).as(w.getKey()).contains(w.getKey());
+        }
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();

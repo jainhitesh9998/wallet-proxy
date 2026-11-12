@@ -756,7 +756,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             byte[] json = body;
             if (config.jws()) {
                 String compact = new String(body, StandardCharsets.US_ASCII).trim();
-                json = config.keys().configured() ? config.keys().verify(compact, now) : PinnedKeys.unverifiedPayload(compact);
+                json = config.keys().configured() ? config.keys().verify(compact, now) : config.keys().unverifiedPayload(compact);
             }
             Object root;
             try {

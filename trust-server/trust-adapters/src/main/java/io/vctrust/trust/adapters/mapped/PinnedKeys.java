@@ -189,10 +189,7 @@ final class PinnedKeys {
         if (h.getCriticalParams() != null && !h.getCriticalParams().isEmpty()) {
             throw new TrustSourceException("The list's JWS header marks parameters critical (crit), which this service does not process");
         }
-        if (typ != null && !normalized(typ).equals(h.getType() == null ? "" : normalized(h.getType().getType()))) {
-            throw new TrustSourceException("The list's JWS typ is " + (h.getType() == null ? "absent" : "'" + h.getType() + "'")
-                    + ", not '" + typ + "' (verify.typ)");
-        }
+        checkTyp(h);
         List<PublicKey> candidates = keys != null ? fromJwks(h) : fromChain(h, now);
         for (PublicKey key : candidates) {
             JWSVerifier verifier = verifier(h.getAlgorithm(), key);
@@ -207,9 +204,23 @@ final class PinnedKeys {
         throw new TrustSourceException("The list's signature does not verify with " + (keys != null ? "the pinned keys" : "its x5c certificate"));
     }
 
-    /** The payload of a JWS loaded with {@code allowUnverified}: read, not verified. */
-    static byte[] unverifiedPayload(String compact) throws TrustSourceException {
-        return parse(compact).getPayload().toBytes();
+    /** With {@code verify.typ}, the header must say what the document is: another document of the same signer is not it. */
+    private void checkTyp(JWSHeader h) throws TrustSourceException {
+        if (typ != null && !normalized(typ).equals(h.getType() == null ? "" : normalized(h.getType().getType()))) {
+            throw new TrustSourceException("The list's JWS typ is " + (h.getType() == null ? "absent" : "'" + h.getType() + "'")
+                    + ", not '" + typ + "' (verify.typ)");
+        }
+    }
+
+    /**
+     * The payload of a JWS loaded with {@code allowUnverified}: read, not verified. What needs no key is still checked:
+     * here {@code verify.typ}; the claims ({@code verify.issuer}, {@code verify.audience}, {@code exp}, {@code nbf}) are
+     * checked for every JWS payload where it is read.
+     */
+    byte[] unverifiedPayload(String compact) throws TrustSourceException {
+        JWSObject jws = parse(compact);
+        checkTyp(jws.getHeader());
+        return jws.getPayload().toBytes();
     }
 
     private static JWSObject parse(String compact) throws TrustSourceException {
@@ -288,11 +299,27 @@ final class PinnedKeys {
         if (usage != null && (usage.length == 0 || !usage[0])) {
             throw new TrustSourceException("The list's signing certificate may not sign: its key usage does not include digitalSignature");
         }
-        if (signer.getBasicConstraints() != -1 && !certificates.pinned().contains(signer)) {
+        boolean pinned = certificates.pinned().contains(signer);
+        if (signer.getBasicConstraints() != -1 && !pinned) {
             throw new TrustSourceException("The list's signing certificate is a CA certificate that is not pinned; a CA signs "
                     + "certificates, not lists");
         }
+        // A web server's certificate (an ECDSA one signs the TLS handshake, so its key usage allows a signature) from a
+        // CA that also issues the list signer's would let every such server sign the list.
+        List<String> purposes;
+        try {
+            purposes = signer.getExtendedKeyUsage();
+        } catch (java.security.cert.CertificateParsingException e) {
+            throw new TrustSourceException("The list's signing certificate has an extended key usage that cannot be read");
+        }
+        if (purposes != null && purposes.contains(SERVER_AUTH) && !pinned) {
+            throw new TrustSourceException("The list's signing certificate is a TLS server certificate (extended key usage serverAuth) "
+                    + "that is not pinned; pin the list signer's own certificate, or a CA that issues only list signers");
+        }
     }
+
+    /** id-kp-serverAuth (RFC 5280 section 4.2.1.12): TLS web server authentication. */
+    private static final String SERVER_AUTH = "1.3.6.1.5.5.7.3.1";
 
     /** A verifier only for a key of the algorithm's family, curve and strength. */
     private static JWSVerifier verifier(JWSAlgorithm alg, PublicKey key) {
