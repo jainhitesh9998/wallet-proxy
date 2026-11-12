@@ -111,15 +111,17 @@ class MechanismConfigurationTest {
     @Test
     void theServiceDoesNotStartWithAMechanismItDoesNotUnderstand() throws IOException {
         Path dataDir = Files.createTempDirectory("trust-mechanisms");
-        SpringApplicationBuilder app = new SpringApplicationBuilder(TrustServerApplication.class).properties(
-                "server.port=0",
-                "spring.datasource.url=jdbc:h2:mem:trust-mechanisms;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
-                "trust.service.signing-key-file=" + dataDir.resolve("key.jwk"),
-                "trust.mechanisms[0].id=national-id",
-                "trust.mechanisms[0].for.role=issuer",
-                "trust.mechanisms[0].keys[0]=did",
-                "trust.mechanisms[0].x509.revocation=required");
-        assertThatThrownBy(app::run).rootCause().hasMessage(
+        // As arguments, not default properties: application.yml would otherwise put a key and a database into ./data.
+        String[] args = {
+                "--server.port=0",
+                "--spring.datasource.url=jdbc:h2:mem:trust-mechanisms;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
+                "--trust.service.signing-key-file=" + dataDir.resolve("key.jwk"),
+                "--trust.mechanisms[0].id=national-id",
+                "--trust.mechanisms[0].for.role=issuer",
+                "--trust.mechanisms[0].keys[0]=did",
+                "--trust.mechanisms[0].x509.revocation=required"};
+        SpringApplicationBuilder app = new SpringApplicationBuilder(TrustServerApplication.class);
+        assertThatThrownBy(() -> app.run(args)).rootCause().hasMessage(
                 "Trust mechanism trust.mechanisms[0] ('national-id'): x509 is given, but keys does not accept x5c: it would never apply");
     }
 }
