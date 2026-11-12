@@ -119,7 +119,13 @@ public final class ResourceCache<V> {
         return new Hit<>(v.value(), v.storedAt(), v.expiresAt(), v.retryAfter() != Instant.MIN);
     }
 
-    /** Starts a load unless one is running for the key; the first caller runs it on its own thread. */
+    /**
+     * Starts a load unless one is running for the key; the first caller runs it on its own thread. A caller decides to
+     * load from what it read before it got here, and a load may have finished in between (a refresh in the background
+     * is asked for by every read of the stale value, and starts when its thread does). A load stores its value before
+     * it gives up its place, so whoever holds the place sees what the last load stored: a value that is fresh by then
+     * is that load's answer, and the resource is not fetched a second time.
+     */
     private CompletableFuture<Entry<V>> load(String key, Loader<V> loader, Function<V, Duration> ttl) {
         CompletableFuture<Entry<V>> mine = new CompletableFuture<>();
         CompletableFuture<Entry<V>> running = inFlight.putIfAbsent(key, mine);
@@ -127,7 +133,8 @@ public final class ResourceCache<V> {
             return running;
         }
         try {
-            mine.complete(fetch(key, loader, ttl));
+            mine.complete(cache.getIfPresent(key) instanceof Value<V> v && v.expiresAt().isAfter(clock.instant())
+                    ? v : fetch(key, loader, ttl));
         } catch (RuntimeException | Error e) {
             mine.completeExceptionally(e);
         } finally {

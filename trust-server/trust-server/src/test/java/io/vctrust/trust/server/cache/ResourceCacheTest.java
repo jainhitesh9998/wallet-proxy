@@ -141,8 +141,34 @@ class ResourceCacheTest {
         assertThat(hit.value()).isEqualTo("old");
         assertThat(hit.stale()).isTrue();
         refreshed.await();
-        for (int i = 0; i < 100 && !"new".equals(get(c, "unused")); i++) Thread.sleep(10);
+        // The refresh stores its value after the loader returns: wait for that, not for a fixed time.
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (!"new".equals(get(c, "unused")) && System.nanoTime() < deadline) Thread.sleep(10);
         assertThat(get(c, "unused")).isEqualTo("new");
+    }
+
+    @Test
+    void aRefreshThatStartsAfterAnotherFinishedDoesNotLoadAgain() throws Exception {
+        // Every read of a stale value asks for a refresh. One asked for before a refresh finished may start after it:
+        // it must find the value fresh and leave it. Loading again would fetch the resource a second time, and here,
+        // where the late loader returns something else, replace what the refresh stored.
+        for (int round = 0; round < 300; round++) {
+            var c = cache(true);
+            AtomicInteger late = new AtomicInteger();
+            c.get("k", () -> "old", v -> Duration.ofMinutes(10));
+            clock.advance(Duration.ofMinutes(11));
+            CountDownLatch refreshing = new CountDownLatch(1);
+            c.get("k", () -> { refreshing.countDown(); return "new"; }, v -> Duration.ofMinutes(10));
+            refreshing.await();
+            long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+            String seen;
+            do {
+                seen = c.get("k", () -> { late.incrementAndGet(); return "late"; }, v -> Duration.ofMinutes(10)).value();
+            } while ("old".equals(seen) && System.nanoTime() < deadline);
+            Thread.sleep(2);  // the refreshes those reads asked for run now, if they run at all
+            assertThat(c.get("k", () -> "unused", v -> Duration.ofMinutes(10)).value()).as("round %d", round).isEqualTo("new");
+            assertThat(late).as("round %d", round).hasValue(0);
+        }
     }
 
     @Test
