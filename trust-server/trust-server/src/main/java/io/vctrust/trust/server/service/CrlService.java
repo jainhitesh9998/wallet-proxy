@@ -27,7 +27,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -68,9 +67,18 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     public record AnchorCrl(String issuer, X509Certificate issuerCertificate, List<TrustAnchor> anchors, String url,
                             Crl crl, Instant fetchedAt, String error, Instant nextFetch) {
 
-        /** Usable for snapshots: verified, and not past its next update. */
+        /**
+         * Usable for snapshots: verified, and not past its next update. A CRL that states no next update is current for
+         * {@link RevocationChecker#MAX_AGE_WITHOUT_NEXT_UPDATE} after it was issued, as the checker and the device use it:
+         * nothing says when it was superseded, and shown as current or shipped for longer it would stand in for the CA's
+         * current CRL forever.
+         */
         public boolean currentAt(Instant now) {
-            return crl != null && (crl.nextUpdate() == null || !crl.nextUpdate().isBefore(now));
+            if (crl == null) {
+                return false;
+            }
+            return crl.nextUpdate() != null ? !crl.nextUpdate().isBefore(now)
+                    : !Duration.between(crl.thisUpdate(), now).minus(RevocationChecker.MAX_AGE_WITHOUT_NEXT_UPDATE).isPositive();
         }
 
         /** Shipped in the snapshots of the clients that see one of its anchors: current, and no larger than {@code maxBytes}. */
@@ -98,6 +106,8 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private final AtomicLong version = new AtomicLong();
     private volatile Map<String, AnchorCrl> anchorCrls = Map.of();
+    /** Per framework and certificate, the CRL locations the last refresh left out: logged when that changes. */
+    private Map<String, String> leftOut = Map.of();
 
     public CrlService(TrustRegistry registry, HttpFetcher http, TrustProperties.Revocation cfg, ResourceCache.Settings cache, Clock clock) {
         this.registry = registry;
@@ -215,7 +225,16 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     /** Loads due anchor CRLs (synchronously); runs on the refresh thread, callable directly in tests. */
     public synchronized void refresh() {
         Instant now = clock.instant();
-        Map<String, Target> targets = targets(registry.snapshot().allAnchors(), cfg.isFetchAnchorCrls());
+        Map<String, String> skipped = new LinkedHashMap<>();
+        Map<String, Target> targets = targets(registry.snapshot().allAnchors(), cfg.isFetchAnchorCrls(), skipped);
+        if (!skipped.equals(leftOut)) {
+            skipped.forEach((key, message) -> {
+                if (!message.equals(leftOut.get(key))) {
+                    log.warn("{}", message);
+                }
+            });
+            leftOut = Map.copyOf(skipped);
+        }
         Map<String, AnchorCrl> old = anchorCrls;
         Map<String, AnchorCrl> next = new LinkedHashMap<>();
         Map<String, Future<AnchorCrl>> pending = new LinkedHashMap<>();
@@ -293,11 +312,14 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
      * records of the certificate name ({@code crlUrls}, a pushed {@code crl}), and when they name none and the
      * certificate is self-issued, the certificate's own distribution points. What an anchor record of another
      * framework says about the same certificate does not enter: whoever writes one framework's list would otherwise
-     * choose the CRL, a stale one say, that the clients of another framework are told and decided by.
+     * choose the CRL, a stale one say, that the clients of another framework are told and decided by. At most
+     * {@link TrustAnchor#MAX_CRL_URLS} locations are fetched per framework and certificate, the first in the order the
+     * records name them, however many records there are: a list decides how many requests each refresh makes.
      *
-     * @param fetch whether CRLs are fetched at all; without it only the CRLs pushed with an anchor are targets
+     * @param fetch   whether CRLs are fetched at all; without it only the CRLs pushed with an anchor are targets
+     * @param skipped receives, per framework and certificate whose locations were cut, what was left out
      */
-    private static Map<String, Target> targets(Collection<TrustAnchor> anchors, boolean fetch) {
+    private static Map<String, Target> targets(Collection<TrustAnchor> anchors, boolean fetch, Map<String, String> skipped) {
         Map<List<String>, List<TrustAnchor>> byFrameworkAndCert = new LinkedHashMap<>();
         for (TrustAnchor a : anchors) {
             byFrameworkAndCert.computeIfAbsent(Arrays.asList(a.frameworkId(), a.thumbprint()), k -> new ArrayList<>()).add(a);
@@ -316,10 +338,17 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
                 }
             }
             if (urls.isEmpty() && inline.isEmpty() && Certificates.isSelfIssued(cert)) {
-                Certificates.crlDistributionPoints(cert).stream().filter(CrlService::isHttp).forEach(urls::add);
+                Certificates.crlDistributionPoints(cert).stream().filter(TrustAnchor::isHttp).forEach(urls::add);
+            }
+            List<String> counted = urls.stream().limit(TrustAnchor.MAX_CRL_URLS).toList();
+            if (fetch && urls.size() > counted.size()) {
+                String left = urls.stream().skip(counted.size()).findFirst().orElseThrow();
+                skipped.put(group.getFirst().frameworkId() + "|" + issuer, "CRL locations of anchor certificate " + cert.getSubjectX500Principal().getName()
+                        + " in framework '" + group.getFirst().frameworkId() + "': its records name " + urls.size() + "; the first "
+                        + counted.size() + " are fetched, the other " + (urls.size() - counted.size()) + " are not, from " + left + " on");
             }
             Map<String, Target> own = new LinkedHashMap<>();
-            for (String url : fetch ? urls : Set.<String>of()) {
+            for (String url : fetch ? counted : List.<String>of()) {
                 Target t = new Target(issuer, cert, List.of(), url, null);
                 own.put(t.key(), t);
             }
@@ -339,19 +368,7 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     }
 
     static List<String> configuredUrls(TrustAnchor a) {
-        Object v = a.constraints().get("crlUrls");
-        List<String> out = new ArrayList<>();
-        if (v instanceof Collection<?> c) {
-            c.forEach(x -> out.add(String.valueOf(x)));
-        } else if (v instanceof String s && !s.isBlank()) {
-            out.add(s);
-        }
-        return out.stream().filter(CrlService::isHttp).toList();
-    }
-
-    private static boolean isHttp(String url) {
-        String u = url.toLowerCase(Locale.ROOT);
-        return u.startsWith("https://") || u.startsWith("http://");
+        return a.crlUrls();
     }
 
     private static boolean changed(Map<String, AnchorCrl> a, Map<String, AnchorCrl> b) {

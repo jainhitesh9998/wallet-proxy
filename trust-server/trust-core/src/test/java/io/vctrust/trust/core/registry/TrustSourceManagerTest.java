@@ -226,6 +226,36 @@ class TrustSourceManagerTest {
     }
 
     @Test
+    void anAnchorCountsWithAtMostEightCrlLocations() {
+        var many = io.vctrust.trust.core.testing.TestPki.rootCa("CN=Many CRL Locations,C=UT");
+        var eight = io.vctrust.trust.core.testing.TestPki.rootCa("CN=Eight CRL Locations,C=UT");
+        List<String> locations = java.util.stream.IntStream.range(0, 20).mapToObj(i -> "https://crl" + i + ".example/ca.crl").toList();
+        List<String> named = new java.util.ArrayList<>(List.of("ldap://crl.example/cn=ca"));
+        named.addAll(locations);
+        Map<String, Object> eightNamed = Map.of("crlUrls", locations.subList(0, 8));
+        var anchors = List.of(
+                new io.vctrust.trust.core.model.TrustAnchor("many", io.vctrust.trust.core.model.TrustDomain.MDOC_IACA, many.certificate(), "fw", null, null,
+                        Map.of("crlUrls", named, "docTypes", List.of("org.iso.18013.5.1.mDL")), null),
+                new io.vctrust.trust.core.model.TrustAnchor("eight", io.vctrust.trust.core.model.TrustDomain.MDOC_IACA, eight.certificate(), "fw", null, null,
+                        eightNamed, null));
+        var source = new Fixed("list", "fw", new SourceLoadResult(List.of(), anchors, ListInfo.unsigned(), List.of()));
+        var registry = new TrustRegistry();
+        try (var manager = new TrustSourceManager(registry, List.of(), List.of(source), Clock.systemUTC())) {
+            manager.start();
+            // The registry, and so the snapshot and every device, sees the first eight http(s) locations; the rest of the
+            // record as it was written.
+            assertThat(registry.snapshot().anchor("many")).get().satisfies(a -> {
+                assertThat(a.constraints().get("crlUrls")).isEqualTo(locations.subList(0, 8));
+                assertThat(a.constraints().get("docTypes")).isEqualTo(List.of("org.iso.18013.5.1.mDL"));
+            });
+            assertThat(registry.snapshot().anchor("eight")).get().satisfies(a -> assertThat(a.constraints()).isEqualTo(eightNamed));
+            assertThat(manager.states()).singleElement().satisfies(st -> assertThat(st.warnings()).singleElement()
+                    .isEqualTo("Anchor 'many' names 20 CRL locations (crlUrls); an anchor counts with at most 8, and the other 12 are not used,"
+                            + " from https://crl8.example/ca.crl on"));
+        }
+    }
+
+    @Test
     void aListOlderThanTheOneHeldIsNotLoaded() {
         var current = new SourceLoadResult(List.of(issuer("kept", "fw", "https://kept.example").build()), List.of(),
                 new ListInfo("Operator", "12", Instant.parse("2026-10-01T00:00:00Z"), null, ListInfo.SignatureStatus.VERIFIED, Map.of()), List.of());

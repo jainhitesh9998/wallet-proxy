@@ -1,5 +1,8 @@
 package io.vctrust.trust.server.service;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.sun.net.httpserver.HttpServer;
 import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustDomain;
@@ -8,11 +11,13 @@ import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.testing.TestPki;
 import io.vctrust.trust.core.testing.TestPki.Revoked;
 import io.vctrust.trust.core.x509.Certificates;
+import io.vctrust.trust.core.x509.RevocationChecker;
 import io.vctrust.trust.server.cache.ResourceCache;
 import io.vctrust.trust.server.config.TrustProperties;
 import io.vctrust.trust.server.http.SafeHttpFetcher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -251,6 +256,83 @@ class CrlServiceTest {
         // The anchors a predicate selects, by their ids.
         assertThat(service.listing(a -> "fw-b".equals(a.frameworkId()), 256 * 1024)).singleElement()
                 .satisfies(m -> assertThat(m).containsEntry("anchorIds", List.of("pushed-again")));
+    }
+
+    @Test
+    void fetchesAtMostEightLocationsPerFrameworkAndCertificate() throws Exception {
+        var ca = TestPki.rootCa("CN=Many Locations CA,C=UT");
+        var other = TestPki.rootCa("CN=Few Locations CA,C=UT");
+        byte[] crl = der(TestPki.crl(ca));
+        byte[] otherCrl = der(TestPki.crl(other));
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/many/", ex -> {
+            requests.incrementAndGet();
+            byte[] body = ex.getRequestURI().getPath().startsWith("/many/few-") ? otherCrl : crl;
+            ex.getResponseHeaders().add("Content-Type", "application/pkix-crl");
+            ex.sendResponseHeaders(200, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        });
+        java.util.function.BiFunction<String, Integer, List<String>> locations = (prefix, n) ->
+                java.util.stream.IntStream.range(0, n).mapToObj(i -> base + "/many/" + prefix + i + ".crl").toList();
+        // Three records of one certificate in framework fw-a, twenty locations each; the same certificate in fw-b names three.
+        TrustRegistry registry = new TrustRegistry();
+        registry.publish(new RegistrySnapshot(1, Instant.now(), List.of(), List.of(), List.of(
+                anchor("a1", ca, "fw-a", Map.of("crlUrls", locations.apply("a1-", 20))),
+                anchor("a2", ca, "fw-a", Map.of("crlUrls", locations.apply("a2-", 20))),
+                anchor("a3", ca, "fw-a", Map.of("crlUrls", locations.apply("a3-", 20))),
+                anchor("b", ca, "fw-b", Map.of("crlUrls", locations.apply("b-", 3))),
+                anchor("few", other, "fw-a", Map.of("crlUrls", locations.apply("few-", 8))))));
+        TrustProperties.Revocation cfg = new TrustProperties.Revocation();
+        cfg.setEnabled(false);
+        service = new CrlService(registry, fetcher(), cfg, new ResourceCache.Settings(1_000_000, Duration.ofSeconds(30), Duration.ofDays(1), false), clock);
+        ListAppender<ILoggingEvent> logged = new ListAppender<>();
+        Logger log = (Logger) LoggerFactory.getLogger(CrlService.class);
+        logged.start();
+        log.addAppender(logged);
+        try {
+            service.refresh();
+            // Eight for the certificate in fw-a, the first its records name; three for it in fw-b; eight for the other CA.
+            assertThat(requests.get()).isEqualTo(8 + 3 + 8);
+            assertThat(service.listing(a -> "fw-a".equals(a.frameworkId()), 256 * 1024)).filteredOn(m -> ((String) m.get("subject")).contains("Many"))
+                    .extracting(m -> m.get("url")).containsExactlyElementsOf(locations.apply("a1-", 8));
+            clock.now = clock.now.plus(Duration.ofHours(2));
+            service.refresh();
+            assertThat(requests.get()).isEqualTo(2 * (8 + 3 + 8));
+            // What was left out is logged once, not on every refresh.
+            assertThat(logged.list).filteredOn(e -> e.getFormattedMessage().startsWith("CRL locations of anchor certificate")).singleElement()
+                    .satisfies(e -> assertThat(e.getFormattedMessage()).contains("CN=Many Locations CA", "'fw-a'", "name 60", "the other 52 are not",
+                            "from " + base + "/many/a1-8.crl on"));
+        } finally {
+            log.detachAppender(logged);
+        }
+    }
+
+    @Test
+    void aCrlWithoutNextUpdateIsCurrentForSevenDaysAfterItWasIssued() throws Exception {
+        var ca = TestPki.rootCa("CN=No Next Update CA,C=UT");
+        // A CRL states its times in whole seconds.
+        Instant issued = clock.instant().minus(Duration.ofHours(1)).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        byte[] crl = der(TestPki.crl(ca, issued, null, List.of(), null, null));
+        TrustRegistry registry = new TrustRegistry();
+        registry.publish(new RegistrySnapshot(1, Instant.now(), List.of(), List.of(), List.of(
+                anchor("pushed", ca, "fw-a", Map.of("crl", Base64.getEncoder().encodeToString(crl))))));
+        TrustProperties.Revocation cfg = new TrustProperties.Revocation();
+        cfg.setEnabled(false);
+        service = new CrlService(registry, fetcher(), cfg, new ResourceCache.Settings(1_000_000, Duration.ofSeconds(30), Duration.ofDays(1), false), clock);
+        service.refresh();
+        assertThat(service.listing(a -> true, 256 * 1024)).singleElement()
+                .satisfies(m -> assertThat(m).containsEntry("current", true).containsEntry("inSnapshots", true).doesNotContainKey("nextUpdate"));
+        assertThat(service.snapshotClaims(a -> true, 256 * 1024)).hasSize(1);
+
+        // Seven days after it was issued it is still used, as the checker and the device use it; after that it is not.
+        clock.now = issued.plus(RevocationChecker.MAX_AGE_WITHOUT_NEXT_UPDATE);
+        assertThat(service.listing(a -> true, 256 * 1024)).singleElement()
+                .satisfies(m -> assertThat(m).containsEntry("current", true).containsEntry("inSnapshots", true));
+        clock.now = issued.plus(RevocationChecker.MAX_AGE_WITHOUT_NEXT_UPDATE).plusSeconds(1);
+        assertThat(service.listing(a -> true, 256 * 1024)).singleElement()
+                .satisfies(m -> assertThat(m).containsEntry("current", false).containsEntry("inSnapshots", false));
+        assertThat(service.snapshotClaims(a -> true, 256 * 1024)).isEmpty();
     }
 
     static Map<String, Object> entry(List<Map<String, Object>> listing, String cn) {

@@ -10,6 +10,7 @@ import { createTrustClient, MemoryCacheStore, type TrustClientConfig, type Trust
 import { jwkThumbprint, parseCertificate, parseCrl } from '../src/primitives.js';
 import { b64, down, es256Key, fakeFetch, fixture, json, pem, signJwt } from './helpers.js';
 import * as P from './pki.js';
+import { anchorCrlUrls, MAX_ANCHOR_CRL_URLS } from '../src/x509/revocation.js';
 
 const BASE = 'https://trust.example';
 const PROXY_CRL = `${BASE}/api/v1/proxy/crl`;
@@ -186,6 +187,15 @@ describe("a pinned anchor's crlUrls", () => {
     }
   });
 
+  it('at most the first eight locations are fetched, as many as the list names', async () => {
+    const many = Array.from({ length: 20 }, (_, i) => `http://pki${i}.utopia.example/iaca.crl`);
+    const { fetch, calls } = fakeFetch({ [many[7]!]: crlResponse(iacaCrl) }, down);
+    const c = createTrustClient({ http: { fetch, retries: 0 },
+      pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: pem('iaca'), constraints: { crlUrls: ['ldap://pki.utopia.example/cn=iaca', ...many] } }] } });
+    expect((await c.evaluate(dsRevoked)).evidence?.x509?.revocation?.[0]).toMatchObject({ status: 'REVOKED', crlUrl: many[7] });
+    expect(calls).toEqual(many.slice(0, 8).map((u) => `GET ${u}`));
+  });
+
   it('only http(s) locations are fetched', async () => {
     const { fetch, calls } = fakeFetch({}, down);
     const c = createTrustClient({ http: { fetch, retries: 0 },
@@ -227,6 +237,17 @@ describe('an anchor whose record names no CRL location', () => {
       pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: b64der(root), constraints: { crlUrls: [ANCHOR_URL] } }] } });
     expect((await n.evaluate(query(leaf(0x51n)))).evidence?.x509?.revocation?.[0]).toMatchObject({ status: 'REVOKED', crlUrl: ANCHOR_URL });
     expect(named.calls).toEqual([`GET ${ANCHOR_URL}`]);
+  });
+
+  it('at most the first eight distribution points of the anchor certificate are counted', async () => {
+    const key = P.ecKey();
+    const points = Array.from({ length: 12 }, (_, i) => `http://pki${i}.rooted.example/root.crl`);
+    const root = parseCertificate(b64der(P.cert({ subject: subject('Rooted IACA'), issuer: subject('Rooted IACA'), key, signer: key,
+      exts: [P.X.bc(true, 0), P.X.ku([5, 6]), P.X.crlDp(points)] })));
+    expect(anchorCrlUrls({ certificate: root })).toEqual(points.slice(0, MAX_ANCHOR_CRL_URLS));
+    expect(anchorCrlUrls({ certificate: root, constraints: { crlUrls: ['ftp://x', ...points.slice(2), points[0]] } }))
+      .toEqual([...points.slice(2, 10)]);
+    expect(MAX_ANCHOR_CRL_URLS).toBe(8);
   });
 
   it('an intermediate CA listed as an anchor is not asked at the distribution point in its certificate', async () => {

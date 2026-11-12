@@ -205,6 +205,12 @@ anchors:
 An anchor that is not a root (an intermediate CA listed as an anchor) needs `crlUrls`: the distribution point in its
 own certificate is where the CA above it publishes, not where it does.
 
+At most 8 locations count per CA certificate, the first that are named. An anchor record that names more keeps its
+first 8 http(s) locations in the registry and in snapshots, and its source's state says how many were left out; the
+service fetches at most 8 per framework and certificate however many records list it (what it leaves out is logged
+once), and a device asks at most the first 8 of an anchor, also of one pinned in the app. A list decides how many
+locations there are, and each one is a request on every refresh and from every device.
+
 ### What the service does
 
 - Fetches each anchor's CRL from where the anchor's framework says the CA publishes: that framework's anchor records

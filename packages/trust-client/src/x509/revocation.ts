@@ -40,18 +40,25 @@ export interface RevocationOptions {
 const HTTP_URL = /^https?:\/\//i;
 
 /**
+ * The most CRL locations a trust anchor counts with, as on the service (TrustAnchor.MAX_CRL_URLS): a list (or an app's
+ * pinned anchor) decides how many there are, and each one is a request the device makes.
+ */
+export const MAX_ANCHOR_CRL_URLS = 8;
+
+/**
  * The http(s) locations where a trust anchor's CA publishes its CRL, as the service finds them (CrlService): what the
  * anchor's record names ({@code constraints.crlUrls}: a list, or one URL); and when it names none, the distribution
  * points of the anchor certificate itself if it is self-issued (a root publishes its own CRL there; an intermediate
- * CA's certificate names where the CA above it publishes, which says nothing about the certificates it issues).
+ * CA's certificate names where the CA above it publishes, which says nothing about the certificates it issues). At most
+ * the first {@link MAX_ANCHOR_CRL_URLS} of them.
  */
 export function anchorCrlUrls(anchor: { constraints?: Record<string, unknown>; certificate: Certificate } | undefined): string[] {
   if (!anchor) return [];
   const v = anchor.constraints?.crlUrls;
   const named = (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).filter((u): u is string => typeof u === 'string' && HTTP_URL.test(u));
-  if (named.length > 0) return named;
+  if (named.length > 0) return named.slice(0, MAX_ANCHOR_CRL_URLS);
   const c = anchor.certificate;
-  return bytesEqual(c.issuerRaw, c.subjectRaw) ? c.crlDistributionPoints.filter((u) => HTTP_URL.test(u)) : [];
+  return bytesEqual(c.issuerRaw, c.subjectRaw) ? c.crlDistributionPoints.filter((u) => HTTP_URL.test(u)).slice(0, MAX_ANCHOR_CRL_URLS) : [];
 }
 
 /** Accepted clock skew for a CRL's thisUpdate. */

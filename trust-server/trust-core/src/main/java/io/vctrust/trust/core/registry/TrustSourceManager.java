@@ -314,7 +314,7 @@ public class TrustSourceManager implements AutoCloseable {
                     id = a.id() + "@" + framework;
                 }
                 TrustAnchor anchor = new TrustAnchor(id, a.domain(), a.certificate(), framework, entityId, a.status(),
-                        a.constraints(), a.provenance());
+                        boundedCrlUrls(a, s.id(), refused), a.provenance());
                 TrustAnchor held = anchors.putIfAbsent(id, anchor);
                 // The same anchor listed again (by another source of the framework, say) loses nothing; any other
                 // anchor that cannot be placed is reported: an anchor left out may be a CA's withdrawal or constraint.
@@ -337,6 +337,25 @@ public class TrustSourceManager implements AutoCloseable {
         }
         published = content;
         registry.publish(new RegistrySnapshot(version.incrementAndGet(), clock.instant(), frameworks, merged, anchored));
+    }
+
+    /**
+     * The anchor's constraints with at most {@link TrustAnchor#MAX_CRL_URLS} CRL locations: the first http(s) locations
+     * of {@code crlUrls}, in the order the record names them. The registry, the snapshots and the devices then see no
+     * more; the rest is reported in a warning of the anchor's source. A list decides how many locations there are, and
+     * each is fetched by the service and by every device that holds the snapshot.
+     */
+    private static Map<String, Object> boundedCrlUrls(TrustAnchor a, String sourceId, Map<String, List<String>> refused) {
+        List<String> urls = a.crlUrls();
+        if (urls.size() <= TrustAnchor.MAX_CRL_URLS) {
+            return a.constraints();
+        }
+        Map<String, Object> bounded = new LinkedHashMap<>(a.constraints());
+        bounded.put("crlUrls", List.copyOf(urls.subList(0, TrustAnchor.MAX_CRL_URLS)));
+        refused.computeIfAbsent(sourceId, k -> new ArrayList<>()).add("Anchor '" + a.id() + "' names " + urls.size()
+                + " CRL locations (crlUrls); an anchor counts with at most " + TrustAnchor.MAX_CRL_URLS + ", and the other "
+                + (urls.size() - TrustAnchor.MAX_CRL_URLS) + " are not used, from " + urls.get(TrustAnchor.MAX_CRL_URLS) + " on");
+        return bounded;
     }
 
     private static String reservedName(String kind, String id, String owner) {

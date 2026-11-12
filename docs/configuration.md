@@ -267,7 +267,7 @@ anchors:
     certificate: "<PEM>"                  # or certificateLocation (see below)
     constraints:
       docTypes: [org.iso.18013.5.1.mDL]   # the doctypes this IACA may sign
-      crlUrls: ["https://pki.example.org/iaca.crl"]   # where the CA publishes its CRL (default: the anchor's own distribution point)
+      crlUrls: ["https://pki.example.org/iaca.crl"]   # where the CA publishes its CRL (default: the anchor's own distribution point); at most the first 8 count
       crl: "<base64 DER>"                 # or a CRL pushed by the operator; verified against the anchor
 ```
 
