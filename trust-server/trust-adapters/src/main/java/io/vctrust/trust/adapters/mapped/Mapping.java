@@ -382,7 +382,7 @@ final class Mapping {
                 r.read("certificates", () -> texts("certificates", record, root));
                 r.read("name", () -> text("name", record, root));
                 r.read("display", () -> objects("display", record, root, Set.of("name"), Items.LEAVE_OUT));
-                r.read("authorizations", () -> objects("authorizations", record, root, Set.of(), Items.STRICT));
+                r.read("authorizations", () -> authorizations(record, root));
                 r.read("status", () -> text("status", record, root));
                 r.read("validFrom", () -> instant("validFrom", record, root));
                 r.read("validUntil", () -> instant("validUntil", record, root));
@@ -395,7 +395,7 @@ final class Mapping {
                 r.read("certificate", () -> text("certificate", record, root));
                 r.read("entity", () -> text("entity", record, root));
                 r.read("status", () -> text("status", record, root));
-                r.read("docTypes", () -> texts("docTypes", record, root));
+                r.read("docTypes", () -> docTypes(record, root));
                 r.read("crlUrls", () -> texts("crlUrls", record, root));
                 r.read("crl", () -> text("crl", record, root));
             }
@@ -564,6 +564,42 @@ final class Mapping {
             return out;
         }
 
+        /**
+         * The authorizations. A list of them that is there and yields none ({@code credentials: []}, {@code [null]},
+         * {@code {}}, or one whose filter keeps none) authorizes nothing: it cannot be read as "none listed", which
+         * would leave the entity unconstrained for a lenient client.
+         */
+        private List<Map<String, Object>> authorizations(Object record, Object root) {
+            List<Item> items = items(fields.get("authorizations"));
+            List<Map<String, Object>> out = objects(items, "authorizations", record, root, Set.of(), Items.STRICT);
+            if (out.isEmpty()) {
+                for (Item item : items) {
+                    if (item.each != null && item.each.containerPresent(record, root)) {
+                        throw emptyList("authorizations", item.each.text());
+                    }
+                }
+            }
+            return out;
+        }
+
+        /** An anchor's doctypes: a list of them that is there and yields none constrains the IACA to none. */
+        private List<String> docTypes(Object record, Object root) {
+            List<String> out = texts("docTypes", record, root);
+            if (out.isEmpty()) {
+                for (Value v : values(fields.get("docTypes"))) {
+                    if (v.listPresent(record, root)) {
+                        throw emptyList("docTypes", v instanceof Value.At a ? a.path().text() : ((Value.Translated) v).path().text());
+                    }
+                }
+            }
+            return out;
+        }
+
+        private static IllegalArgumentException emptyList(String member, String path) {
+            return new IllegalArgumentException(member + ": " + path + " finds a list or an object that holds no value; a list that is "
+                    + "there and empty restricts to nothing, it does not leave the record open");
+        }
+
         /** What an item that is not all there is (see {@link #objects}). */
         enum Items {
             /** Left out (display, context URLs): it restricts nothing and identifies nobody. */
@@ -633,7 +669,12 @@ final class Mapping {
                         out.add(scalar(o, "contexts"));
                     }
                 } else {
-                    out.addAll(objects(List.of((Item) e), "contexts", record, root, Set.of("url"), Items.LEAVE_OUT));
+                    // A pinned context without its digest would be shipped unpinned: an item that yields its url (or its
+                    // digest) must yield both.
+                    Item item = (Item) e;
+                    boolean pinned = item.members().containsKey("sha256");
+                    out.addAll(objects(List.of(item), "contexts", record, root, pinned ? Set.of("url", "sha256") : Set.of("url"),
+                            pinned ? Items.WHOLE : Items.LEAVE_OUT));
                 }
                 bounded(out, "contexts");
             }

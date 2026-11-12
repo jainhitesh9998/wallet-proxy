@@ -72,13 +72,32 @@ final class JsonPath {
      * @throws IllegalArgumentException naming the path, what it found and what the segment needs
      */
     List<Object> select(Object current, Object root) {
+        return selection(current, root).nodes();
+    }
+
+    /**
+     * Whether the path ends in {@code [*]} or a filter and what that last segment looks into is there (a list or an
+     * object, not null and not missing), whatever it selects from it. A list of restrictions that is there and holds
+     * nothing ({@code []}, {@code [null]}, {@code {}}) says "none", which is not the same as a list that is not there.
+     */
+    boolean containerPresent(Object current, Object root) {
+        Segment last = segments.isEmpty() ? null : segments.getLast();
+        return (last instanceof Wildcard || last instanceof Filter) && selection(current, root).lastInputPresent();
+    }
+
+    /** What a path selected, and whether its last segment had anything to look into. */
+    private record Selection(List<Object> nodes, boolean lastInputPresent) {
+    }
+
+    private Selection selection(Object current, Object root) {
         if (!fromRoot) {
             return evaluate(current);
         }
         Memo m = memo;
         if (m == null || m.root().get() != root) {
             try {
-                m = new Memo(new WeakReference<>(root), Collections.unmodifiableList(evaluate(root)), null);
+                Selection s = evaluate(root);
+                m = new Memo(new WeakReference<>(root), new Selection(Collections.unmodifiableList(s.nodes()), s.lastInputPresent()), null);
             } catch (IllegalArgumentException e) {
                 m = new Memo(new WeakReference<>(root), null, e.getMessage());
             }
@@ -87,7 +106,7 @@ final class JsonPath {
         if (m.error() != null) {
             throw new IllegalArgumentException(m.error());
         }
-        return m.nodes();
+        return m.selection();
     }
 
     /**
@@ -95,16 +114,19 @@ final class JsonPath {
      * document held weakly. Immutable, and published through a volatile field: a source's load and the lookups that
      * clients start may evaluate the same path at once, and at worst each evaluates it itself.
      */
-    private record Memo(WeakReference<Object> root, List<Object> nodes, String error) {
+    private record Memo(WeakReference<Object> root, Selection selection, String error) {
     }
 
     private volatile Memo memo;
 
-    private List<Object> evaluate(Object start) {
+    private Selection evaluate(Object start) {
         List<Object> nodes = new ArrayList<>(1);
         nodes.add(start);
-        for (Segment s : segments) {
+        boolean lastInputPresent = false;
+        for (int i = 0; i < segments.size(); i++) {
+            Segment s = segments.get(i);
             List<Object> next = new ArrayList<>();
+            boolean input = false;
             for (Object n : nodes) {
                 if (n == null) {
                     continue;
@@ -112,14 +134,16 @@ final class JsonPath {
                 if (!s.accepts(n)) {
                     throw new IllegalArgumentException("the path " + text + " finds " + kind(n) + " where " + s.needs());
                 }
+                input = true;
                 s.apply(n, next);
             }
+            lastInputPresent = i == segments.size() - 1 && input;
             nodes = next;
             if (nodes.isEmpty()) {
                 break;
             }
         }
-        return nodes;
+        return new Selection(nodes, lastInputPresent);
     }
 
     /** What a node of a document is, in words, for a message. */

@@ -837,8 +837,29 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (l == null) {
                 return new Facts(null, null, null, null);
             }
-            return new Facts(fact(l.issuer(), "issuer", root), fact(l.sequence(), "sequence", root),
+            return new Facts(fact(l.issuer(), "issuer", root), sequence(l.sequence(), root),
                     date(l.issuedAt(), "issuedAt", root), date(l.nextUpdate(), "nextUpdate", root));
+        }
+
+        /**
+         * The list's sequence, which orders lists: a list numbered lower than the one held is refused. Only a whole
+         * number of at most 18 digits can do that ({@code 5.0} is 5, written as 5); {@code v5}, {@code 1.2.3} or a
+         * 19-digit number would order nothing, and a list that replays an older one would pass.
+         */
+        private static String sequence(Value v, Object root) throws TrustSourceException {
+            if (v == null) {
+                return null;
+            }
+            Object found = v.first(root, root);
+            if (found == null) {
+                throw new TrustSourceException("mapping.list.sequence: the document has no value for it");
+            }
+            Long n = Mapping.whole(found);
+            if (n == null) {
+                throw new TrustSourceException("mapping.list.sequence: " + Mapping.quote(found) + " is not a whole number of at most "
+                        + "18 digits, so it cannot order lists; map issuedAt instead");
+            }
+            return n.toString();
         }
 
         /**

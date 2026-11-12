@@ -15,8 +15,9 @@ import java.util.TreeSet;
  *       of the document;</li>
  *   <li>any other scalar: a constant; {@code {value: X}} for a constant that starts with {@code $} or {@code ^};</li>
  *   <li>{@code {path: P, values: {a: X}, default: Z}}: the value at P, translated; {@code values} may also be a list of
- *       {@code {when, then}} pairs, for keys a YAML or Spring property key cannot carry. {@code default} stands for both
- *       a value not in the table and no value at P; without it, either yields nothing;</li>
+ *       {@code {when, then}} pairs, for keys a YAML or Spring property key cannot carry. Keys are compared without
+ *       regard to case and surrounding whitespace. {@code default} stands for both a value not in the table and no
+ *       value at P; without it, either yields nothing. An object or a list at P is the wrong kind, not the default;</li>
  *   <li>{@code {template: "did:web:{$.host}"}}: a string with paths in braces; nothing if any of them yields nothing.</li>
  * </ul>
  *
@@ -54,6 +55,14 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
 
     /** The constants this form can yield whatever the document says, so they can be checked when the configuration is read. */
     List<Object> constants();
+
+    /**
+     * Whether this form reads a list (or an object) through {@code [*]} or a filter, and that list is there, whatever
+     * it holds: a restricting list that is there and yields nothing says "none", not "not stated".
+     */
+    default boolean listPresent(Object current, Object root) {
+        return false;
+    }
 
     /**
      * Reads a value form from configuration.
@@ -110,7 +119,11 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         throw new IllegalArgumentException(what + " must be a string, a number or a boolean");
     }
 
-    /** The translation table: a map, or a list of {when, then} pairs. Keys are compared with {@link #text(Object)}. */
+    /**
+     * The translation table: a map, or a list of {when, then} pairs. Keys are compared by {@link #key}: without regard
+     * to case and to surrounding whitespace, so that {@code Revoked}, {@code " revoked"} and {@code revoked} are one
+     * state, and two keys that are one under that rule are a configuration error.
+     */
     private static Map<String, Object> table(Object raw) {
         Map<String, Object> table = new LinkedHashMap<>();
         if (raw instanceof Map<?, ?> m) {
@@ -121,17 +134,14 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
                             + "letters, digits, - and _ does not survive Spring's property binding; write it in brackets "
                             + "(\"[https://...]\"), or give values as a list of {when, then} pairs");
                 }
-                table.put(String.valueOf(k), scalar(v, "values." + k));
+                once(table, key(String.valueOf(k)), scalar(v, "values." + k));
             });
         } else if (raw instanceof List<?> l) {
             for (Object o : l) {
                 if (!(o instanceof Map<?, ?> pair) || pair.size() != 2 || !pair.containsKey("when") || !pair.containsKey("then")) {
                     throw new IllegalArgumentException("values as a list holds {when, then} pairs only");
                 }
-                String when = text(scalar(pair.get("when"), "when"));
-                if (table.put(when, scalar(pair.get("then"), "then")) != null) {
-                    throw new IllegalArgumentException("values names '" + when + "' twice");
-                }
+                once(table, key(text(scalar(pair.get("when"), "when"))), scalar(pair.get("then"), "then"));
             }
         } else {
             throw new IllegalArgumentException("values must be a map or a list of {when, then} pairs");
@@ -140,6 +150,18 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             throw new IllegalArgumentException("values is empty");
         }
         return Map.copyOf(table);
+    }
+
+    private static void once(Map<String, Object> table, String key, Object then) {
+        if (table.put(key, then) != null) {
+            throw new IllegalArgumentException("values names '" + key + "' twice (keys are compared without regard to case and "
+                    + "surrounding whitespace)");
+        }
+    }
+
+    /** A translation key as it is compared: without surrounding whitespace, in lower case. */
+    static String key(String text) {
+        return text.strip().toLowerCase(java.util.Locale.ROOT);
     }
 
     /** Beyond this scale either way, a number is written with an exponent: in plain notation it could be any length. */
@@ -222,6 +244,11 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         public List<Object> constants() {
             return List.of();
         }
+
+        @Override
+        public boolean listPresent(Object current, Object root) {
+            return path.containerPresent(current, root);
+        }
     }
 
     record Translated(JsonPath path, Map<String, Object> table, Object fallback) implements Value {
@@ -273,10 +300,16 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             return null;
         }
 
-        /** The value's translation, else the default (null without one). */
+        /**
+         * The value's translation, else the default (null without one). An object or a list is not a value the table
+         * or its default can stand for: the document says something there, in a shape the mapping does not know.
+         */
         private Object translate(Object v) {
-            String key = text(v);
-            Object translated = key == null ? null : table.get(key);
+            String text = text(v);
+            if (text == null) {
+                throw new IllegalArgumentException("the path " + path.text() + " finds " + JsonPath.kind(v) + " where a value to translate belongs");
+            }
+            Object translated = table.get(key(text));
             return translated != null ? translated : fallback;
         }
 
@@ -287,6 +320,11 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
                 out.add(fallback);
             }
             return out;
+        }
+
+        @Override
+        public boolean listPresent(Object current, Object root) {
+            return path.containerPresent(current, root);
         }
     }
 

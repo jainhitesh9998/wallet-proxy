@@ -678,6 +678,131 @@ class MappedSourceValidationTest {
         }
     }
 
+    // H: ordering and shapes -------------------------------------------------------------------------------------
+
+    @Test
+    void h_aMappedSequenceIsAWholeNumberOfAtMost18Digits() throws Exception {
+        TestContext ctx = ctx();
+        for (Object sequence : List.of("v5", "1.2.3", "1234567890123456789", -1, 5.5, "5.0", Map.of("n", 5), "v5\r\nWARN forged")) {
+            Map<String, Object> d = MappedSourceRulesTest.doc("a");
+            d.put("version", sequence);
+            serveJson(ctx, d);
+            assertThat(MappedSourceRulesTest.loadError(source(ctx, props()))).as(String.valueOf(sequence)).contains("mapping.list.sequence: ")
+                    .contains("is not a whole number of at most 18 digits, so it cannot order lists; map issuedAt instead")
+                    .doesNotContain("\r").doesNotContain("\n");
+        }
+        for (Map.Entry<Object, String> ok : Map.<Object, String>of(5, "5", new java.math.BigDecimal("5.0"), "5", "0042", "42",
+                "123456789012345678", "123456789012345678").entrySet()) {
+            Map<String, Object> d = MappedSourceRulesTest.doc("a");
+            d.put("version", ok.getKey());
+            serveJson(ctx, d);
+            assertThat(source(ctx, props()).load().listInfo().sequence()).as(String.valueOf(ok.getKey())).isEqualTo(ok.getValue());
+        }
+    }
+
+    @Test
+    void h_aRestrictingListThatIsThereAndYieldsNothingIsNoRestrictionLeftOpen() {
+        // The issuer authorized for nothing (its list of credentials is there and empty) is not unconstrained.
+        for (Object credentials : java.util.Arrays.asList(List.of(), java.util.Collections.singletonList(null), Map.of())) {
+            TestContext ctx = ctx();
+            serveJson(ctx, boundList(1, members("credentials", credentials)));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", boundMapping())))) {
+                assertThat(decide(registry, PID)).as(String.valueOf(credentials)).isEqualTo(Decision.NOT_TRUSTED);
+                assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).isEqualTo(EntityStatus.SUSPENDED);
+                assertThat(state(m, "partner").warnings()).singleElement().asString().contains("is listed SUSPENDED: authorizations: "
+                        + "$.credentials[*] finds a list or an object that holds no value");
+            }
+        }
+        // Not there, or null: absent, unconstrained for a lenient client.
+        for (Object credentials : java.util.Arrays.asList(null, "absent")) {
+            TestContext ctx = ctx();
+            Map<String, Object> d = boundList(1, members("credentials", null));
+            if (credentials == null) {
+                ((Map<String, Object>) ((List<?>) d.get("issuers")).getFirst()).put("credentials", null);
+            }
+            serveJson(ctx, d);
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", boundMapping())))) {
+                assertThat(decide(registry, PID)).isEqualTo(Decision.TRUSTED);
+            }
+        }
+        // An IACA whose doctypes are there and empty is skipped, not free to sign any doctype.
+        Map<String, Object> m = boundMapping();
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "docTypes", "$.doctypes[*]")));
+        Map<String, Object> d = boundList(1, members("certificates", null));
+        d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", der("iaca"), "doctypes", List.of()),
+                Map.of("kid", "rp-ca", "certificate", der("rp-ca"))));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            assertThat(decide(registry, PID)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(registry.snapshot().allAnchors()).extracting(a -> a.id()).containsExactly("rp-ca");
+            assertThat(state(manager, "partner").warnings()).containsExactly("mapping.anchors[0]: record 1 (id 'shared-iaca') is skipped: "
+                    + "docTypes: $.doctypes[*] finds a list or an object that holds no value; a list that is there and empty restricts to "
+                    + "nothing, it does not leave the record open");
+        }
+    }
+
+    @Test
+    void h_aPinnedContextWithoutItsDigestOrATranslationOfAnObjectMakesTheRecordUnreadable() throws Exception {
+        Map<String, Object> m = MappedSourceAttacksTest.entities("contexts", List.of(Map.of("each", "$.ctx[*]", "url", "$.url", "sha256", "$.digest")));
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        d.put("issuers", List.of(
+                Map.of("id", "a", "credential_issuer", "https://a.example", "state", "active", "ctx", List.of(Map.of("url", "https://c.example/1"))),
+                Map.of("id", "b", "credential_issuer", "https://b.example", "state", "active",
+                        "ctx", List.of(Map.of("url", "https://c.example/1", "digest", "AAAA"))),
+                Map.of("id", "c", "credential_issuer", "https://c.example", "state", "active", "ctx", List.of(Map.of("note", "none")))));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        var r = source(ctx, props("mapping", m)).load();
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:a SUSPENDED", "partner:b ACTIVE", "partner:c ACTIVE");
+        assertThat(r.entities().getFirst().attributes()).doesNotContainKey(io.vctrust.trust.core.metadata.Oid4vciMetadataMapper.CONTEXTS);
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 1 (id 'partner:a') is listed SUSPENDED: contexts: an item "
+                + "yields url but no sha256");
+
+        // A translation applied to an object or a list is not its default: the state is there, in a shape not known.
+        Map<String, Object> status = MappedSourceAttacksTest.entities("status", Map.of("path", "$.state", "values",
+                Map.of("revoked", "REVOKED"), "default", "ACTIVE"));
+        d.put("issuers", List.of(Map.of("id", "a", "credential_issuer", "https://a.example", "state", Map.of("code", "revoked")),
+                Map.of("id", "b", "credential_issuer", "https://b.example", "state", List.of("revoked")),
+                Map.of("id", "c", "credential_issuer", "https://c.example")));
+        serveJson(ctx, d);
+        r = source(ctx, props("mapping", status)).load();
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:a SUSPENDED", "partner:b SUSPENDED", "partner:c ACTIVE");
+        assertThat(r.warnings()).containsExactly(
+                "mapping.entities[0]: record 1 (id 'partner:a') is listed SUSPENDED: status: the path $.state finds an object where a value "
+                        + "to translate belongs",
+                "mapping.entities[0]: record 2 (id 'partner:b') is listed SUSPENDED: status: the path $.state finds a list where a value "
+                        + "to translate belongs");
+    }
+
+    @Test
+    void h_translationKeysAreComparedWithoutRegardToCaseAndSurroundingWhitespace() throws Exception {
+        Map<String, Object> status = MappedSourceAttacksTest.entities("status", Map.of("path", "$.state", "values",
+                Map.of("Revoked", "REVOKED", " active", "ACTIVE"), "default", "SUSPENDED"));
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        d.put("issuers", List.of(Map.of("id", "a", "credential_issuer", "https://a.example", "state", "revoked"),
+                Map.of("id", "b", "credential_issuer", "https://b.example", "state", " REVOKED "),
+                Map.of("id", "c", "credential_issuer", "https://c.example", "state", "ACTIVE")));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        assertThat(source(ctx, props("mapping", status)).load().entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:a REVOKED", "partner:b REVOKED", "partner:c ACTIVE");
+        // Two keys that are one under that rule are a configuration error, as a map and as {when, then} pairs.
+        for (Object values : List.of(Map.of("Revoked", "REVOKED", "revoked ", "ACTIVE"),
+                List.of(Map.of("when", "revoked", "then", "REVOKED"), Map.of("when", " REVOKED", "then", "ACTIVE")))) {
+            assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", MappedSourceAttacksTest.entities("status",
+                    Map.of("path", "$.state", "values", values, "default", "SUSPENDED"))))))
+                    .contains("mapping.entities[0].status: values names 'revoked' twice (keys are compared without regard to case and "
+                            + "surrounding whitespace)");
+        }
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();

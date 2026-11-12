@@ -358,12 +358,14 @@ class MappedSourceAttacksTest {
     void f4_anAuthorizationThatLacksAConfiguredMemberMakesTheRecordUnreadableAndIsNoWildcard() throws Exception {
         // Second round (rule A): a record that cannot be read completely is listed SUSPENDED without what could not be
         // read, no longer skipped. A skipped record left its party to the anchor alone.
+        // (credentials: [] was "none listed" here in the first round; the second round (H) reads a list that is there
+        // and empty as "authorized for nothing": MappedSourceValidationTest.h_aRestrictingList...)
         Map<String, Object> m = entities("authorizations", List.of(AUTHORIZATIONS));
         var r = load(m, List.of(
                 Map.of("credentials", List.of(Map.of("format", "mso_mdoc"))),                                 // type missing
                 Map.of("credentials", List.of(Map.of("fmt", "mso_mdoc", "vct", "org.iso.18013.5.1.mDL"))),    // members renamed
                 Map.of("credentials", List.of(Map.of("format", "mso_mdoc", "type", "org.iso.18013.5.1.mDL"))),
-                Map.of("credentials", List.of())));                                                         // none: absent
+                Map.of()));                                                                                 // none: absent
         assertThat(withStatus(r, io.vctrust.trust.core.model.EntityStatus.ACTIVE)).containsExactly("partner:p2", "partner:p3", "partner:fine");
         assertThat(withStatus(r, io.vctrust.trust.core.model.EntityStatus.SUSPENDED)).containsExactly("partner:p0", "partner:p1");
         assertThat(r.entities()).filteredOn(e -> e.status() != io.vctrust.trust.core.model.EntityStatus.ACTIVE)
