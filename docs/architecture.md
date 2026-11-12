@@ -134,6 +134,9 @@ see actually changes. The library:
 
 ## How a decision is made
 
+[trust-methods.md](trust-methods.md) goes through each method (X.509 chains, CRLs, status lists, DIDs) with its
+configuration and an example; this section is the rule they share.
+
 The same steps run in `TrustEvaluator` (Java) and `LocalEvaluator` (TypeScript). A query names a role (issuer or
 verifier), what the subject claims to be (`identifier`), the key its signature was verified with (an `x5c` chain, a
 DID key or a JWK) and context (format, credential type, `response_uri`, `trusted_authorities`).

@@ -1,0 +1,39 @@
+# The configuration that docs/trust-methods.md walks through. From the repository root, after scripts/build.sh:
+#
+#   java -jar trust-server/trust-server/target/trust-server.jar \
+#     --spring.config.additional-location=docs/examples/trust-methods/application.yml
+#
+# Test material only: the API keys below are published here, and the certificates are the test PKI of conformance/pki.
+server:
+  port: 8095
+
+spring:
+  datasource:
+    url: jdbc:h2:file:./.runtime/trust-methods/trust;MODE=PostgreSQL
+
+trust:
+  service:
+    issuer: http://localhost:8095
+    signing-key-file: ./.runtime/trust-methods/signing-key.jwk
+
+  clients:
+    - id: wallet                          # a lenient profile: an unknown revocation status is a warning
+      api-key: wallet-key
+      frameworks: [example]
+    - id: strict-wallet                   # a strict one: an unknown revocation status is an error
+      api-key: strict-key
+      frameworks: [example]
+      require-revocation-status: true
+    - id: ops
+      api-key: ops-key
+      admin: true
+
+  frameworks:
+    - { id: example, name: Example scheme }
+
+  sources:
+    - id: registry
+      type: static
+      framework: example
+      properties:
+        location: docs/examples/trust-methods/registry.yaml

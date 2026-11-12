@@ -27,6 +27,8 @@ API: [`docs/openapi.json`](../docs/openapi.json), or `/swagger-ui.html` on a run
 | `/admin/v1/**` | Sources, registry, managed entities and anchors, caches (admin clients) |
 
 Configuration: [`docs/configuration.md`](../docs/configuration.md). How it works: [`docs/architecture.md`](../docs/architecture.md).
+Method by method (X.509 chains, CRLs, status lists, DIDs), with an example configuration to run:
+[`docs/trust-methods.md`](../docs/trust-methods.md).
 
 ## Adding a trust list format
 

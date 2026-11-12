@@ -63,12 +63,14 @@ test-ecosystem (reference issuer, verifier)  ──►  third-party implementati
 | JSON-LD contexts | In the snapshot, or their digest | The context's URL, reported as not vouched for |
 
 Whatever is relayed is verified on the device: a CRL against the CA that issued it, a status list against its signer,
-everything else against the pinned key of the service. OCSP is not used. Details:
-[Lookups](docs/architecture.md#lookups-proxy-first-standards-as-fallback).
+everything else against the pinned key of the service. OCSP is not used. How each of these is configured and
+decided: [Trust methods](docs/trust-methods.md).
 
 - [Architecture](docs/architecture.md): the registry, the snapshot, how a decision is made, the proxy, what happens
   when things fail, the security model, the evidence of conformance.
 - [Configuration guide](docs/configuration.md): the service, the client library, the wallet core.
+- [Trust methods](docs/trust-methods.md): X.509 chains, CRLs, status lists, DIDs, issuer metadata and JSON-LD
+  contexts, one by one: what the operator lists, what the device checks, and an example to run.
 - [API description](docs/openapi.json) (also served at `/swagger-ui.html`).
 
 ## Repository

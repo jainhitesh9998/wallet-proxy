@@ -30,6 +30,7 @@ nav:
   - Guides:
       - Architecture: architecture.md
       - Configuration: configuration.md
+      - Trust methods: trust-methods.md
   - Components:
       - Trust service: service.md
       - Client library: library.md

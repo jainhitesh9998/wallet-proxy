@@ -1,0 +1,48 @@
+# The registry that docs/trust-methods.md walks through: one party per trust method, on the test PKI of conformance/pki.
+# Locations are relative to the directory the service is started in (the repository root).
+entities:
+  # Found through its own CA: the anchor below names it (entity: utopia-dmv).
+  - id: utopia-dmv
+    roles: [CREDENTIAL_ISSUER]
+    name: Utopia DMV
+    identifiers:
+      - { type: URL, value: "https://issuer.utopia.example" }
+    authorizations:
+      - { format: mso_mdoc, type: org.iso.18013.5.1.mDL }
+
+  # Found through its DID: credentials signed with a key of this DID are this party's.
+  - id: example-university
+    roles: [CREDENTIAL_ISSUER]
+    name: Example University
+    identifiers:
+      - did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK
+    authorizations:
+      - { format: ldp_vc, type: UniversityDegreeCredential }
+
+  # Found through a name in its certificate: the CA below is shared by many verifiers.
+  - id: verifier-inc
+    roles: [VERIFIER]
+    name: Verifier Inc
+    identifiers:
+      - { type: DNS, value: verifier.example }
+
+anchors:
+  # An IACA: the root of mdoc Document Signer certificates, here for one doctype, with a CRL pushed by the operator.
+  - id: utopia-iaca
+    domain: mdoc-iaca
+    entity: utopia-dmv
+    certificateLocation: conformance/pki/iaca.pem
+    constraints:
+      docTypes: [org.iso.18013.5.1.mDL]
+      # conformance/pki/iaca.crl as base64. In production: crlUrls: ["https://pki.example.org/iaca.crl"]
+      crl: "MIIBWjCCAQACAQEwCgYIKoZIzj0EAwIwODELMAkGA1UEBhMCVVQxEzARBgNVBAoMClV0b3BpYSBETVYxFDASBgNVBAMMC1V0b3BpYSBJQUNBFw0yNjExMDEwNDQ2MjJaFw00NTEyMzEwNDQ2MjJaMGYwKAIJAJfHAMxXYYcXFw0yNjExMDEwNDQ2MjJaMAwwCgYDVR0VBAMKAQEwOgIJAJfHAMxXYYcYFw0yNjExMDEwNDQ2MjJaMB4wCgYDVR0VBAMKAQYwEAYDVR0XBAkGByqGSM44AgKgLzAtMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIQC1nXMpdesjcUqEJ25HIjLvX3xEYwmhywOHraF6/vXw2QIgY4h5BwOdOT88EqvbFqnZ2F0MsalYFJQQeQqvN7LxhzM="
+
+  # A CA that issues access certificates to verifiers. No entity: a chain to it says the certificate is valid, not whose it is.
+  - id: rp-access-ca
+    domain: verifier-access
+    certificateLocation: conformance/pki/rp-ca.pem
+
+  # A root for issuers that sign SD-JWT VCs with an x5c chain; it has an intermediate CA below it.
+  - id: issuer-root
+    domain: credential-issuer
+    certificateLocation: conformance/pki/rsa-root.pem

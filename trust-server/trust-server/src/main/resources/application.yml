@@ -1,4 +1,5 @@
-# Wallet proxy (trust service) — default (demo) configuration.
+# Wallet proxy (trust service): the defaults. No clients, frameworks or sources are configured here (see the end of
+# this file); the demo configuration is the "demo" profile, application-demo.yml.
 # Frameworks group trust information; sources feed them; clients see only the frameworks they accept.
 server:
   port: 8090

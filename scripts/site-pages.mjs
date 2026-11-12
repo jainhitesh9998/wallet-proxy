@@ -20,6 +20,7 @@ const PAGES = {
   'README.md': 'index.md',
   'docs/architecture.md': 'architecture.md',
   'docs/configuration.md': 'configuration.md',
+  'docs/trust-methods.md': 'trust-methods.md',
   'trust-server/README.md': 'service.md',
   'packages/trust-client/README.md': 'library.md',
   'packages/wallet-core/README.md': 'wallet-core.md',

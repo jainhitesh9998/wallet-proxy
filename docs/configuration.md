@@ -2,7 +2,8 @@
 
 Three things are configured: the **trust service** (who may ask, what they see, where the registry comes from), the
 **client library** in an app, and the **wallet core** on top of it. [architecture.md](architecture.md) explains what
-the parts do; this guide says how to set them up.
+the parts do; this guide says how to set them up. [trust-methods.md](trust-methods.md) takes the same settings
+method by method (X.509 chains, CRLs, status lists, DIDs, issuer metadata, JSON-LD contexts) with an example to run.
 
 - [Trust service](#trust-service): [quick start](#quick-start), [service and signing key](#service-and-signing-key),
   [clients](#clients), [authentication](#client-authentication), [frameworks and sources](#frameworks-and-sources),
@@ -285,11 +286,14 @@ refusal does not say which address a host resolved to.
 | --- | --- | --- |
 | `trust.revocation.enabled` | `true` | Fetch the anchors' CRLs, check revocation in the service's decisions, ship anchor CRLs in snapshots |
 | `trust.revocation.refresh` | `PT1H` | Anchor CRLs are fetched again at the earlier of this and their next update |
-| `trust.revocation.max-crl-bytes` / `snapshot-max-crl-bytes` | 1 MiB / 256 KiB | Largest CRL fetched; largest shipped in a snapshot (clients fetch larger ones through the proxy) |
+| `trust.revocation.max-crl-bytes` / `snapshot-max-crl-bytes` | 1 MiB / 256 KiB | Largest CRL fetched; largest shipped in a snapshot. A larger anchor CRL is left out, and a device then fetches it only when the certificate names its distribution point |
 | `trust.revocation.fetch-anchor-crls` | `true` | Fetch each anchor's CRL from its `crlUrls` or its own distribution point. `false`: only CRLs pushed with an anchor (`constraints.crl`) are held, for a service without outbound access |
 | `trust.revocation.fetch-on-demand` | `true` | The service's own decisions fetch CRLs of CAs below an anchor |
 | `trust.revocation.relay-crls` / `relay-status-lists` | `true` | Serve `/api/v1/proxy/crl` and `/api/v1/proxy/status-list` |
 | `trust.revocation.status-list-default-ttl` / `status-list-max-ttl` / `max-status-list-bytes` | `PT5M` / `PT1H` / 2 MiB | Relay caching and size |
+
+Where a CRL comes from, how a certificate's status is decided on the service and on the device, and how status
+lists are checked: [CRLs](trust-methods.md#crls) and [credential status lists](trust-methods.md#credential-status-lists).
 
 ### Admin API
 
