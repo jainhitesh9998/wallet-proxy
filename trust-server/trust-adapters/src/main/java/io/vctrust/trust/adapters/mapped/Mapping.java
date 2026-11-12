@@ -378,8 +378,9 @@ final class Mapping {
             }
             List<String> required = requiredMembers(m, where, ENTITY_MEMBERS);
             if (!m.containsKey("roles")) {
-                // The evaluator considers only the entries that have the role asked about: an entry without one would
-                // leave its party's key to whatever anchor it chains to.
+                // Where a record states its roles must be said: listed without one, an entry in good standing
+                // authorizes nothing, and one that is not keeps its party out whatever is asked; which a list means by
+                // a record without roles is the operator's to say (allowEmpty), not this source's to guess.
                 throw new IllegalArgumentException(where + ": roles is required: say where a record states its roles (with "
                         + "{ path, allowEmpty: true } when a list that is there and empty means none stated)");
             }

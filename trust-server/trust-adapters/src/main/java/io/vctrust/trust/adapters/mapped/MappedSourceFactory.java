@@ -586,8 +586,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          * Records of one load that give one id are one entity: the registry merges them (one entity per country of a
          * certificate list, say), taking the union of what they list. Within the load none of them may relax or hide
          * what another states: each gets the strictest status, the latest validFrom and the earliest validUntil of
-         * them all, with a warning when they disagreed. (The registry's merge kept the stricter status already, but the
-         * first record's validity, so that a later record's earlier end was lost.)
+         * them all, with a warning when they disagreed. (The registry's merge does the same now, for the entries of
+         * one id from any source; this source does it within a load so that the disagreement is said in its state, and
+         * for a lookup answer, which the registry does not merge.)
          */
         private static List<TrustedEntity> strictest(List<TrustedEntity> entities, Warnings warnings) {
             Map<String, List<TrustedEntity>> byId = new LinkedHashMap<>();
@@ -991,9 +992,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          *       id, listing the record could keep nobody out: the load fails, naming the record and the member;</li>
          *   <li>when anything else cannot be read, the entity is listed with what could be read, not in good standing
          *       (SUSPENDED, or the stricter status the record states), and a warning says what was left out and why;</li>
-         *   <li>so when its id is text that cannot be an entry's id ({@link #refusedId}): it is listed under an id
-         *       derived from it ({@link #derivedId}), not in good standing, and the warning gives both.
-         *       Refused, or left out by the registry, the record would restrict nobody.</li>
+         *   <li>so when its id is text that cannot be an entry's id ({@link #refusedId}; an id becomes a path
+         *       segment, a database key and a field of the audit log): it is listed under an id derived from it
+         *       ({@link #derivedId}), not in good standing, and the warning gives both. Failing the load for it, or
+         *       leaving it out, would keep nobody out.</li>
          * </ul>
          *
          * @param number the record's number in its block, for messages

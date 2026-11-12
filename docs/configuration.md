@@ -824,8 +824,8 @@ curl -s -H 'Authorization: Bearer ops-key' localhost:8096/admin/v1/sources \
     "nextUpdate": "2030-01-01T00:00:00Z",
     "signature": "NOT_SIGNED",
     "details": {
-      "pages": 1,
-      "format": "json"
+      "format": "json",
+      "pages": 1
     }
   },
   "warnings": []

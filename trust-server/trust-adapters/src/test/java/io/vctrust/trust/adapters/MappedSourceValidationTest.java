@@ -176,8 +176,7 @@ class MappedSourceValidationTest {
 
     @Test
     void a_aRoleOrAnIdentifierTheDocumentStatesButTheMappingCannotReadFailsTheLoad() {
-        // A kind the roles' translation does not know: listed without a role, the entry would answer no question about
-        // the party, and the anchor alone would decide about it.
+        // A kind the roles' translation does not know: the document states a role, which the mapping cannot read.
         Map<String, Object> m = boundMapping();
         Map<String, Object> block = (Map<String, Object>) ((List<?>) m.get("entities")).getFirst();
         block.put("roles", Map.of("path", "$.kind", "values", Map.of("issuer", "CREDENTIAL_ISSUER")));
@@ -186,7 +185,7 @@ class MappedSourceValidationTest {
         assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", m)))).startsWith("mapping.entities[0]: record 1 (id "
                 + "'partner:dmv') cannot be read: roles: 'issuer-v2' is not one of the values its translation knows");
         // A record without a kind has no role from it, and a record that yields no role fails the load (third round, item
-        // 1: listed without a role, the entry would restrict nobody; it was listed without one before).
+        // 1; it was listed without one before, when the evaluator dropped an entry without the role asked whatever it said).
         serveJson(ctx, boundList(1, members("kind", "issuer")));
         assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", m)))).startsWith("mapping.entities[0]: record 2 (id "
                 + "'partner:college') cannot be read: it yields no role");

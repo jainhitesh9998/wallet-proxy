@@ -61,7 +61,7 @@ class MappedSourceEdgesTest {
         return d;
     }
 
-    // 1: a record that yields no role keeps nobody out ---------------------------------------------------------------
+    // 1: a record that yields no role -----------------------------------------------------------------------------
 
     @Test
     void item1_anEntityRecordThatYieldsNoRoleFailsTheLoadAndItsPartyIsNotTrustedThroughTheAnchor() {
@@ -74,8 +74,10 @@ class MappedSourceEdgesTest {
         roleless.put("no role, and a date that cannot be read", members("state", "revoked",
                 "valid_until", NOW.plus(Duration.ofDays(365)).toEpochMilli()));
         roleless.forEach((what, dmv) -> {
-            // Listed without a role, the revoked issuer's entry answers no question about it, and the shared IACA
-            // alone decides: TRUSTED. Its record says whom it is about in a way that keeps nobody out: the load fails.
+            // Listed without a role, the revoked issuer's entry answered no question about it, and the shared IACA
+            // alone decided: TRUSTED. (The evaluator now holds a roleless entry not in good standing against its party;
+            // but a record that yields no role may be one whose roles were renamed upstream: the load fails, unless the
+            // mapping says that an empty list means none stated, MappedSourceRegistryTest.item2_...)
             TestContext ctx = ctx();
             serveJson(ctx, withRoles(1, dmv));
             TrustRegistry registry = new TrustRegistry();

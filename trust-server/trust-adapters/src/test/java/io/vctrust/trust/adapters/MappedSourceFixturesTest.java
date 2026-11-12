@@ -192,7 +192,8 @@ class MappedSourceFixturesTest {
 
     // A snapshot writes "authorizations": [] for an entity with none registered (unconstrained unless the client is
     // strict). A mapped list that is there and empty would mean "authorized for nothing"; allowEmpty says that here it
-    // means none stated, as the snapshot does.
+    // means none stated, as the snapshot does. So for "roles": [] (an entry that states no role), and an authorization
+    // without "type" covers every type of its format (allowAnyType).
     static final String SNAPSHOT_MAPPING = """
             list:
               issuer: $.iss
