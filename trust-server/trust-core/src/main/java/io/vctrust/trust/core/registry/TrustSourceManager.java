@@ -1,5 +1,6 @@
 package io.vctrust.trust.core.registry;
 
+import io.vctrust.trust.core.metadata.Oid4vciMetadataMapper;
 import io.vctrust.trust.core.model.Identifier;
 import io.vctrust.trust.core.model.Provenance;
 import io.vctrust.trust.core.model.TrustAnchor;
@@ -55,8 +56,10 @@ import java.util.regex.Pattern;
  * an entry of its own framework already holds is merged with it. A source of one framework can therefore add nothing to, and take nothing from, what a
  * client of another framework is told. Two records of one anchor id in one framework that differ (in anything but
  * where and when they were retrieved) are neither loaded: which one counted would depend on the order of the sources.
- * An entry that is not loaded is named in a warning of its source's state. A list that is older than the one already
- * held is not loaded.
+ * An entry that only describes a party ({@link SourceLoadResult#describing}) makes no entity: after every other entry,
+ * what describes is merged into the one entity of its framework that another source lists and the entry names, or the
+ * entry is left out. An entry that is not loaded is named in a warning of its source's state. A list that is older than
+ * the one already held is not loaded. An answer fetched on demand is merged with the entity of its id in its framework.
  */
 public class TrustSourceManager implements AutoCloseable {
 
@@ -311,7 +314,7 @@ public class TrustSourceManager implements AutoCloseable {
         Map<List<String>, String> placed = new HashMap<>();
         for (TrustSource s : sources.values()) {
             SourceLoadResult r = results.get(s.id());
-            if (r == null) {
+            if (r == null || r.describing()) {
                 continue;
             }
             String framework = s.definition().frameworkId();
@@ -345,6 +348,25 @@ public class TrustSourceManager implements AutoCloseable {
                     placed.put(Arrays.asList(framework, e.id()), id);
                 }
                 entities.merge(id, inFramework(e, id, framework), RegistrySnapshot::merge);
+            }
+        }
+        // What only describes a party (what an issuer says about itself) is placed after every entry that lists one, and
+        // only into an entity that another source of its framework lists. Merged as an entry, a description named
+        // another way (a misspelt id, an issuer listed under another id) made an entity of its own, ACTIVE: the issuer
+        // was trusted beside its REVOKED entry, and an anchor tied to the same misspelt id was tied to it.
+        for (TrustSource s : sources.values()) {
+            SourceLoadResult r = results.get(s.id());
+            if (r == null || !r.describing()) {
+                continue;
+            }
+            String framework = s.definition().frameworkId();
+            for (TrustedEntity e : r.entities()) {
+                List<String> described = described(e, framework, placed, entities);
+                if (described.size() == 1) {
+                    entities.computeIfPresent(described.getFirst(), (id, entity) -> withDescription(entity, e));
+                } else {
+                    refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add(notDescribed(e, framework, described));
+                }
             }
         }
         // The frameworks that have an entity of an id, as a source wrote it or as the registry lists it, for the warning
@@ -492,6 +514,79 @@ public class TrustSourceManager implements AutoCloseable {
         return "Anchor '" + id + "' is not loaded: it belongs to entity '" + entity + "', which no source of framework '" + framework + "' lists"
                 + (elsewhere.isEmpty() ? "" : "; only " + (elsewhere.size() == 1 ? "framework " : "frameworks ") + quoted(elsewhere)
                 + (elsewhere.size() == 1 ? " has" : " have") + " an entity of that id");
+    }
+
+    /**
+     * The registry ids of the entities of {@code framework} that a describing entry names: by its identifiers when it has
+     * any (each entity that lists one of them: an issuer described by its URL alone), otherwise by its id (the entity a
+     * source of the framework lists under that id, wherever the registry placed it). Only entities that sources which
+     * list parties placed are found: a description is never one.
+     */
+    private static List<String> described(TrustedEntity description, String framework, Map<List<String>, String> placed,
+                                          Map<String, TrustedEntity> entities) {
+        if (description.identifiers().isEmpty()) {
+            String id = placed.get(Arrays.asList(framework, description.id()));
+            return id == null ? List.of() : List.of(id);
+        }
+        Set<String> keys = new java.util.HashSet<>();
+        description.identifiers().forEach(i -> keys.add(i.key()));
+        return entities.values().stream().filter(e -> Objects.equals(e.frameworkId(), framework))
+                .filter(e -> e.identifiers().stream().anyMatch(i -> keys.contains(i.key()))).map(TrustedEntity::id).toList();
+    }
+
+    /** What an entry that only describes a party may add to the party's entity: never what restricts or binds it. */
+    private static final List<String> DESCRIBING_ATTRIBUTES = List.of(Oid4vciMetadataMapper.CONTEXTS, Oid4vciMetadataMapper.CONTEXT_DIGESTS);
+
+    /**
+     * The entity with what {@code description} says of the party: its display when the entity has none, the JSON-LD
+     * contexts and their digests, and metadata of an entity type the entity has none of (the entity's own stand, as the
+     * earlier entry's do in {@link RegistrySnapshot#merge}). Never roles, status, validity, authorizations, identifiers,
+     * certificates or any other attribute: a description vouches for nothing, and an attribute can be what a decision
+     * matches ({@code trustAnchor}, {@code trustedListUri}).
+     */
+    private static TrustedEntity withDescription(TrustedEntity entity, TrustedEntity description) {
+        TrustedEntity.Builder m = entity.toBuilder();
+        if (entity.display().isEmpty()) {
+            description.display().forEach(m::display);
+        }
+        description.metadata().forEach((type, md) -> {
+            if (!entity.metadata().containsKey(type)) {
+                m.metadata(type, md);
+            }
+        });
+        for (String a : DESCRIBING_ATTRIBUTES) {
+            if (!entity.attributes().containsKey(a)) {
+                m.attribute(a, description.attributes().get(a));
+            }
+        }
+        Set<String> from = new java.util.LinkedHashSet<>();
+        if (entity.provenance() != null) {
+            from.add(entity.provenance().sourceId());
+        }
+        if (entity.attributes().get("mergedFrom") instanceof Collection<?> c) {
+            c.forEach(x -> from.add(String.valueOf(x)));
+        }
+        if (description.provenance() != null) {
+            from.add(description.provenance().sourceId());
+        }
+        m.attribute("mergedFrom", List.copyOf(from));
+        return m.build();
+    }
+
+    /** Why a describing entry is left out: {@code found} are the entities it names, none or more than one. */
+    private static String notDescribed(TrustedEntity description, String framework, List<String> found) {
+        String of = description.provenance() != null && description.provenance().sourceUri() != null
+                ? description.provenance().sourceUri() : description.id();
+        String why;
+        if (description.identifiers().isEmpty()) {
+            why = "no other source of framework '" + framework + "' lists entity '" + description.id() + "', and a description makes no entity of its own";
+        } else {
+            String names = String.join(", ", description.identifiers().stream().map(i -> i.type() + " '" + i.value() + "'").toList());
+            why = found.isEmpty()
+                    ? "no entity of framework '" + framework + "' lists " + names + " as an identifier, and a description makes no entity of its own"
+                    : "entities " + quoted(found) + " of framework '" + framework + "' list " + names + ", and which one it describes cannot be told";
+        }
+        return "The description of '" + of + "' is not loaded: " + why;
     }
 
     /** {@code 'a'}, {@code 'a' and 'b'}, {@code 'a', 'b' and 'c'}. */

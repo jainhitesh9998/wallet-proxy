@@ -506,7 +506,8 @@ entities:
       - { url: "https://issuer.example.org/contexts/v2", sha256: "<base64url digest>" }    # pinned: other content is not shipped
 ```
 
-An `oid4vci-discovery` source adds the contexts that a listed issuer's metadata names. The service fetches each
+An `oid4vci-discovery` source adds the contexts that a listed issuer's metadata names to the issuer's entity, which
+another source of the framework must list (the discovery source makes none of its own). The service fetches each
 context and puts it into the snapshot (`contexts`): the document itself up to `snapshot-max-context-bytes` in
 total, past that its digest only.
 
@@ -685,7 +686,7 @@ The methods above work the same whatever the source.
 | `etsi-lote` (TS 119 602) | The same, for the EUDI lists | PID and Pub-EAA providers: `credential-issuer` and `mdoc-iaca`; wallet providers: `wallet-provider`; access certificate CAs (WRPAC): `verifier-access`; the revocation services of each: `status-list` |
 | `openid-federation` | Entities from validated trust chains, with their metadata policy | Can also be asked on demand about an entity identifier it did not crawl |
 | `ebsi-tir` | `did:ebsi` issuers with what they are accredited for | Asked on demand by default |
-| `oid4vci-discovery` | Display names and contexts of issuers that are listed elsewhere | Authorizes nothing |
+| `oid4vci-discovery` | Display names and contexts of issuers that are listed elsewhere, merged into the entity another source of the framework lists (the one named by `entityId`, or the one that lists the issuer's URL) | Authorizes nothing and makes no entity: a description of an issuer no other source lists, or that several entities list, is left out with a warning |
 | `mapped` | Whatever its mapping makes of a JSON list or registry: entities and anchors in the registry format | Any list that speaks JSON, without code: [mapped sources](configuration.md#mapped-sources). A signed list is verified against keys pinned in the configuration; with a `lookup`, asked on demand about one identifier |
 
 **Parties too many to ship.** A federation or EBSI is not copied into every snapshot. With

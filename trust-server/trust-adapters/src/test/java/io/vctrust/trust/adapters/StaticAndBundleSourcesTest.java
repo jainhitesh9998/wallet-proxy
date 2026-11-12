@@ -152,8 +152,11 @@ class StaticAndBundleSourcesTest {
         var def = new SourceDefinition("d", "oid4vci-discovery", "fw", null, true,
                 Map.of("issuers", List.of(Map.of("url", "https://issuer.example/t1", "entityId", "tenant-one"))));
         var r = new Oid4vciDiscoverySourceFactory().create(def, ctx).load();
+        // A description of the entity another source lists as tenant-one: it names that id and nothing else.
+        assertThat(r.describing()).isTrue();
         var e = r.entities().getFirst();
         assertThat(e.id()).isEqualTo("tenant-one");
+        assertThat(e.identifiers()).isEmpty();
         assertThat(e.displayName("en")).isEqualTo("Tenant One");
         // What an issuer says about itself describes it and grants nothing.
         assertThat(e.authorizations()).isEmpty();
