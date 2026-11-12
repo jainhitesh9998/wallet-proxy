@@ -796,8 +796,8 @@ class MappedSourceValidationTest {
 
     @Test
     void h_allowEmptyOnANestedEachReadsAListThatIsThereAndEmptyAsNoneStated() {
-        for (Object credentials : java.util.Arrays.asList(List.of(), java.util.Collections.singletonList(null), Map.of(),
-                List.of(Map.of("format", "mso_mdoc", "type", MDL, "withdrawn", true)))) {
+        Object withdrawn = List.of(Map.of("format", "mso_mdoc", "type", MDL, "withdrawn", true));
+        for (Object credentials : java.util.Arrays.asList(List.of(), java.util.Collections.singletonList(null), Map.of(), withdrawn)) {
             // The default, as H made it: authorized for nothing, so not in good standing.
             TestContext ctx = ctx();
             serveJson(ctx, boundList(1, members("credentials", credentials)));
@@ -812,6 +812,15 @@ class MappedSourceValidationTest {
             Map<String, Object> allowed = withAuthorizations(Map.of("each", "$.credentials[?@.withdrawn != true]", "allowEmpty", true,
                     "format", "$.format", "type", "$.type"));
             registry = new TrustRegistry();
+            if (credentials == withdrawn) {
+                // Third round (item 6): a list a filter empties is not empty, and allowEmpty does not stand for it; the
+                // issuer whose only authorization is withdrawn was listed ACTIVE and unconstrained before.
+                try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", allowed)))) {
+                    assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).isEqualTo(EntityStatus.SUSPENDED);
+                    assertThat(decide(registry, PID)).isEqualTo(Decision.NOT_TRUSTED);
+                }
+                continue;
+            }
             try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", allowed)))) {
                 assertThat(state(m, "partner").warnings()).as(String.valueOf(credentials)).isEmpty();
                 TrustedEntity dmv = registry.snapshot().entity("partner:dmv").orElseThrow();
@@ -885,15 +894,20 @@ class MappedSourceValidationTest {
         refused.accept(withAuthorizations(Map.of("allowEmpty", true, "format", "$.format", "type", "$.type")),
                 "mapping.entities[0].authorizations[0]: allowEmpty applies to an item with an each of its own");
         refused.accept(withAuthorizations(Map.of("each", "$.credential", "allowEmpty", true, "format", "$.format", "type", "$.type")),
-                "mapping.entities[0].authorizations[0]: allowEmpty applies to a list: $.credential does not end in [*] or a filter");
+                "mapping.entities[0].authorizations[0]: allowEmpty applies to a list: $.credential has no [*] or filter");
         refused.accept(withAuthorizations(Map.of("each", "$.credentials[*]", "format", Map.of("path", "$.format", "allowEmpty", true),
                 "type", "$.type")), "mapping.entities[0].authorizations[0].format: allowEmpty applies to a member that takes a list");
         m = boundMapping();
         Map<String, Object> block = (Map<String, Object>) ((List<?>) m.get("entities")).getFirst();
         block.put("certificates", Map.of("path", "$.certificates[*]", "allowEmpty", "yes"));
         refused.accept(m, "mapping.entities[0].certificates: allowEmpty must be true or false");
+        // Third round (item 6): on certificates allowEmpty changes nothing, and is refused whatever its path.
         block.put("certificates", Map.of("path", "$.certificate", "allowEmpty", true));
-        refused.accept(m, "mapping.entities[0].certificates: allowEmpty applies to a list: $.certificate does not end in [*] or a filter");
+        refused.accept(m, "mapping.entities[0].certificates: allowEmpty applies to a list that restricts (authorizations, docTypes)");
+        Map<String, Object> anchored = boundMapping();
+        anchored.put("anchors", List.of(Map.of("each", "$.authorities[*]", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "docTypes", Map.of("path", "$.doctype", "allowEmpty", true))));
+        refused.accept(anchored, "mapping.anchors[0].docTypes: allowEmpty applies to a list: $.doctype has no [*] or filter");
         for (Map<String, Object> form : List.of(Map.<String, Object>of("value", "x", "allowEmpty", true),
                 Map.<String, Object>of("template", "{$.x}", "allowEmpty", true),
                 Map.<String, Object>of("path", "$.certificates[*]", "allowEmpty", true, "else", "x"),

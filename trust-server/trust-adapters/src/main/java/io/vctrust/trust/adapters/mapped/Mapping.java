@@ -340,10 +340,10 @@ final class Mapping {
             f.put("id", required(m, "id", where));
             f.put("roles", many(m.get("roles"), where + ".roles", false));
             f.put("name", optional(m, "name", where));
-            f.put("display", items(m.get("display"), where + ".display", Set.of("locale", "name", "description", "logoUri"), Set.of("name")));
-            f.put("identifiers", items(m.get("identifiers"), where + ".identifiers", Set.of("type", "value"), Set.of("type", "value")));
-            f.put("certificates", many(m.get("certificates"), where + ".certificates", true));
-            f.put("authorizations", items(m.get("authorizations"), where + ".authorizations", Set.of("format", "type"), Set.of()));
+            f.put("display", items(m.get("display"), where + ".display", Set.of("locale", "name", "description", "logoUri"), Set.of("name"), false));
+            f.put("identifiers", items(m.get("identifiers"), where + ".identifiers", Set.of("type", "value"), Set.of("type", "value"), false));
+            f.put("certificates", many(m.get("certificates"), where + ".certificates", false));
+            f.put("authorizations", items(m.get("authorizations"), where + ".authorizations", Set.of("format", "type"), Set.of(), true));
             f.put("status", optional(m, "status", where));
             f.put("validFrom", optional(m, "validFrom", where));
             f.put("validUntil", optional(m, "validUntil", where));
@@ -372,7 +372,7 @@ final class Mapping {
             f.put("entity", optional(m, "entity", where));
             f.put("status", optional(m, "status", where));
             f.put("docTypes", many(m.get("docTypes"), where + ".docTypes", true));
-            f.put("crlUrls", many(m.get("crlUrls"), where + ".crlUrls", true));
+            f.put("crlUrls", many(m.get("crlUrls"), where + ".crlUrls", false));
             f.put("crl", optional(m, "crl", where));
             f.put("framework", optional(m, "framework", where));
             check((Value) f.get("status"), EntityStatus.class, "status", where + ".status");
@@ -649,18 +649,34 @@ final class Mapping {
 
         /**
          * The authorizations. A list of them that is there and yields none ({@code credentials: []}, {@code [null]},
-         * {@code {}}, or one whose filter keeps none) authorizes nothing: it cannot be read as "none listed", which
-         * would leave the entity unconstrained for a lenient client. Unless the item says {@code allowEmpty}: the
-         * operator knows that the upstream writes an empty list where it means "none registered", and then the member
-         * is absent. A wrong kind, or an item that lacks a member, stays unreadable either way.
+         * {@code {}}, a filter that keeps none of them, and so wherever in the path the list is:
+         * {@code $.credentials[*].types[*]} over {@code "credentials": []}) authorizes nothing: it cannot be read as
+         * "none listed", which would leave the entity unconstrained for a lenient client. Unless the item says
+         * {@code allowEmpty}: the operator knows that the upstream writes an empty list where it means "none
+         * registered", and then the member is absent. It covers only a list that has no item at all: one whose items a
+         * filter leaves out is not empty. A wrong kind, an item that lacks what the path goes on to, or an item that
+         * lacks a member stays unreadable either way.
          */
         private List<Map<String, Object>> authorizations(Object record, Object root) {
-            List<Item> items = items(fields.get("authorizations"));
-            List<Map<String, Object>> out = objects(items, "authorizations", record, root, Set.of(), Items.STRICT);
+            List<Map<String, Object>> out = new ArrayList<>();
+            Map<Item, JsonPath.Restricted> empty = new LinkedHashMap<>();
+            for (Item item : items(fields.get("authorizations"))) {
+                JsonPath.Restricted found = item.each == null ? null : restricted(item.each, "authorizations", record, root);
+                List<Map<String, Object>> these = mapItems(item, found == null ? List.of(record) : found.nodes(), "authorizations", root,
+                        Set.of(), Items.STRICT);
+                out.addAll(these);
+                bounded(out, "authorizations");
+                if (these.isEmpty() && found != null && found.there()) {
+                    empty.put(item, found);
+                }
+            }
             if (out.isEmpty()) {
-                for (Item item : items) {
-                    if (item.each != null && !item.allowEmpty() && item.each.containerPresent(record, root)) {
-                        throw emptyList("authorizations", item.each.text());
+                for (Map.Entry<Item, JsonPath.Restricted> e : empty.entrySet()) {
+                    if (e.getValue().lost()) {
+                        throw lostList("authorizations", e.getKey().each.text());
+                    }
+                    if (!e.getKey().allowEmpty()) {
+                        throw emptyList("authorizations", e.getKey().each.text());
                     }
                 }
             }
@@ -669,14 +685,35 @@ final class Mapping {
 
         /**
          * An anchor's doctypes: a list of them that is there and yields none constrains the IACA to none, unless the
-         * form says {@code allowEmpty} (see {@link #authorizations}).
+         * form says {@code allowEmpty} (see {@link #authorizations}). A value its translation does not know, without a
+         * default, cannot be read ({@link Value#restricting}).
          */
         private List<String> docTypes(Object record, Object root) {
-            List<String> out = texts("docTypes", record, root);
+            List<String> out = new ArrayList<>();
+            Map<Value, Value.Restricting> empty = new LinkedHashMap<>();
+            for (Value v : values(fields.get("docTypes"))) {
+                Value.Restricting found;
+                try {
+                    found = v.restricting(record, root);
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException("docTypes: " + e.getMessage(), e);
+                }
+                for (Object o : found.values()) {
+                    out.add(scalar(o, "docTypes"));
+                }
+                bounded(out, "docTypes");
+                if (found.values().isEmpty() && found.there()) {
+                    empty.put(v, found);
+                }
+            }
             if (out.isEmpty()) {
-                for (Value v : values(fields.get("docTypes"))) {
-                    if (!v.allowEmpty() && v.listPresent(record, root)) {
-                        throw emptyList("docTypes", v instanceof Value.At a ? a.path().text() : ((Value.Translated) v).path().text());
+                for (Map.Entry<Value, Value.Restricting> e : empty.entrySet()) {
+                    String path = e.getKey() instanceof Value.At a ? a.path().text() : ((Value.Translated) e.getKey()).path().text();
+                    if (e.getValue().lost()) {
+                        throw lostList("docTypes", path);
+                    }
+                    if (!e.getKey().allowEmpty()) {
+                        throw emptyList("docTypes", path);
                     }
                 }
             }
@@ -686,6 +723,20 @@ final class Mapping {
         private static IllegalArgumentException emptyList(String member, String path) {
             return new IllegalArgumentException(member + ": " + path + " finds a list or an object that holds no value; a list that is "
                     + "there and empty restricts to nothing, it does not leave the record open");
+        }
+
+        private static IllegalArgumentException lostList(String member, String path) {
+            return new IllegalArgumentException(member + ": " + path + " finds a list but nothing it holds: a filter leaves its items "
+                    + "out, or they hold null where the path goes on. Such a list is not empty, and restricts to nothing (allowEmpty "
+                    + "covers only a list that has no item at all)");
+        }
+
+        private static JsonPath.Restricted restricted(JsonPath p, String member, Object current, Object root) {
+            try {
+                return p.restricted(current, root);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(member + ": " + e.getMessage(), e);
+            }
         }
 
         /** What an item that is not all there is (see {@link #objects}). */
@@ -726,34 +777,42 @@ final class Mapping {
                                                          Set<String> needs, Items rule) {
             List<Map<String, Object>> out = new ArrayList<>();
             for (Item item : items) {
-                List<Object> matches = item.each == null ? List.of(record) : select(item.each, member, record, root);
-                bounded(matches, member);   // before any is mapped: each costs the evaluation of the item's members
-                for (Object match : matches) {
-                    if (match == null) {
-                        continue;
+                out.addAll(mapItems(item, item.each == null ? List.of(record) : select(item.each, member, record, root), member, root,
+                        needs, rule));
+                bounded(out, member);
+            }
+            return out;
+        }
+
+        /** The items of one nested {@code each}, one per match. */
+        private static List<Map<String, Object>> mapItems(Item item, List<Object> matches, String member, Object root, Set<String> needs,
+                                                          Items rule) {
+            bounded(matches, member);   // before any is mapped: each costs the evaluation of the item's members
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Object match : matches) {
+                if (match == null) {
+                    continue;
+                }
+                Map<String, Object> o = new LinkedHashMap<>();
+                List<String> fromDocument = new ArrayList<>();
+                for (Map.Entry<String, Value> e : item.members.entrySet()) {
+                    String k = e.getKey();
+                    put(o, k, scalar(first(e.getValue(), member + "." + k, match, root), member + "." + k));
+                    if (rule == Items.STRICT && !o.containsKey(k)) {
+                        throw new IllegalArgumentException(member + ": an item yields no " + k
+                                + "; an authorization is never left open where the document does not say so");
                     }
-                    Map<String, Object> o = new LinkedHashMap<>();
-                    List<String> fromDocument = new ArrayList<>();
-                    for (Map.Entry<String, Value> e : item.members.entrySet()) {
-                        String k = e.getKey();
-                        put(o, k, scalar(first(e.getValue(), member + "." + k, match, root), member + "." + k));
-                        if (rule == Items.STRICT && !o.containsKey(k)) {
-                            throw new IllegalArgumentException(member + ": an item yields no " + k
-                                    + "; an authorization is never left open where the document does not say so");
-                        }
-                        if (o.containsKey(k) && fromDocument(e.getValue(), match, root)) {
-                            fromDocument.add(k);
-                        }
-                    }
-                    if (o.keySet().containsAll(needs) && !o.isEmpty()) {
-                        out.add(o);
-                    } else if (rule == Items.WHOLE && !fromDocument.isEmpty()) {
-                        List<String> missing = needs.stream().filter(k -> !o.containsKey(k)).sorted().toList();
-                        throw new IllegalArgumentException(member + ": an item yields " + String.join(" and ", fromDocument) + " but no "
-                                + String.join(" or ", missing));
+                    if (o.containsKey(k) && fromDocument(e.getValue(), match, root)) {
+                        fromDocument.add(k);
                     }
                 }
-                bounded(out, member);
+                if (o.keySet().containsAll(needs) && !o.isEmpty()) {
+                    out.add(o);
+                } else if (rule == Items.WHOLE && !fromDocument.isEmpty()) {
+                    List<String> missing = needs.stream().filter(k -> !o.containsKey(k)).sorted().toList();
+                    throw new IllegalArgumentException(member + ": an item yields " + String.join(" and ", fromDocument) + " but no "
+                            + String.join(" or ", missing));
+                }
             }
             return out;
         }
@@ -851,7 +910,8 @@ final class Mapping {
         return List.copyOf(out);
     }
 
-    private static List<Item> items(Object raw, String where, Set<String> allowed, Set<String> required) {
+    /** Nested items; only those of a list that restricts (authorizations) may say {@code allowEmpty}. */
+    private static List<Item> items(Object raw, String where, Set<String> allowed, Set<String> required, boolean restricting) {
         if (raw == null) {
             return List.of();
         }
@@ -860,12 +920,12 @@ final class Mapping {
         }
         List<Item> out = new ArrayList<>();
         for (int i = 0; i < l.size(); i++) {
-            out.add(item(l.get(i), where + "[" + i + "]", allowed, required));
+            out.add(item(l.get(i), where + "[" + i + "]", allowed, required, restricting));
         }
         return List.copyOf(out);
     }
 
-    private static Item item(Object raw, String where, Set<String> allowed, Set<String> required) {
+    private static Item item(Object raw, String where, Set<String> allowed, Set<String> required, boolean restricting) {
         Set<String> all = new LinkedHashSet<>(allowed);
         all.add("each");
         all.add("allowEmpty");
@@ -880,11 +940,14 @@ final class Mapping {
         boolean allowEmpty = flag(m, "allowEmpty", where);
         if (m.containsKey("allowEmpty")) {
             // Said where it cannot apply, it would be ignored: refused instead.
+            if (!restricting) {
+                throw new IllegalArgumentException(where + ": " + Value.changesNothing());
+            }
             if (each == null) {
                 throw new IllegalArgumentException(where + ": allowEmpty applies to an item with an each of its own");
             }
-            if (!each.endsInList()) {
-                throw new IllegalArgumentException(where + ": allowEmpty applies to a list: " + each.text() + " does not end in [*] or a filter");
+            if (!each.readsList()) {
+                throw new IllegalArgumentException(where + ": allowEmpty applies to a list: " + each.text() + " has no [*] or filter");
             }
         }
         Map<String, Value> members = new LinkedHashMap<>();
@@ -911,9 +974,9 @@ final class Mapping {
         for (int i = 0; i < entries.size(); i++) {
             Object e = entries.get(i);
             if (e instanceof Map<?, ?> m && (m.containsKey("url") || m.containsKey("each") || m.containsKey("sha256"))) {
-                out.add(item(e, where + "[" + i + "]", Set.of("url", "sha256"), Set.of("url")));
+                out.add(item(e, where + "[" + i + "]", Set.of("url", "sha256"), Set.of("url"), false));
             } else {
-                out.add(Value.parseRestricting(e, where + "[" + i + "]"));
+                out.add(Value.parseList(e, where + "[" + i + "]"));
             }
         }
         return List.copyOf(out);

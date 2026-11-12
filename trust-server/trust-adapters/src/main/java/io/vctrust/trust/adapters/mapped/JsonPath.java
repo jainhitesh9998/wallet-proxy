@@ -76,22 +76,47 @@ final class JsonPath {
     }
 
     /**
-     * Whether the path ends in {@code [*]} or a filter and what that last segment looks into is there (a list or an
-     * object, not null and not missing), whatever it selects from it. A list of restrictions that is there and holds
-     * nothing ({@code []}, {@code [null]}, {@code {}}) says "none", which is not the same as a list that is not there.
+     * What the path of a member that restricts (an authorization's {@code each}, an anchor's doctypes) finds: the nodes
+     * it selects, and what tells "none stated" from "none allowed" when they hold no value.
+     *
+     * @param nodes the nodes selected, as {@link #select}
+     * @param there whether a {@code [*]} or a filter of the path, wherever it is, met a list or an object: the list is
+     *              there, and when it yields nothing it restricts to nothing ({@code "doctypes": []} under
+     *              {@code $.doctypes[*].id} as well as under {@code $.doctypes[*]})
+     * @param lost  whether something the list holds was left out on the way: a filter left out an item that is not
+     *              null, or an item it selected has null where the path goes on. Such a list is not empty, and
+     *              {@code allowEmpty} does not stand for it
      */
-    boolean containerPresent(Object current, Object root) {
-        return endsInList() && selection(current, root).lastInputPresent();
+    record Restricted(List<Object> nodes, boolean there, boolean lost) {
     }
 
-    /** Whether the path ends in {@code [*]} or a filter: it reads the items of a list (or the members of an object). */
-    boolean endsInList() {
-        Segment last = segments.isEmpty() ? null : segments.getLast();
-        return last instanceof Wildcard || last instanceof Filter;
+    /**
+     * The nodes of a path of a member that restricts, read more strictly than by {@link #select}: past a {@code [*]} or
+     * a filter, an item that does not have the member (or the index) the path goes on to cannot be read. Its list says
+     * something there, in a shape the mapping does not know; reading the item as absent would leave the record with
+     * fewer restrictions than the document states.
+     *
+     * @throws IllegalArgumentException for a node of the wrong kind (as {@link #select}), or an item that lacks what the
+     *                                  path goes on to
+     */
+    Restricted restricted(Object current, Object root) {
+        Selection s = selection(current, root);
+        if (s.lacking() != null) {
+            throw new IllegalArgumentException(s.lacking());
+        }
+        return new Restricted(s.nodes(), s.there(), s.lost());
     }
 
-    /** What a path selected, and whether its last segment had anything to look into. */
-    private record Selection(List<Object> nodes, boolean lastInputPresent) {
+    /** Whether the path has a {@code [*]} or a filter: it reads the items of a list (or the members of an object). */
+    boolean readsList() {
+        return multiple();
+    }
+
+    /**
+     * What a path selected, and what {@link #restricted} needs: whether a list segment met a container, whether a
+     * non-null item was lost on the way, and why an item lacks what the path goes on to (null when none does).
+     */
+    private record Selection(List<Object> nodes, boolean there, boolean lost, String lacking) {
     }
 
     private Selection selection(Object current, Object root) {
@@ -102,7 +127,8 @@ final class JsonPath {
         if (m == null || m.root().get() != root) {
             try {
                 Selection s = evaluate(root);
-                m = new Memo(new WeakReference<>(root), new Selection(Collections.unmodifiableList(s.nodes()), s.lastInputPresent()), null);
+                m = new Memo(new WeakReference<>(root), new Selection(Collections.unmodifiableList(s.nodes()), s.there(), s.lost(),
+                        s.lacking()), null);
             } catch (IllegalArgumentException e) {
                 m = new Memo(new WeakReference<>(root), null, e.getMessage());
             }
@@ -127,11 +153,13 @@ final class JsonPath {
     private Selection evaluate(Object start) {
         List<Object> nodes = new ArrayList<>(1);
         nodes.add(start);
-        boolean lastInputPresent = false;
-        for (int i = 0; i < segments.size(); i++) {
-            Segment s = segments.get(i);
+        boolean afterList = false;
+        boolean there = false;
+        boolean lost = false;
+        String lacking = null;
+        for (Segment s : segments) {
+            boolean list = s instanceof Wildcard || s instanceof Filter;
             List<Object> next = new ArrayList<>();
-            boolean input = false;
             for (Object n : nodes) {
                 if (n == null) {
                     continue;
@@ -139,16 +167,36 @@ final class JsonPath {
                 if (!s.accepts(n)) {
                     throw new IllegalArgumentException("the path " + text + " finds " + kind(n) + " where " + s.needs());
                 }
-                input = true;
-                s.apply(n, next);
+                int before = next.size();
+                if (s instanceof Filter f) {
+                    List<Object> children = new ArrayList<>();
+                    children(n, children);
+                    for (Object c : children) {
+                        if (f.condition().test(c)) {
+                            next.add(c);
+                        } else if (c != null) {
+                            lost = true;
+                        }
+                    }
+                } else {
+                    s.apply(n, next);
+                }
+                if (list) {
+                    there = true;
+                } else if (afterList && next.size() == before) {
+                    lacking = lacking != null ? lacking : "the path " + text + " finds an item without " + s.written()
+                            + "; a list that restricts is not read past an item it cannot read";
+                } else if (afterList && next.getLast() == null) {
+                    lost = true;
+                }
             }
-            lastInputPresent = i == segments.size() - 1 && input;
+            afterList |= list;
             nodes = next;
             if (nodes.isEmpty()) {
                 break;
             }
         }
-        return new Selection(nodes, lastInputPresent);
+        return new Selection(nodes, there, lost, lacking);
     }
 
     /** What a node of a document is, in words, for a message. */
@@ -170,6 +218,9 @@ final class JsonPath {
 
         /** What the segment needs, for a message. */
         String needs();
+
+        /** The segment as it is written in a path, for a message. */
+        String written();
     }
 
     private record Member(String name) implements Segment {
@@ -188,6 +239,11 @@ final class JsonPath {
         @Override
         public String needs() {
             return "." + name + " needs an object";
+        }
+
+        @Override
+        public String written() {
+            return name.matches("[A-Za-z_][A-Za-z0-9_]*") ? "." + name : "['" + name.replace("\\", "\\\\").replace("'", "\\'") + "']";
         }
     }
 
@@ -211,6 +267,11 @@ final class JsonPath {
         public String needs() {
             return "[" + index + "] needs a list";
         }
+
+        @Override
+        public String written() {
+            return "[" + index + "]";
+        }
     }
 
     private record Wildcard() implements Segment {
@@ -228,6 +289,11 @@ final class JsonPath {
         public String needs() {
             return "[*] needs a list or an object";
         }
+
+        @Override
+        public String written() {
+            return "[*]";
+        }
     }
 
     private record Filter(Condition condition) implements Segment {
@@ -239,6 +305,11 @@ final class JsonPath {
         @Override
         public String needs() {
             return "a filter needs a list or an object";
+        }
+
+        @Override
+        public String written() {
+            return "a filter";
         }
 
         @Override

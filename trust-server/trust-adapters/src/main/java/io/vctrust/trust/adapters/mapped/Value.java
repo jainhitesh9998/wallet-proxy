@@ -60,17 +60,28 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
     List<Object> constants();
 
     /**
-     * Whether this form reads a list (or an object) through {@code [*]} or a filter, and that list is there, whatever
-     * it holds: a restricting list that is there and yields nothing says "none", not "not stated".
+     * What this form yields for a member that restricts (an anchor's doctypes), read as {@link JsonPath#restricted}
+     * reads its path: past a list, an item that lacks what the path goes on to cannot be read; and a value that its
+     * translation does not know (without a default) cannot be read either. Dropped, it would narrow the list or empty
+     * it, and an emptied list may read as "none stated".
+     *
+     * @throws IllegalArgumentException as {@link #all}, and for those two
      */
-    default boolean listPresent(Object current, Object root) {
-        return false;
+    default Restricting restricting(Object current, Object root) {
+        return new Restricting(all(current, root), false, false);
     }
 
     /**
-     * Whether the operator said that a list this form reads, when it is there and yields nothing, is absent rather than
-     * a restriction to nothing ({@code {path: P, allowEmpty: true}}): for an upstream that writes an empty list where it
-     * means "none registered".
+     * What a form of a restricting member yields, and what tells a list that is there and empty from one that is not
+     * there ({@link JsonPath.Restricted}).
+     */
+    record Restricting(List<Object> values, boolean there, boolean lost) {
+    }
+
+    /**
+     * Whether the operator said that a list this form reads, when it is there and has no item at all, is absent rather
+     * than a restriction to nothing ({@code {path: P, allowEmpty: true}}): for an upstream that writes an empty list
+     * where it means "none registered".
      */
     default boolean allowEmpty() {
         return false;
@@ -160,8 +171,8 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
                     throw new IllegalArgumentException("path must be a path ($... or ^...)");
                 }
                 JsonPath at = JsonPath.parse(p);
-                if (says && !at.endsInList()) {
-                    throw new IllegalArgumentException("allowEmpty applies to a list: " + p + " does not end in [*] or a filter");
+                if (says && !at.readsList()) {
+                    throw new IllegalArgumentException("allowEmpty applies to a list: " + p + " has no [*] or filter");
                 }
                 if (!translated) {
                     return new At(at, allowEmpty);
@@ -312,8 +323,9 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         }
 
         @Override
-        public boolean listPresent(Object current, Object root) {
-            return path.containerPresent(current, root);
+        public Restricting restricting(Object current, Object root) {
+            JsonPath.Restricted r = path.restricted(current, root);
+            return new Restricting(present(r.nodes()), r.there(), r.lost());
         }
     }
 
@@ -388,9 +400,28 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             return out;
         }
 
+        /**
+         * Every value at the path, translated; a value the table does not know, without a default, cannot be read:
+         * left out, it would narrow the list, or empty it ({@code ["photo-id"]} under a table that knows only the
+         * mDL), and an emptied list may read as "none stated". With no value at the path, the default, as anywhere.
+         */
         @Override
-        public boolean listPresent(Object current, Object root) {
-            return path.containerPresent(current, root);
+        public Restricting restricting(Object current, Object root) {
+            JsonPath.Restricted r = path.restricted(current, root);
+            List<Object> found = present(r.nodes());
+            if (found.isEmpty()) {
+                return new Restricting(fallback == null ? List.of() : List.of(fallback), r.there(), r.lost());
+            }
+            List<Object> out = new ArrayList<>(found.size());
+            for (Object v : found) {
+                Object translated = translate(v);
+                if (translated == null) {
+                    throw new IllegalArgumentException("the path " + path.text() + " finds " + Mapping.quote(v) + ", which its translation "
+                            + "does not know, and it has no default: a list that restricts is not narrowed by what cannot be read");
+                }
+                out.add(translated);
+            }
+            return new Restricting(out, r.there(), r.lost());
         }
     }
 

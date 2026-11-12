@@ -129,15 +129,22 @@ class MappedSourceFixturesTest {
                 ]}""".formatted(der("iaca"), der("rp-ca"), der("ds"), der("ds-revoked"), der("ds-nl"));
     }
 
+    // The CSCAs and the other CAs are two blocks: the doctypes of a CSCA restrict it, and a restricting list cannot be
+    // read through a translation that leaves the other types out (third round, item 6: an untranslated value in a
+    // restricting list makes the record unreadable, where it used to leave the RPCA without doctypes).
     static final String DCC_MAPPING = """
-            # Anchors: the CAs, each in the trust domain its type says.
+            # Anchors: the CAs, each in the trust domain its type says; the CSCAs constrained to the mDL.
             anchors:
-              - each: $.certificates[?@.certificateType != 'DSC']
+              - each: $.certificates[?@.certificateType == 'CSCA']
                 id: { template: "dcc:{$.kid}" }
-                domain: { path: $.certificateType, values: { CSCA: mdoc-iaca, RPCA: verifier-access } }
+                domain: { path: $.certificateType, values: { CSCA: mdoc-iaca } }
                 certificate: $.rawData
-                entity: { path: $.certificateType, values: { CSCA: "dcc:issuers" } }
-                docTypes: { path: $.certificateType, values: { CSCA: org.iso.18013.5.1.mDL } }
+                entity: dcc:issuers
+                docTypes: [org.iso.18013.5.1.mDL]
+              - each: $.certificates[?@.certificateType != 'DSC' && @.certificateType != 'CSCA']
+                id: { template: "dcc:{$.kid}" }
+                domain: { path: $.certificateType, values: { RPCA: verifier-access } }
+                certificate: $.rawData
             # Entities: one per country, holding that country's document signers.
             entities:
               - each: $.certificates[?@.certificateType == 'DSC']

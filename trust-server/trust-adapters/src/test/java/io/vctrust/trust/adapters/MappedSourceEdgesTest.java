@@ -349,4 +349,198 @@ class MappedSourceEdgesTest {
         assertThat(source(ctx, MappedSourceValidationTest.signedPages(k1, Map.of("next", "$.next", "number", "$.page", "count", "$.pages")))
                 .load().warnings()).isEmpty();
     }
+
+    // 5: a restricting list that is empty or renamed, when the path goes on after it --------------------------------------
+
+    static final String PID = MappedSourceValidationTest.PID;
+
+    /** A JSON value written as text. */
+    static Object parse(String json) {
+        return Json.parseObject("{\"v\": " + json + "}").get("v");
+    }
+
+    /**
+     * {@link #withRoles} with the issuer "dmv" bound by nothing but the shared IACA, whose record holds
+     * {@code authority}: only the anchor's doctypes keep the IACA from signing any doctype.
+     */
+    static Map<String, Object> sharedIaca(Map<String, Object> authority) {
+        Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates", null));
+        Map<String, Object> iaca = new LinkedHashMap<>(Map.of("kid", "shared-iaca", "certificate", der("iaca")));
+        iaca.putAll(authority);
+        d.put("authorities", List.of(iaca, Map.of("kid", "rp-ca", "certificate", der("rp-ca"))));
+        return d;
+    }
+
+    static Map<String, Object> withDocTypes(Object docTypes) {
+        Map<String, Object> m = boundMapping();
+        Map<String, Object> anchors = new LinkedHashMap<>(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca",
+                "certificate", "$.certificate", "docTypes", docTypes));
+        m.put("anchors", List.of(anchors));
+        return m;
+    }
+
+    @Test
+    void item5_aDocTypesListThatIsThereAndEmptyOrRenamedWhereThePathGoesOnLeavesNoIacaOpen() {
+        Map<String, Object> m = withDocTypes("$.doctypes[*].id");
+        Map<String, String> cases = new LinkedHashMap<>();
+        cases.put("[]", "docTypes: $.doctypes[*].id finds a list or an object that holds no value");
+        cases.put("[{}]", "docTypes: the path $.doctypes[*].id finds an item without .id");
+        cases.put("[{\"code\": \"" + MDL + "\"}]", "docTypes: the path $.doctypes[*].id finds an item without .id");
+        cases.forEach((doctypes, warning) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, sharedIaca(Map.of("doctypes", parse(doctypes))));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+                assertThat(decide(registry, PID)).as(doctypes).isNotEqualTo(Decision.TRUSTED);
+                assertThat(registry.snapshot().allAnchors()).as(doctypes).extracting(a -> a.id()).containsExactly("rp-ca");
+                assertThat(state(manager, "partner").warnings()).as(doctypes).singleElement().asString()
+                        .startsWith("mapping.anchors[0]: record 1 (id 'shared-iaca') is skipped: " + warning);
+            }
+        });
+        // Not there: absent. And what is there is read.
+        for (Object doctypes : java.util.Arrays.asList(null, List.of(Map.of("id", MDL)))) {
+            TestContext ctx = ctx();
+            serveJson(ctx, sharedIaca(doctypes == null ? Map.of() : Map.of("doctypes", doctypes)));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+                assertThat(state(manager, "partner").warnings()).isEmpty();
+                assertThat(decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
+                assertThat(decide(registry, PID)).isEqualTo(doctypes == null ? Decision.TRUSTED : Decision.NOT_TRUSTED);
+            }
+        }
+    }
+
+    static Map<String, Object> withTypes(Map<String, Object> item) {
+        Map<String, Object> m = boundMapping();
+        block(m).put("roles", List.of("CREDENTIAL_ISSUER"));
+        block(m).put("authorizations", List.of(item));
+        return m;
+    }
+
+    @Test
+    void item5_anAuthorizationsListThatIsThereAndEmptyOrRenamedWhereThePathGoesOnLeavesNoIssuerOpen() {
+        // each: $.credentials[*].types[*]: the issuer's credentials, each with the types it may issue.
+        Map<String, Object> types = withTypes(Map.of("each", "$.credentials[*].types[*]", "format", "mso_mdoc", "type", "$"));
+        Map<String, String> cases = new LinkedHashMap<>();
+        cases.put("[]", "authorizations: $.credentials[*].types[*] finds a list or an object that holds no value");
+        cases.put("[{\"format\": \"mso_mdoc\"}]", "authorizations: the path $.credentials[*].types[*] finds an item without .types");
+        cases.put("[{\"types\": [\"" + MDL + "\"]}, {\"vct\": \"x\"}]", "authorizations: the path $.credentials[*].types[*] finds an item "
+                + "without .types");
+        cases.forEach((credentials, warning) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, withRoles(1, members("credentials", parse(credentials))));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", types)))) {
+                assertThat(decide(registry, PID)).as(credentials).isEqualTo(Decision.NOT_TRUSTED);
+                assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).as(credentials).isEqualTo(EntityStatus.SUSPENDED);
+                assertThat(state(manager, "partner").warnings()).as(credentials).singleElement().asString().contains(warning);
+            }
+        });
+        // Read as the document states it: authorized for the mDL only.
+        TestContext ctx = ctx();
+        serveJson(ctx, withRoles(1, members("credentials", List.of(Map.of("types", List.of(MDL))))));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", types)))) {
+            assertThat(state(manager, "partner").warnings()).isEmpty();
+            assertThat(decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
+            assertThat(decide(registry, PID)).isEqualTo(Decision.NOT_TRUSTED);
+        }
+        // With allowEmpty, a list with no item at all, wherever it is in the path, is "none stated"; an item that lacks
+        // what the path goes on to is not.
+        Map<String, Object> allowed = withTypes(Map.of("each", "$.credentials[*].types[*]", "allowEmpty", true, "format", "mso_mdoc",
+                "type", "$"));
+        for (String credentials : List.of("[]", "[{\"types\": []}]", "[{\"format\": \"mso_mdoc\"}]")) {
+            ctx = ctx();
+            serveJson(ctx, withRoles(1, members("credentials", parse(credentials))));
+            registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", allowed)))) {
+                boolean lacking = credentials.contains("format");
+                assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).as(credentials)
+                        .isEqualTo(lacking ? EntityStatus.SUSPENDED : EntityStatus.ACTIVE);
+                assertThat(decide(registry, PID)).as(credentials).isEqualTo(lacking ? Decision.NOT_TRUSTED : Decision.TRUSTED);
+            }
+        }
+    }
+
+    // 6: allowEmpty hides a restriction ------------------------------------------------------------------------------
+
+    @Test
+    void item6_aValueTheTranslationDoesNotKnowInARestrictingListMakesTheRecordUnreadableWithOrWithoutAllowEmpty() {
+        Map<String, Object> table = Map.of("mdl", MDL);
+        for (Map<String, Object> docTypes : List.<Map<String, Object>>of(Map.of("path", "$.doctypes[*]", "values", table, "allowEmpty", true),
+                Map.of("path", "$.doctypes[*]", "values", table))) {
+            for (List<String> doctypes : List.of(List.of("photo-id"), List.of("mdl", "photo-id"))) {
+                TestContext ctx = ctx();
+                serveJson(ctx, sharedIaca(Map.of("doctypes", doctypes)));
+                TrustRegistry registry = new TrustRegistry();
+                try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", withDocTypes(docTypes))))) {
+                    String what = docTypes.keySet() + " " + doctypes;
+                    assertThat(decide(registry, PID)).as(what).isNotEqualTo(Decision.TRUSTED);
+                    assertThat(registry.snapshot().allAnchors()).as(what).extracting(a -> a.id()).containsExactly("rp-ca");
+                    assertThat(state(manager, "partner").warnings()).as(what).singleElement().asString().contains("is skipped: docTypes: "
+                            + "the path $.doctypes[*] finds 'photo-id', which its translation does not know, and it has no default");
+                }
+            }
+        }
+        // With a default, the default stands for it; values it knows are read.
+        TestContext ctx = ctx();
+        serveJson(ctx, sharedIaca(Map.of("doctypes", List.of("mdl"))));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", withDocTypes(Map.of("path", "$.doctypes[*]",
+                "values", table, "allowEmpty", true)))))) {
+            assertThat(decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
+            assertThat(decide(registry, PID)).isEqualTo(Decision.NOT_TRUSTED);
+        }
+    }
+
+    @Test
+    void item6_aListEmptiedByAFilterIsNotEmptyAndAllowEmptyDoesNotStandForIt() {
+        // each: $.credentials[?@.active == true] with allowEmpty, and the only authorization inactive: unconstrained.
+        Map<String, Object> m = withTypes(Map.of("each", "$.credentials[?@.active == true]", "allowEmpty", true, "format", "$.format",
+                "type", "$.type"));
+        TestContext ctx = ctx();
+        serveJson(ctx, withRoles(1, members("credentials", List.of(Map.of("format", "mso_mdoc", "type", MDL, "active", false)))));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            assertThat(decide(registry, PID)).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(decide(registry, MDL)).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).isEqualTo(EntityStatus.SUSPENDED);
+            assertThat(state(manager, "partner").warnings()).singleElement().asString().contains("authorizations: $.credentials[?@.active "
+                    + "== true] finds a list but nothing it holds: a filter leaves its items out");
+        }
+        // The same for an anchor's doctypes.
+        serveJson(ctx, sharedIaca(Map.of("doctypes", List.of(Map.of("id", MDL, "withdrawn", true)))));
+        registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", withDocTypes(Map.of("path",
+                "$.doctypes[?@.withdrawn != true].id", "allowEmpty", true)))))) {
+            assertThat(decide(registry, PID)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(registry.snapshot().allAnchors()).extracting(a -> a.id()).containsExactly("rp-ca");
+        }
+    }
+
+    @Test
+    void item6_allowEmptyWhereItChangesNothingIsAConfigurationError() {
+        Map<String, Object> m = boundMapping();
+        Map<String, Map.Entry<String, Object>> places = new LinkedHashMap<>();
+        places.put("mapping.entities[0].certificates", Map.entry("certificates", Map.of("path", "$.certificates[*]", "allowEmpty", true)));
+        places.put("mapping.entities[0].contexts[0]", Map.entry("contexts", List.of(Map.of("path", "$.contexts[*]", "allowEmpty", true))));
+        places.put("mapping.entities[0].contexts[0]: ", Map.entry("contexts", List.of(Map.of("each", "$.contexts[*]", "allowEmpty", true,
+                "url", "$.url"))));
+        places.put("mapping.entities[0].identifiers[0]", Map.entry("identifiers", List.of(Map.of("each", "$.dids[*]", "allowEmpty", true,
+                "type", "DID", "value", "$"))));
+        places.put("mapping.entities[0].display[0]", Map.entry("display", List.of(Map.of("each", "$.display[*]", "allowEmpty", true,
+                "name", "$.name"))));
+        places.forEach((where, member) -> {
+            Map<String, Object> mapping = boundMapping();
+            block(mapping).put(member.getKey(), member.getValue());
+            TestContext ctx = ctx();
+            assertThat(loadError(source(ctx, props("mapping", mapping)))).as(where).contains(where).contains("allowEmpty applies to a list "
+                    + "that restricts (authorizations, docTypes)").contains("here it would change nothing");
+            assertThat(ctx.http.requests).isEmpty();
+        });
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "crlUrls", Map.of("path", "$.crl_urls[*]", "allowEmpty", true))));
+        assertThat(loadError(source(ctx(), props("mapping", m)))).contains("mapping.anchors[0].crlUrls: allowEmpty applies to a list that "
+                + "restricts");
+    }
 }
