@@ -408,12 +408,13 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 warnings.add("The list's signature is not verified (allowUnverified)");
             }
             Mapping.Pages paging = config.mapping().pages;
-            if (config.jws() && paging != null && paging.number() == null && paging.count() == null) {
+            if (config.jws() && paging != null && (paging.number() == null || paging.count() == null)) {
                 // Each page is signed on its own: a page served at another's address, or a next link that ends early,
-                // is a signed page all the same. Only the pages' numbers or their count would show one missing.
-                log.warn("Trust source '{}' (mapped): the list's pages say neither their number nor their count; whoever serves "
-                        + "them can leave one out", def.id());
-                warnings.add("The list comes in pages that are signed one by one and say neither their number nor their count "
+                // is a signed page all the same. The numbers alone do not show a list ended early, and the count alone
+                // does not show one page served twice in place of another: only both together tie the pages.
+                log.warn("Trust source '{}' (mapped): the list's pages do not say both their number and their count; whoever "
+                        + "serves them can leave one out", def.id());
+                warnings.add("The list comes in pages that are signed one by one and do not say both their number and their count "
                         + "(mapping.pages.number, mapping.pages.count): whoever serves them can leave one out");
             }
             Numbering numbering = new Numbering();
@@ -437,6 +438,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         first = mapped(page.root());
                         facts = facts(first, page.root(), now, warnings);
                         if (page.uri() != null) {
+                            // The address asked and the one the page was finally read from, after redirects: a later
+                            // page read from either is this one again, served in place of another.
+                            visited.add(URI.create(config.location()).toString());
                             visited.add(page.uri().toString());
                         }
                     }
@@ -482,6 +486,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     inTime(now);
                     page = fetch(next, now, warnings);
                     inTime(now);
+                    if (!page.uri().toString().equals(next.toString()) && !visited.add(page.uri().toString())) {
+                        throw new TrustSourceException("Page " + (pages + 1) + " of the list was read from an address already read, "
+                                + "after a redirect: a page served again in place of another");
+                    }
                     samePage(first, page.root(), pages + 1);
                 }
             } catch (IOException e) {
@@ -659,17 +667,18 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
         }
 
-        /** What the first page says about the pages: its own number (0 or 1) and the count, as far as they are mapped. */
+        /** What the first page says about the pages: the count, when it is mapped. */
         private static final class Numbering {
-            Long base;
             Long count;
         }
 
         /**
          * Page {@code k} says what the mapping reads from it about the pages: with {@code pages.number}, its own number
-         * (the first page 0 or 1, every later one the next); with {@code pages.count}, the count the first page says.
-         * Each page of a signed list is signed on its own, so only this ties a page to its place: page 3 served at
-         * page 2's address, with page 2 left out, would otherwise pass.
+         * (the first page {@code pages.first}, every later one the next); with {@code pages.count}, the count the first
+         * page says. Each page of a signed list is signed on its own, so only this ties a page to its place: page 3
+         * served at page 2's address, with page 2 left out, would otherwise pass. Which number the first page has is
+         * the configuration's to say: a list that counts from 0 would otherwise begin at its page 1, whichever page
+         * is served first.
          */
         private void numbered(Object root, int k, Numbering n) throws TrustSourceException {
             Mapping.Pages p = config.mapping().pages;
@@ -678,13 +687,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             if (p.number() != null) {
                 long said = pageFact(p.number(), "number", root, k);
-                if (k == 1) {
-                    if (said != 0 && said != 1) {
-                        throw new TrustSourceException("Page 1 of the list says it is page " + said + "; a first page is 0 or 1");
-                    }
-                    n.base = said;
-                } else if (said != n.base + k - 1) {
-                    throw new TrustSourceException("Page " + k + " of the list says it is page " + said + ", not " + (n.base + k - 1));
+                long expected = p.first() + k - 1L;
+                if (said != expected) {
+                    throw new TrustSourceException("Page " + k + " of the list says it is page " + said + ", not " + expected
+                            + (k == 1 ? " (mapping.pages.first)" : ""));
                 }
             }
             if (p.count() != null) {

@@ -227,4 +227,126 @@ class MappedSourceEdgesTest {
                 .contains("The list's records yield more than 5000 characters and nodes of mapped text (limits.text)");
         assertThat(source(ctx, props("mapping", m, "limits", Map.of("text", 10_000))).load().entities()).hasSize(50);
     }
+
+    // 4: pages ---------------------------------------------------------------------------------------------------
+
+    static final String LOCATION = MappedSourceRulesTest.LOCATION;
+    static final String PAGE_2 = MappedSourceValidationTest.PAGE_2;
+    static final String PAGE_3 = MappedSourceValidationTest.PAGE_3;
+
+    /** A list of three pages numbered from {@code first}; its first page revokes "b". */
+    static Map<String, Object> page(int k, int first) {
+        Map<String, Object> d = MappedSourceValidationTest.page(k == 1 ? 2 : k == 2 ? 1 : 3, k - 1 + first, 3);
+        d.put("next", k == 1 ? PAGE_2 : PAGE_3);
+        if (k == 3) {
+            d.remove("next");
+        }
+        return d;
+    }
+
+    static io.vctrust.trust.core.evaluation.Decision decideAbout(TrustRegistry registry, String identifier) {
+        return MappedSourceFixturesTest.decide(registry, MappedSourceFixturesTest.issuer(identifier, List.of(), null, null)).decision();
+    }
+
+    @Test
+    void item4_theFirstPageSaysExactlyTheNumberPagesFirstNames() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        MappedSourceValidationTest.serve(ctx, k1, LOCATION, page(1, 0));
+        MappedSourceValidationTest.serve(ctx, k1, PAGE_2, page(2, 0));
+        MappedSourceValidationTest.serve(ctx, k1, PAGE_3, page(3, 0));
+        // A list that counts from 0 says so: page 0 first. Without first: 0, its first page is not one.
+        Map<String, Object> fromZero = MappedSourceValidationTest.signedPages(k1, Map.of("next", "$.next", "number", "$.page", "first", 0));
+        Map<String, Object> fromOne = MappedSourceValidationTest.signedPages(k1, Map.of("next", "$.next", "number", "$.page"));
+        assertThat(loadError(source(ctx, fromOne))).contains("Page 1 of the list says it is page 0, not 1 (mapping.pages.first)");
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, fromZero))) {
+            assertThat(registry.snapshot().entities()).extracting(e -> e.id() + " " + e.status())
+                    .containsExactly("partner:b REVOKED", "partner:a ACTIVE", "partner:c ACTIVE");
+            assertThat(decideAbout(registry, "https://b.example")).isEqualTo(Decision.NOT_TRUSTED);
+            // The page that says 1, served at location as the first: page 0, which revokes "b", would be left out.
+            MappedSourceValidationTest.serve(ctx, k1, LOCATION, page(2, 0));
+            assertThat(manager.refresh("partner").lastError()).contains("Page 1 of the list says it is page 1, not 0 (mapping.pages.first)");
+            assertThat(decideAbout(registry, "https://b.example")).isEqualTo(Decision.NOT_TRUSTED);
+        }
+        // Only 0 or 1, and only with a page number to compare it with.
+        assertThat(loadError(source(ctx, MappedSourceValidationTest.signedPages(k1, Map.of("next", "$.next", "number", "$.page", "first", 2)))))
+                .contains("mapping.pages.first must be 0 or 1");
+        assertThat(loadError(source(ctx, MappedSourceValidationTest.signedPages(k1, Map.of("next", "$.next", "count", "$.pages", "first", 0)))))
+                .contains("mapping.pages.first applies with mapping.pages.number");
+    }
+
+    /** {@code ctx}'s responses, as if each URL of {@code redirects} had been redirected to the other address given. */
+    static io.vctrust.trust.core.spi.SourceContext redirecting(TestContext ctx, Map<String, String> redirects) {
+        return new io.vctrust.trust.core.spi.SourceContext() {
+            @Override
+            public io.vctrust.trust.core.spi.HttpFetcher http() {
+                return request -> {
+                    String to = redirects.get(request.uri().toString());
+                    if (to == null) {
+                        return ctx.http.execute(request);
+                    }
+                    var r = ctx.http.execute(new io.vctrust.trust.core.spi.HttpFetcher.Request("GET", java.net.URI.create(to),
+                            request.headers(), null, null));
+                    return new io.vctrust.trust.core.spi.HttpFetcher.Response(r.status(), r.headers(), r.body(), java.net.URI.create(to));
+                };
+            }
+
+            @Override
+            public io.vctrust.trust.core.spi.ResourceLoader resources() {
+                return ctx.resources();
+            }
+
+            @Override
+            public java.time.Clock clock() {
+                return ctx.clock();
+            }
+        };
+    }
+
+    @Test
+    void item4_theAddressAPageWasFinallyReadFromCountsAsRead() throws Exception {
+        // Pages with relative next links ("page2"), counted. Location is redirected to ".../issuers/", whose page 2 is
+        // ".../issuers/page2"; that one is redirected back to location, which serves page 1 again, whose "page2" now
+        // resolves to ".../v1/page2": page 3 is served there, and the three pages read are the count. Page 2 is gone.
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        String slash = LOCATION + "/";
+        Map<String, Object> first = MappedSourceValidationTest.page(1, null, 3);
+        first.put("next", "page2");
+        Map<String, Object> third = MappedSourceValidationTest.page(3, null, 3);
+        MappedSourceValidationTest.serve(ctx, k1, slash, first);
+        MappedSourceValidationTest.serve(ctx, k1, "https://registry.partner.example/v1/page2", third);
+        MappedSourceValidationTest.serve(ctx, k1, LOCATION, first);
+        Map<String, Object> counted = MappedSourceValidationTest.signedPages(k1, Map.of("next", "$.next", "count", "$.pages"));
+        java.util.function.Function<Map<String, String>, io.vctrust.trust.core.spi.TrustSource> create = redirects ->
+                new io.vctrust.trust.adapters.mapped.MappedSourceFactory().create(new io.vctrust.trust.core.spi.SourceDefinition("partner",
+                        "mapped", "partner", null, true, counted), redirecting(ctx, redirects));
+        assertThat(loadError(create.apply(Map.of(LOCATION, slash, slash + "page2", LOCATION))))
+                .contains("Page 2 of the list was read from an address already read");
+        // Served as it should be, the redirect of location is no reason to refuse it.
+        Map<String, Object> second = MappedSourceValidationTest.page(2, null, 3);
+        second.put("next", "https://registry.partner.example/v1/page2");
+        MappedSourceValidationTest.serve(ctx, k1, slash + "page2", second);
+        assertThat(create.apply(Map.of(LOCATION, slash)).load().entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:a ACTIVE", "partner:b REVOKED", "partner:c ACTIVE");
+    }
+
+    @Test
+    void item4_signedPagesWarnUnlessTheySayBothTheirNumberAndTheirCount() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        MappedSourceValidationTest.serve(ctx, k1, LOCATION, MappedSourceValidationTest.page(1, 1, 3));
+        MappedSourceValidationTest.serve(ctx, k1, PAGE_2, MappedSourceValidationTest.page(2, 2, 3));
+        MappedSourceValidationTest.serve(ctx, k1, PAGE_3, MappedSourceValidationTest.page(3, 3, 3));
+        String warning = "The list comes in pages that are signed one by one and do not say both their number and their count "
+                + "(mapping.pages.number, mapping.pages.count): whoever serves them can leave one out";
+        for (Map<String, Object> pages : List.<Map<String, Object>>of(Map.of("next", "$.next"), Map.of("next", "$.next", "number", "$.page"),
+                Map.of("next", "$.next", "count", "$.pages"))) {
+            assertThat(source(ctx, MappedSourceValidationTest.signedPages(k1, pages)).load().warnings()).as(pages.toString())
+                    .containsExactly(warning);
+        }
+        assertThat(source(ctx, MappedSourceValidationTest.signedPages(k1, Map.of("next", "$.next", "number", "$.page", "count", "$.pages")))
+                .load().warnings()).isEmpty();
+    }
 }

@@ -36,9 +36,10 @@ final class Mapping {
      * How the pages of a list link, and what they say about themselves.
      *
      * @param number where a page says its own number (null when not mapped)
+     * @param first  the number the first page says (0 or 1): which one is the first is not the first page's to say
      * @param count  where a page says how many pages the list has (null when not mapped)
      */
-    record Pages(Value next, int max, Value number, Value count) {
+    record Pages(Value next, int max, Value number, int first, Value count) {
     }
 
     /**
@@ -194,13 +195,25 @@ final class Mapping {
         }
         Pages pages = null;
         if (m.containsKey("pages")) {
-            Map<String, Object> p = members(m.get("pages"), "mapping.pages", Set.of("next", "max", "number", "count"));
+            Map<String, Object> p = members(m.get("pages"), "mapping.pages", Set.of("next", "max", "number", "first", "count"));
             if (!p.containsKey("next")) {
                 throw new IllegalArgumentException("mapping.pages: next is required");
             }
+            int first = 1;
+            if (p.containsKey("first")) {
+                if (!p.containsKey("number")) {
+                    throw new IllegalArgumentException("mapping.pages.first applies with mapping.pages.number: it is the number the first "
+                            + "page says");
+                }
+                Object f = p.get("first");
+                if (!"0".equals(String.valueOf(f).trim()) && !"1".equals(String.valueOf(f).trim())) {
+                    throw new IllegalArgumentException("mapping.pages.first must be 0 or 1");
+                }
+                first = Integer.parseInt(String.valueOf(f).trim());
+            }
             pages = new Pages(Value.parse(p.get("next"), "mapping.pages.next"),
                     p.containsKey("max") ? positive(p.get("max"), "mapping.pages.max") : DEFAULT_MAX_PAGES,
-                    optional(p, "number", "mapping.pages"), optional(p, "count", "mapping.pages"));
+                    optional(p, "number", "mapping.pages"), first, optional(p, "count", "mapping.pages"));
         }
         List<Block> entities = blocks(m.get("entities"), "mapping.entities", true);
         List<Block> anchors = blocks(m.get("anchors"), "mapping.anchors", false);

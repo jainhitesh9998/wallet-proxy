@@ -410,15 +410,17 @@ class MappedSourceValidationTest {
             var r = source(ctx, p).load();
             assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
                     .containsExactly("partner:a ACTIVE", "partner:b REVOKED", "partner:c ACTIVE");
-            assertThat(r.warnings()).isEmpty();
+            // Third round (item 4): only both together tie the pages; either alone loads with the warning.
+            assertThat(r.warnings()).hasSize(p == both ? 0 : 1);
         }
-        // A first page may count from 0.
+        // A first page may count from 0, when the mapping says so (third round: pages.first; the first page said it).
+        Map<String, Object> fromZero = signedPages(k1, Map.of("next", "$.next", "number", "$.page", "first", 0));
         serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, 0, 3));
         serve(ctx, k1, PAGE_2, page(2, 1, 3));
         serve(ctx, k1, PAGE_3, page(3, 2, 3));
-        assertThat(source(ctx, numbered).load().entities()).hasSize(3);
+        assertThat(source(ctx, fromZero).load().entities()).hasSize(3);
         serve(ctx, k1, PAGE_3, page(3, 3, 3));
-        assertThat(MappedSourceRulesTest.loadError(source(ctx, numbered))).contains("Page 3 of the list says it is page 3, not 2");
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, fromZero))).contains("Page 3 of the list says it is page 3, not 2");
     }
 
     @Test
@@ -448,7 +450,7 @@ class MappedSourceValidationTest {
                 .contains("mapping.pages.number: page 1 of the list has no number there");
         serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, 2, null));
         assertThat(MappedSourceRulesTest.loadError(source(ctx, signedPages(k1, Map.of("next", "$.next", "number", "$.page")))))
-                .contains("Page 1 of the list says it is page 2; a first page is 0 or 1");
+                .contains("Page 1 of the list says it is page 2, not 1 (mapping.pages.first)");
     }
 
     @Test
@@ -458,7 +460,7 @@ class MappedSourceValidationTest {
         serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, null, null));
         serve(ctx, k1, PAGE_2, page(3, null, null));   // page 3 in place of page 2: nothing can tell
         TrustSource s = source(ctx, signedPages(k1, Map.of("next", "$.next")));
-        String warning = "The list comes in pages that are signed one by one and say neither their number nor their count "
+        String warning = "The list comes in pages that are signed one by one and do not say both their number and their count "
                 + "(mapping.pages.number, mapping.pages.count): whoever serves them can leave one out";
         for (int i = 0; i < 2; i++) {
             var r = s.load();
