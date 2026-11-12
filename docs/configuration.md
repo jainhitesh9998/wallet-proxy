@@ -602,14 +602,15 @@ instant depends on where it was written). A member cannot be read either when:
   blocks without its armor, which would be bound to nobody, whatever base64 line or characters stand next to it (`A`,
   `subject=/C=UT/CN=DS`, a second certificate in the same stream, which is read too). Each line is tried once, as the
   start of a certificate as long as its first bytes state; base64 lines written so that trying them would read more
-  than four times their length, or call the certificate parser in vain more than 1,024 times (lines of `MAA`, each a
-  SEQUENCE of two bytes), cannot be read either: they would cost seconds for one value. A certificate whose base64
-  starts partway through a line, or is broken by a line of other text, is not found: write every certificate of a PEM
-  text in a block of its own. Any other line outside the blocks is text that explains them, as tools write it
-  (`subject=` and `issuer=` lines, `Bag Attributes`, a byte-order mark, a word, a label such as `MASTER` that decodes
-  to `0x30`, a hash or a serial number), and is passed over. Any other text is a base64 value, and must be exactly one
-  certificate (not two one after the other). The certificate it was would otherwise be read as the first, or passed
-  over, and bound to nobody;
+  than four times the length of the value, or call the certificate parser in vain more than 1,024 times (lines of
+  `MAA`, each a SEQUENCE of two bytes), cannot be read either: they would cost seconds for one value. A label before
+  each certificate of a bundle costs one such call at most, so a bundle of up to 1,024 labelled certificates is read.
+  A certificate whose base64 starts partway through a line, or is broken by a line of other text, is not found: write
+  every certificate of a PEM text in a block of its own. Any other line outside the blocks is text that explains them,
+  as tools write it (`subject=` and `issuer=` lines, `Bag Attributes`, a byte-order mark, a word, a label such as
+  `MASTER` that decodes to `0x30`, a hash or a serial number), and is passed over. Any other text is a base64 value,
+  and must be exactly one certificate (not two one after the other). The certificate it was would otherwise be read as
+  the first, or passed over, and bound to nobody;
 - a path of it selects more than 1000 nodes for the record (`null`s and values no translation knows count too), or it
   yields more than 1000 values (all the forms of the member, and the items of a nested `each`, together);
 - one of its values is longer than 8,192 characters, or it would take the record beyond 65,536 characters of mapped
