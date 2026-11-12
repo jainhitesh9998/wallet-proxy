@@ -258,6 +258,8 @@ public class TrustCoreConfiguration {
      * Per client, signed metadata counts only when its signer validates as X509Controller would validate it for that client.
      * The checker is the evaluator's, also with revocation switched off: it then gives the signer an unknown status, which
      * a client that requires a known one refuses, as its devices (which always check) refuse it.
+     * It consults the CRLs of the frameworks the asking client sees, as the evaluator does and as that client's snapshot
+     * carries them: what another framework says about the same CA does not enter.
      */
     @Bean
     MetadataService metadataService(IssuerMetadataResolver resolver, TrustRegistry registry, TrustEvaluator evaluator,
@@ -267,7 +269,7 @@ public class TrustCoreConfiguration {
                     .filter(a -> client.accepts(a.frameworkId())).toList();
             PathValidationResult r = validator.validate(chain, anchors, new X509PathValidator.Options(clock.instant(),
                     CertificateProfiles.forDomain(TrustDomain.CREDENTIAL_ISSUER), null, null)
-                    .withRevocation(revocation, client.requireRevocationStatus()));
+                    .withRevocation(revocation.forFrameworks(client::accepts), client.requireRevocationStatus()));
             return r.valid() ? null : r.issues().stream().filter(ValidationIssue::isError).map(ValidationIssue::message)
                     .reduce((x, y) -> x + "; " + y).orElse("no trusted anchor");
         };
