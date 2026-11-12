@@ -121,13 +121,21 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         return Map.copyOf(table);
     }
 
-    /** A scalar as text: a string as it is, a number as written in the document, a boolean as true or false; else null. */
+    /** Beyond this scale either way, a number is written with an exponent: in plain notation it could be any length. */
+    int MAX_PLAIN_SCALE = 100;
+
+    /**
+     * A scalar as text: a string as it is, a number as written in the document, a boolean as true or false; else null.
+     * The text of a number is never much longer than the number's own digits: {@code 1e999999999} in plain notation
+     * would be a gigabyte. A document cannot hold such a number ({@link StrictJson}); one from anywhere else is written
+     * with its exponent.
+     */
     static String text(Object v) {
         if (v instanceof String s) {
             return s;
         }
         if (v instanceof BigDecimal d) {
-            return d.toPlainString();
+            return Math.abs((long) d.scale()) <= MAX_PLAIN_SCALE ? d.toPlainString() : d.toString();
         }
         if (v instanceof Number || v instanceof Boolean) {
             return v.toString();

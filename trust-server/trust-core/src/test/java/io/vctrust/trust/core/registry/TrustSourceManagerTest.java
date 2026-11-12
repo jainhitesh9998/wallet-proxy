@@ -226,6 +226,51 @@ class TrustSourceManagerTest {
         }
     }
 
+    /** A source whose load throws what the test hands it. */
+    static TrustSource throwing(String id, Throwable thrown) {
+        return new TrustSource() {
+            final SourceDefinition def = new SourceDefinition(id, "test", "fw", null, true, true, Map.of());
+
+            @Override
+            public SourceDefinition definition() {
+                return def;
+            }
+
+            @Override
+            public SourceLoadResult load() {
+                if (thrown instanceof Error e) {
+                    throw e;
+                }
+                throw (RuntimeException) thrown;
+            }
+        };
+    }
+
+    @Test
+    void anErrorInOneSourcesLoadIsThatSourcesFailureNotTheServices() {
+        // A document deep enough to overflow a parser's stack, or an adapter that meets a class it cannot load: the
+        // other sources still load, at the start and on every refresh, and the failing one says why.
+        var deep = throwing("deep", new StackOverflowError());
+        var broken = throwing("broken", new NoClassDefFoundError("io/example/Missing"));
+        var good = new Source("good", true);
+        var registry = new TrustRegistry();
+        try (var manager = new TrustSourceManager(registry, List.of(), List.of(deep, broken, good), Clock.systemUTC())) {
+            manager.start();
+            assertThat(registry.snapshot().entities()).extracting(TrustedEntity::id).containsExactly("good-issuer");
+            assertThat(manager.states()).filteredOn(st -> st.id().equals("deep")).singleElement()
+                    .satisfies(st -> assertThat(st.lastError()).contains("StackOverflowError"));
+            assertThat(manager.states()).filteredOn(st -> st.id().equals("broken")).singleElement()
+                    .satisfies(st -> assertThat(st.lastError()).contains("NoClassDefFoundError").contains("io/example/Missing"));
+            assertThat(manager.refresh("deep").lastError()).contains("StackOverflowError");
+            assertThat(manager.waitingFor()).containsExactly("deep", "broken");
+        }
+        // Out of memory is not survived: after it, nothing in the process can be relied on.
+        try (var manager = new TrustSourceManager(registry, List.of(), List.of(throwing("big", new OutOfMemoryError("test"))),
+                Clock.systemUTC())) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(manager::start).isInstanceOf(OutOfMemoryError.class);
+        }
+    }
+
     @Test
     void anAnchorCountsWithAtMostEightCrlLocations() {
         var many = io.vctrust.trust.core.testing.TestPki.rootCa("CN=Many CRL Locations,C=UT");

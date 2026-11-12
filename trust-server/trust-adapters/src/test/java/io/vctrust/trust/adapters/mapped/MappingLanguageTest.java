@@ -133,6 +133,16 @@ class MappingLanguageTest {
     }
 
     @Test
+    void aNumberIsWrittenAsTextInBoundedSpace() {
+        // In plain notation 1e9999999 is ten million characters; a document cannot hold it (StrictJson), and a number
+        // from anywhere else is not written out either.
+        assertThat(Value.text(new java.math.BigDecimal("1E+9999999"))).hasSizeLessThan(40);
+        assertThat(Value.text(new java.math.BigDecimal("1E-9999999"))).hasSizeLessThan(40);
+        assertThat(Value.text(new java.math.BigDecimal("1E+40"))).isEqualTo("1" + "0".repeat(40));
+        assertThat(Value.text(new java.math.BigDecimal("0.5"))).isEqualTo("0.5");
+    }
+
+    @Test
     void translatedValues() {
         Object a = ((List<?>) ((Map<?, ?>) DOC).get("issuers")).get(0);
         Object b = ((List<?>) ((Map<?, ?>) DOC).get("issuers")).get(1);

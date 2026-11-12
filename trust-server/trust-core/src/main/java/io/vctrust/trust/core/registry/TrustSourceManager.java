@@ -220,9 +220,15 @@ public class TrustSourceManager implements AutoCloseable {
                     null, r.entities().size(), r.anchors().size(), r.listInfo(), escaped(r.warnings()), null));
             log.info("Loaded trust source '{}' ({}): {} entities, {} anchors", s.id(), s.type(),
                     r.entities().size(), r.anchors().size());
-        } catch (Exception e) {
+        } catch (Exception | Error e) {
+            // An error in one source's load (a stack overflow on a hostile document, a class an adapter cannot load)
+            // is that source's failure: it must not stop the start of the service or the refresh of the other
+            // sources. Out of memory, or the JVM itself broken, is not survived: nothing after it can be relied on.
+            if (e instanceof VirtualMachineError fatal && !(e instanceof StackOverflowError)) {
+                throw fatal;
+            }
             // A source's message can quote its list, or whatever answered at the list's location.
-            String error = ForeignText.escape(e.getMessage());
+            String error = ForeignText.escape(e instanceof Exception && e.getMessage() != null ? e.getMessage() : "The load failed: " + e);
             log.warn("Trust source '{}' ({}) failed to load: {}", s.id(), s.type(), error);
             SourceLoadResult last = results.get(s.id());
             states.put(s.id(), new SourceState(s.id(), s.type(), s.definition().frameworkId(), true, start,
