@@ -585,6 +585,11 @@ Changes are written to the audit log (logger `io.vctrust.trust.audit`), as are o
 id is 1 to 128 letters, digits or `. _ : @ ~ -`; it is stored for the framework of the managed source and cannot name
 another one.
 
+While a managed source fails to load because of an entry it cannot read (one stored before a rule existed: see
+[Registry format](#registry-format)), the source keeps what it loaded last. Writes are still accepted and stored, but
+none of them takes effect, a new `REVOKED` entry included, until that entry is replaced or deleted: the source then
+loads again, with everything stored. `GET /admin/v1/sources` shows the source's error, which names the entry.
+
 ### Production checklist
 
 - `trust.service.issuer` is the public https URL; TLS terminates at the service or at a proxy named in the

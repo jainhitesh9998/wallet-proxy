@@ -236,6 +236,34 @@ class ManagedEntryServiceTest {
         assertThat(acmeDecision()).isEqualTo(Decision.TRUSTED);
     }
 
+    /** As the admin API guide says: writes while the source fails are stored, and take effect once the entry is fixed. */
+    @Test
+    void writesWhileTheSourceFailsTakeEffectOnceTheUnreadableEntryIsReplaced() {
+        Map<String, Object> anchor = new LinkedHashMap<>();
+        anchor.put("domain", "credential-issuer");
+        anchor.put("certificate", Certificates.toPem(PARTNER_CA.certificate()));
+        managed.put(OPERATOR, "anchors", "partner-ca", anchor);
+        managed.put(OPERATOR, "entities", "other-party", entity("https://partner.example/other"));
+        assertThat(acmeDecision()).isEqualTo(Decision.TRUSTED);
+        Map<String, Object> broken = entity("https://partner.example/other");
+        broken.put("id", "other-party");
+        broken.put("framework", "partner");
+        broken.put("validUntil", "2030-01-32T00:00:00Z");
+        store.put(ManagedEntityStore.Kind.ENTITY, "other-party", broken);
+        sources.refresh("managed");
+        assertThat(managedState().lastError()).contains("managed entity 'other-party' cannot be read");
+
+        // A withdrawal written now is stored, and does not take effect while the source fails.
+        managed.put(OPERATOR, "entities", "acme", revokedAcme());
+        assertThat(managed.list(OPERATOR, "entities")).extracting(d -> d.get("id")).contains("acme");
+        assertThat(managedState().lastError()).contains("managed entity 'other-party' cannot be read");
+        assertThat(acmeDecision()).isEqualTo(Decision.TRUSTED);
+
+        managed.put(OPERATOR, "entities", "other-party", entity("https://partner.example/other"));
+        assertThat(managedState().lastError()).isNull();
+        assertThat(acmeDecision()).isEqualTo(Decision.NOT_TRUSTED);
+    }
+
     @Test
     void anEntryWithAMemberTheFormatDoesNotHaveIsRefusedAndOneStoredBeforeFailsTheLoad() {
         Map<String, Object> misspelt = revokedAcme();
