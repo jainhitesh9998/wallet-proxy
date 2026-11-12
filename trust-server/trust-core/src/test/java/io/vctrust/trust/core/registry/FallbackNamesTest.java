@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * An entry whose id another framework already has is listed as {@code <id>@<its framework>}. That name belongs to the
@@ -173,6 +174,28 @@ class FallbackNamesTest {
             assertThat(warnings(manager, "partner")).anyMatch(w -> w.startsWith("Entity 'a' is not loaded"))
                     .anyMatch(w -> w.startsWith("Anchor 'ca' is not loaded"));
         }
+    }
+
+    /**
+     * A framework id is plain: letters, digits, '.', '_' and '-'. With an '@' in it, the fallback name of one
+     * framework's entry ({@code x@a@b} for framework {@code a@b}) could be a literal name of another's ({@code x@a}
+     * with the suffix {@code @b}), and the rule that a fallback name is its framework's would no longer say whose it is.
+     */
+    @Test
+    void aFrameworkIdThatIsNotPlainIsRefused() {
+        for (String id : List.of("a@b", "a b", "", "national/id", "café", "a:b")) {
+            List<TrustFramework> configured = List.of(new TrustFramework("other", "Other", null, null, null), new TrustFramework(id, "x", null, null, null));
+            assertThatThrownBy(() -> new TrustSourceManager(new TrustRegistry(), configured, List.of(), Clock.systemUTC()).close()).as(id)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Framework '" + id + "' (trust.frameworks): a framework id is letters, digits, '.', '_' and '-' only");
+            // Also the framework a source loads into without its being configured.
+            Fixed source = new Fixed("odd", id, listing(List.of(), List.of()));
+            assertThatThrownBy(() -> new TrustSourceManager(new TrustRegistry(), FRAMEWORKS, List.of(source), Clock.systemUTC()).close()).as(id)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Framework '" + id + "' (of source 'odd'): a framework id is letters, digits, '.', '_' and '-' only");
+        }
+        List<TrustFramework> plain = List.of(new TrustFramework("eu-pid_2.0", "EU PID", null, null, null));
+        new TrustSourceManager(new TrustRegistry(), plain, List.of(new Fixed("s", "eu-pid_2.0", listing(List.of(), List.of()))), Clock.systemUTC()).close();
     }
 
     @Test

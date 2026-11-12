@@ -181,6 +181,17 @@ class ConfigurationNamesTest {
         assertThat(t).hasMessage("Trust mechanism trust.mechanisms[0]: id is required");
     }
 
+    /** A framework id is plain (FallbackNamesTest has the rule): another stops the service, naming the framework. */
+    @Test
+    void aFrameworkIdThatIsNotPlainStopsTheService() throws IOException {
+        Throwable t = failure(List.of("""
+                trust:
+                  frameworks:
+                    - { id: "eu@pid" }
+                """));
+        assertThat(t).hasMessage("Framework 'eu@pid' (trust.frameworks): a framework id is letters, digits, '.', '_' and '-' only");
+    }
+
     /** Kebab case, camel case and underscores are one name, as Spring's relaxed binding reads them. */
     @Test
     void relaxedSpellingsOfKnownNamesStart() throws IOException {

@@ -112,14 +112,16 @@ public class ContextService {
             if (e.attributes().get(Oid4vciMetadataMapper.CONTEXT_DIGESTS) instanceof Map<?, ?> m) {
                 m.forEach((k, v) -> {
                     String url = String.valueOf(k);
-                    String held = pins.putIfAbsent(url, String.valueOf(v));
+                    // The same digest in another spelling (padding, alphabet) is the same pin.
+                    String pin = canonicalDigest(String.valueOf(v));
+                    String held = pins.putIfAbsent(url, pin);
                     if (held == null) {
                         pinnedBy.put(url, e.id());
-                    } else if (!held.equals(String.valueOf(v))) {
+                    } else if (!held.equals(pin)) {
                         // The map is one per client, not per issuer: whichever pin it carried would decide what the
                         // other party's signatures cover. Neither does; the device reports the context as not vouched for.
                         disputed.add(url);
-                        reportDisputed(url, pinnedBy.get(url), held, e.id(), String.valueOf(v));
+                        reportDisputed(url, pinnedBy.get(url), held, e.id(), pin);
                     }
                 });
             }
@@ -158,6 +160,21 @@ public class ContextService {
             out.put(url, claim);
         }
         return out;
+    }
+
+    /**
+     * A pinned digest in the one spelling devices compute (a SHA-256 as unpadded base64url), whether it was written with
+     * or without padding, in the URL-safe or the standard alphabet: two pins that state the same digest are one pin,
+     * not a conflict, and match the content they pin. What is no SHA-256 in base64 stays as written, and so matches no
+     * content.
+     */
+    static String canonicalDigest(String pin) {
+        try {
+            byte[] digest = Base64.getDecoder().decode(pin.replace('-', '+').replace('_', '/'));
+            return digest.length == 32 ? Base64.getUrlEncoder().withoutPadding().encodeToString(digest) : pin;
+        } catch (IllegalArgumentException e) {
+            return pin;
+        }
     }
 
     /** Logs two different pins for one context, once for as long as the service runs, not on every snapshot build. */

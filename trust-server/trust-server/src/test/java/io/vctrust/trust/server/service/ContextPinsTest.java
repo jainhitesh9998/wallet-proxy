@@ -189,6 +189,44 @@ class ContextPinsTest {
         assertThat(conflictsLogged("lookalike")).isEmpty();
     }
 
+    /**
+     * A digest written with base64 padding, or in the standard alphabet instead of the URL-safe one, is the same digest:
+     * two pins that differ only so are one pin, not a conflict, and the context is shipped by its digest as devices
+     * compute it (unpadded base64url).
+     */
+    @Test
+    void theSameDigestInAnotherSpellingIsTheSamePin() throws Exception {
+        byte[] bytes = Base64.getUrlDecoder().decode(GENUINE);
+        String padded = Base64.getUrlEncoder().encodeToString(bytes);
+        String standard = Base64.getEncoder().encodeToString(bytes);
+        String standardUnpadded = Base64.getEncoder().withoutPadding().encodeToString(bytes);
+        for (String spelling : List.of(padded, standard, standardUnpadded)) {
+            for (List<TrustedEntity> order : List.of(List.of(issuer("university", "other", GENUINE), issuer("campus", "partner", spelling)),
+                    List.of(issuer("campus", "partner", spelling), issuer("university", "other", GENUINE)))) {
+                String as = spelling + ", " + order.getFirst().id() + " first";
+                logged.list.clear();
+                Map<ClientProfile, Map<String, Object>> told = told(order.toArray(TrustedEntity[]::new));
+                assertThat(sha256(told.get(BOTH), url)).as(as).isEqualTo(GENUINE);
+                assertThat(entry(told.get(BOTH), url)).as(as).containsKey("document");
+                assertThat(sha256(told.get(PARTNER), url)).as(as).isEqualTo(GENUINE);
+                assertThat(conflictsLogged("university", "campus")).as(as).isEmpty();
+            }
+        }
+        // Both alphabets, where they differ.
+        byte[] ones = new byte[32];
+        java.util.Arrays.fill(ones, (byte) 0xff);
+        String canonical = Base64.getUrlEncoder().withoutPadding().encodeToString(ones);
+        assertThat(canonical).startsWith("____");
+        for (String s : List.of(canonical, Base64.getUrlEncoder().encodeToString(ones), Base64.getEncoder().encodeToString(ones),
+                Base64.getEncoder().withoutPadding().encodeToString(ones))) {
+            assertThat(ContextService.canonicalDigest(s)).as(s).isEqualTo(canonical);
+        }
+        // Anything that is no SHA-256 in base64 stays as written, and then matches no content.
+        for (String s : List.of("not a digest", "AAAA", GENUINE + "AAAA")) {
+            assertThat(ContextService.canonicalDigest(s)).as(s).isEqualTo(s);
+        }
+    }
+
     @Test
     void theSamePinTwiceIsNoConflict() throws Exception {
         Map<ClientProfile, Map<String, Object>> told = told(issuer("university", "other", GENUINE), issuer("campus", "partner", GENUINE));

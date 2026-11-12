@@ -33,6 +33,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * Loads trust sources, refreshes them on their schedule (honouring a list's own {@code nextUpdate}), keeps the last
@@ -75,8 +76,9 @@ public class TrustSourceManager implements AutoCloseable {
         this.registry = registry;
         this.frameworks = List.copyOf(frameworks);
         sources.forEach(s -> this.sources.put(s.id(), s));
-        this.frameworks.stream().map(TrustFramework::id).filter(Objects::nonNull).forEach(frameworkIds::add);
-        this.sources.values().stream().map(s -> s.definition().frameworkId()).filter(Objects::nonNull).forEach(frameworkIds::add);
+        this.frameworks.stream().map(TrustFramework::id).filter(Objects::nonNull).forEach(id -> frameworkIds.add(plain(id, "trust.frameworks")));
+        this.sources.values().stream().filter(s -> s.definition().frameworkId() != null)
+                .forEach(s -> frameworkIds.add(plain(s.definition().frameworkId(), "of source '" + s.id() + "'")));
         this.clock = clock;
         this.scheduler = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "trust-source-refresh");
@@ -87,6 +89,22 @@ public class TrustSourceManager implements AutoCloseable {
             states.put(s.id(), new SourceState(s.id(), s.type(), s.definition().frameworkId(), s.definition().enabled(),
                     null, null, null, 0, 0, null, List.of(), null));
         }
+    }
+
+    private static final Pattern PLAIN_ID = Pattern.compile("[A-Za-z0-9._-]+");
+
+    /**
+     * A framework id is plain: letters, digits, '.', '_' and '-'. An entry's fallback name is {@code <id>@<framework>},
+     * and a name ending in {@code @<framework>} is that framework's alone. With an '@' in a framework id a name could
+     * be two frameworks': {@code x@a@b}, the fallback name of an entry {@code x} of framework {@code a@b}, also ends in
+     * {@code @b}, and an entry {@code x@a} of framework {@code b} falls back to it too. Such an id is refused at
+     * startup, naming the framework; so is any other character outside the plain ones, since an id is a name.
+     */
+    private static String plain(String id, String where) {
+        if (!PLAIN_ID.matcher(id).matches()) {
+            throw new IllegalArgumentException("Framework '" + id + "' (" + where + "): a framework id is letters, digits, '.', '_' and '-' only");
+        }
+        return id;
     }
 
     /** True once every enabled, required source has loaded successfully at least once. */
