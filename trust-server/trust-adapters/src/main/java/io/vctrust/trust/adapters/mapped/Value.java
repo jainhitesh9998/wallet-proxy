@@ -68,7 +68,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
      * @throws IllegalArgumentException as {@link #all}, and for those two
      */
     default Restricting restricting(Object current, Object root) {
-        return new Restricting(all(current, root), false, false, false, false);
+        return new Restricting(all(current, root), false, false, false, false, false);
     }
 
     /**
@@ -77,8 +77,9 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
      *
      * @param blank  whether the path selected an item that holds nothing ({@link #blank}): a list of {@code null}s
      * @param hollow as {@link JsonPath.Restricted#hollow}
+     * @param filled as {@link JsonPath.Restricted#filled}: the list is there and holds an item
      */
-    record Restricting(List<Object> values, boolean there, boolean lost, boolean blank, boolean hollow) {
+    record Restricting(List<Object> values, boolean there, boolean lost, boolean blank, boolean hollow, boolean filled) {
     }
 
     /**
@@ -394,7 +395,8 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         @Override
         public Restricting restricting(Object current, Object root) {
             JsonPath.Restricted r = path.restricted(current, root);
-            return new Restricting(present(r.nodes()), r.there(), r.lost(), r.nodes().stream().anyMatch(Value::blank), r.hollow());
+            return new Restricting(present(r.nodes()), r.there(), r.lost(), r.nodes().stream().anyMatch(Value::blank), r.hollow(),
+                    r.filled());
         }
     }
 
@@ -487,7 +489,8 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             List<Object> found = present(r.nodes());
             boolean blanks = r.nodes().stream().anyMatch(Value::blank);
             if (found.isEmpty()) {
-                return new Restricting(blank(fallback) ? List.of() : List.of(fallback), r.there(), r.lost(), blanks, r.hollow());
+                return new Restricting(blank(fallback) ? List.of() : List.of(fallback), r.there(), r.lost(), blanks, r.hollow(),
+                        r.filled());
             }
             List<Object> out = new ArrayList<>(found.size());
             for (Object v : found) {
@@ -498,7 +501,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
                 }
                 out.add(translated);
             }
-            return new Restricting(out, r.there(), r.lost(), blanks, r.hollow());
+            return new Restricting(out, r.there(), r.lost(), blanks, r.hollow(), r.filled());
         }
     }
 

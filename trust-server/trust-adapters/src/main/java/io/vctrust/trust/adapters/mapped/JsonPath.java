@@ -89,8 +89,12 @@ final class JsonPath {
      * @param hollow whether, past a list, an item holds nothing where the path goes on: the item is {@code null}, or the
      *               member the path goes on to is. For a member that says whom a record is about, such an item cannot
      *               be read (an item without that member at all is {@link #restricted}'s error)
+     * @param filled whether a {@code [*]}, a filter or an index of the path met a list or an object that holds at least
+     *               one item ({@code null} counts): the list is there and not empty. For a member that says whom a record
+     *               is about, such a list must yield something; when it yields nothing (a filter kept none of its items,
+     *               they hold nothing, an index selected none) it does not state "none"
      */
-    record Restricted(List<Object> nodes, boolean there, boolean lost, boolean hollow) {
+    record Restricted(List<Object> nodes, boolean there, boolean lost, boolean hollow, boolean filled) {
     }
 
     /**
@@ -107,7 +111,17 @@ final class JsonPath {
         if (s.lacking() != null) {
             throw new IllegalArgumentException(s.lacking());
         }
-        return new Restricted(s.nodes(), s.there(), s.lost(), s.hollow());
+        return new Restricted(s.nodes(), s.there(), s.lost(), s.hollow(), s.filled());
+    }
+
+    /**
+     * Whether a {@code [*]}, a filter or an index of the path meets a list or an object that holds at least one item
+     * ({@link Restricted#filled}), read as {@link #select} reads the path.
+     *
+     * @throws IllegalArgumentException as {@link #select}
+     */
+    boolean meetsItems(Object current, Object root) {
+        return selection(current, root).filled();
     }
 
     /** The member a path from the current record names first ({@code types} in {@code $.types[0].id}); null for any other path. */
@@ -122,9 +136,10 @@ final class JsonPath {
 
     /**
      * What a path selected, and what {@link #restricted} needs: whether a list segment met a container, whether a
-     * non-null item was lost on the way, and why an item lacks what the path goes on to (null when none does).
+     * non-null item was lost on the way, whether a list segment met a container that holds an item, and why an item
+     * lacks what the path goes on to (null when none does).
      */
-    private record Selection(List<Object> nodes, boolean there, boolean lost, boolean hollow, String lacking) {
+    private record Selection(List<Object> nodes, boolean there, boolean lost, boolean hollow, boolean filled, String lacking) {
     }
 
     private Selection selection(Object current, Object root) {
@@ -136,7 +151,7 @@ final class JsonPath {
             try {
                 Selection s = evaluate(root);
                 m = new Memo(new WeakReference<>(root), new Selection(Collections.unmodifiableList(s.nodes()), s.there(), s.lost(),
-                        s.hollow(), s.lacking()), null);
+                        s.hollow(), s.filled(), s.lacking()), null);
             } catch (IllegalArgumentException e) {
                 m = new Memo(new WeakReference<>(root), null, e.getMessage());
             }
@@ -165,6 +180,7 @@ final class JsonPath {
         boolean there = false;
         boolean lost = false;
         boolean hollow = false;
+        boolean filled = false;
         String lacking = null;
         for (Segment s : segments) {
             // An index reads a list as [*] does: one that meets a list and selects nothing, or null, is read as a list
@@ -180,6 +196,9 @@ final class JsonPath {
                 }
                 if (!s.accepts(n)) {
                     throw new IllegalArgumentException("the path " + text + " finds " + kind(n) + " where " + s.needs());
+                }
+                if (list && !(n instanceof Map<?, ?> m ? m.isEmpty() : n instanceof List<?> l && l.isEmpty())) {
+                    filled = true;   // a list segment accepts a list or an object only
                 }
                 int before = next.size();
                 if (s instanceof Filter f) {
@@ -211,7 +230,7 @@ final class JsonPath {
                 break;
             }
         }
-        return new Selection(nodes, there, lost, hollow, lacking);
+        return new Selection(nodes, there, lost, hollow, filled, lacking);
     }
 
     /** What a node of a document is, in words, for a message. */

@@ -572,6 +572,13 @@ instant depends on where it was written). A member cannot be read either when:
   identifier item of the list that yields neither its type nor its value (its members renamed upstream). A list there
   and empty states none (for `roles`, only under `allowEmpty`). Read loosely, the party would be listed without what
   ties it to its key, and its CA alone would decide;
+- it says whom the record is about (`roles`, `certificates`, `identifiers` and the members of their items), and its
+  path finds a list that is there and holds items, but yields nothing from them: a filter keeps none of them
+  (`$.certificates[?@.use == 'sig'].pem` over `[{"usage": "sig", ...}]`, over `"use": "SIG"` or over `"use": "enc"`),
+  they are `null` or `""` (`$.certificates[*]` over `[null]`), or an index selects nothing or `null`
+  (`$.certificates[1]` over one certificate, `$.certificates[0]` over `[null, ...]`). Only a list that is there and
+  empty (`[]`, `{}`) states none. A filter on such a member is therefore a statement about every record: a record
+  none of whose items pass it fails the load;
 - it is `roles`, translated, and the document holds a role the translation does not know (and no `default`); or
   `roles` under `allowEmpty`, and the list is there but yields nothing for another reason than having no item: a
   filter emptied it, or its items are `null`;

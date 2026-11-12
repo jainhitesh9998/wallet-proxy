@@ -325,4 +325,115 @@ class MappedSourceRoundFiveTest {
                     + "PEM text has a line with ----- outside its certificate blocks");
         });
     }
+
+    // 4: a list that says whom a record is about, there with items, yields something ---------------------------------
+
+    static final String YIELDS_NOTHING = " finds a list that holds items and yields nothing from them (a filter keeps none of them, "
+            + "they hold null or \"\", or an index selects none of them); what says whom a record is about is not read as none "
+            + "stated then";
+
+    /** The revoked issuer, with {@code block} put over its block and {@code member} set to {@code value}. */
+    static Map.Entry<String, Decision> revoked(Map<String, Object> block, String member, Object value) {
+        return MappedSourceProbesTest.revokedDmv(block, MappedSourceValidationTest.members(member, value));
+    }
+
+    static String unreadable(String member, String path) {
+        return "mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: " + member + ": " + path + YIELDS_NOTHING;
+    }
+
+    @Test
+    void item4_certificatesThereWithItemsMustYieldOne() {
+        String sig = "$.certificates[?@.use == 'sig'].pem";
+        Map<String, Object> filtered = Map.of("certificates", sig);
+        record Case(Map<String, Object> block, String path, Object certificates) {
+        }
+        List<Case> nothing = List.of(
+                new Case(filtered, sig, List.of(Map.of("usage", "sig", "pem", der("ds")))),
+                new Case(filtered, sig, List.of(Map.of("use", "SIG", "pem", der("ds")))),
+                new Case(filtered, sig, List.of(Map.of("use", "enc", "pem", der("ds")))),
+                new Case(Map.of(), "$.certificates[*]", java.util.Collections.singletonList(null)),
+                new Case(Map.of(), "$.certificates[*]", List.of("")),
+                new Case(Map.of("certificates", "$.certificates[0]"), "$.certificates[0]", java.util.Arrays.asList(null, der("ds"))),
+                new Case(Map.of("certificates", "$.certificates[1]"), "$.certificates[1]", List.of(der("ds"))));
+        for (Case c : nothing) {
+            // Listed revoked with no certificate and no warning, and the DS chain decided alone: TRUSTED.
+            var r = revoked(c.block(), "certificates", c.certificates());
+            assertThat(r.getValue()).as(c.toString()).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(c.toString()).startsWith(unreadable("certificates", c.path()));
+        }
+        // There and empty states none; an item that passes is read, the others left as the filter says.
+        assertThat(revoked(filtered, "certificates", List.of())).isEqualTo(Map.entry("loaded", Decision.TRUSTED));
+        assertThat(revoked(Map.of("certificates", "$.certificates[0]"), "certificates", List.of())).isEqualTo(Map.entry("loaded",
+                Decision.TRUSTED));
+        assertThat(revoked(filtered, "certificates", List.of(Map.of("use", "enc", "pem", der("ds-nl")), Map.of("use", "sig", "pem",
+                der("ds"))))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        assertThat(revoked(Map.of(), "certificates", java.util.Arrays.asList(null, der("ds")))).isEqualTo(Map.entry("loaded",
+                Decision.NOT_TRUSTED));
+    }
+
+    /** The revoked issuer bound by nothing but the subject of its DS certificate, through {@code identifiers}. */
+    static Map.Entry<String, Decision> bySubject(Map<String, Object> item, Object names) {
+        Map<String, Object> block = Map.of("identifiers", List.of(item));
+        return MappedSourceProbesTest.revokedDmv(block, MappedSourceValidationTest.members("certificates", null, "names", names));
+    }
+
+    static final String DS_SUBJECT = "CN=Utopia DS,O=Utopia DMV,C=UT";
+
+    @Test
+    void item4_identifiersThereWithItemsMustYieldOne() {
+        String kind = "$.names[?@.kind == 'subject']";
+        Map<String, Object> filtered = Map.of("each", kind, "type", "X509_SUBJECT", "value", "$.value");
+        for (Object names : List.of(List.of(Map.of("kind", "SUBJECT", "value", DS_SUBJECT)), List.of(Map.of("type", "subject",
+                "value", DS_SUBJECT)), java.util.Collections.singletonList(null))) {
+            // No identifier, no warning, and the DS chain decided alone: TRUSTED.
+            var r = bySubject(filtered, names);
+            assertThat(r.getValue()).as(String.valueOf(names)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(String.valueOf(names)).startsWith(unreadable("identifiers", kind));
+        }
+        assertThat(bySubject(filtered, List.of(Map.of("kind", "subject", "value", DS_SUBJECT)))).isEqualTo(Map.entry("loaded",
+                Decision.NOT_TRUSTED));
+        assertThat(bySubject(filtered, List.of())).isEqualTo(Map.entry("loaded", Decision.TRUSTED));
+        // The path of an item's member: an index that selects null, or nothing, from a list with items.
+        Map<String, Object> indexed = Map.of("type", "X509_SUBJECT", "value", "$.names[0]");
+        for (Object names : List.of(java.util.Arrays.asList(null, DS_SUBJECT), List.of(""))) {
+            var r = bySubject(indexed, names);
+            assertThat(r.getValue()).as(String.valueOf(names)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(String.valueOf(names)).startsWith(unreadable("identifiers.value", "$.names[0]"));
+        }
+        assertThat(bySubject(indexed, List.of(DS_SUBJECT))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        assertThat(bySubject(indexed, List.of())).isEqualTo(Map.entry("loaded", Decision.TRUSTED));
+    }
+
+    @Test
+    void item4_rolesThereWithItemsMustYieldOneUnderAllowEmptyToo() {
+        // The DMV active and authorized for the mDL only, asked about the PID; the college's roles read by the same path.
+        String active = "$.roles[?@.active == true].name";
+        for (Object roles : List.of(java.util.Collections.singletonList(null), List.of(Map.of("name", "CREDENTIAL_ISSUER", "aktiv", true)))) {
+            Map<String, Object> m = MappedSourceValidationTest.boundMapping();
+            ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("roles", Map.of("path", active, "allowEmpty", true));
+            Map<String, Object> d = MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("roles", roles));
+            List<Object> issuers = new java.util.ArrayList<>((List<Object>) d.get("issuers"));
+            Map<String, Object> college = new LinkedHashMap<>((Map<String, Object>) issuers.get(1));
+            college.put("roles", List.of(Map.of("name", "CREDENTIAL_ISSUER", "active", true)));
+            issuers.set(1, college);
+            d.put("issuers", issuers);
+            TestContext ctx = ctx();
+            serveJson(ctx, d);
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+                // Listed ACTIVE without a role ("none stated"): not considered, and the chain decided the PID: TRUSTED.
+                assertThat(MappedSourceValidationTest.decide(registry, MappedSourceValidationTest.PID)).as(String.valueOf(roles))
+                        .isNotEqualTo(Decision.TRUSTED);
+                assertThat(state(manager, "partner").lastError()).as(String.valueOf(roles)).startsWith(roles.equals(
+                        java.util.Collections.singletonList(null)) ? unreadable("roles", active) : "mapping.entities[0]: record 1 (id "
+                        + "'partner:dmv') cannot be read: roles: " + active + " finds a list but nothing it holds");
+            }
+        }
+        // An index past the end of a list with items, beside a form that yields a role: not "none" either.
+        Map<String, Object> both = Map.of("roles", List.of("CREDENTIAL_ISSUER", "$.roles[1]"));
+        var r = revoked(both, "roles", List.of("VERIFIER"));
+        assertThat(r.getValue()).isNotEqualTo(Decision.TRUSTED);
+        assertThat(r.getKey()).startsWith(unreadable("roles", "$.roles[1]"));
+        assertThat(revoked(both, "roles", List.of("VERIFIER", "VERIFIER"))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+    }
 }

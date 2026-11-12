@@ -806,13 +806,15 @@ final class Mapping {
          * entry that only describes a party, or a withdrawn one). The record is then listed without a role, as the
          * document states it: not in good standing, the evaluator holds it against its party whatever is asked; in good
          * standing, it authorizes nothing. A list a filter emptied, one of nulls, or a role the translation does not
-         * know is not "none stated", and cannot be read.
+         * know is not "none stated", and cannot be read; nor is a list that holds items from which an index selects
+         * none ({@link #yieldsNothing}).
          */
         private List<String> roles(Object record, Object root) {
             List<String> out = new ArrayList<>();
             boolean noneStated = false;
+            String emptied = null;
             for (Value v : values(fields.get("roles"))) {
-                strictly(v, "roles", record, root);
+                JsonPath.Restricted listed = strictly(v, "roles", record, root);
                 if (v.allowEmpty()) {
                     Value.Restricting found;
                     try {
@@ -824,7 +826,7 @@ final class Mapping {
                         out.add(scalar(o, "roles"));
                     }
                     if (found.values().isEmpty() && found.there()) {
-                        String path = v instanceof Value.At a ? a.path().text() : ((Value.Translated) v).path().text();
+                        String path = pathOf(v).text();
                         if (found.lost()) {
                             throw lostList("roles", path);
                         }
@@ -832,9 +834,14 @@ final class Mapping {
                             throw new IllegalArgumentException("roles: " + path + " finds a list whose items hold nothing (null or "
                                     + "\"\"): that is not a list with no role");
                         }
+                        if (found.filled()) {
+                            // [null] under a filter, an index past the end of a list with items: not a list with no role.
+                            throw yieldsNothing("roles", path);
+                        }
                         noneStated = true;
                     }
                 } else {
+                    int before = out.size();
                     for (Object o : all(v, "roles", record, root)) {
                         out.add(scalar(o, "roles"));
                     }
@@ -845,10 +852,23 @@ final class Mapping {
                                     + "knows, and it has no default");
                         }
                     }
+                    if (out.size() == before && listed != null && listed.filled() && emptied == null) {
+                        emptied = pathOf(v).text();
+                    }
                 }
                 bounded(out, "roles");
             }
+            if (emptied != null && !out.isEmpty()) {
+                // A record that yields no role at all fails the load as one ("it yields no role"); one whose other forms
+                // yield a role still cannot be read when this form's list holds items and yields none of them.
+                throw yieldsNothing("roles", emptied);
+            }
             return out.isEmpty() ? (noneStated ? List.of() : null) : out;
+        }
+
+        /** The path a form reads: of a path, or of a translation; null for a constant or a template. */
+        private static JsonPath pathOf(Value v) {
+            return v instanceof Value.At a ? a.path() : v instanceof Value.Translated t ? t.path() : null;
         }
 
         /**
@@ -856,12 +876,19 @@ final class Mapping {
          * past a list (or an index), an item that does not have the member the path goes on to, or holds nothing where
          * it goes on, cannot be read. Read leniently, {@code $.certificates[*].certificate} over {@code [{"pem": ...}]}
          * listed the party without its certificate, and the chain to its CA decided alone.
+         *
+         * @return what the form's path finds; null for a form without a path
          */
-        private static void strictly(Value v, String member, Object record, Object root) {
-            JsonPath p = v instanceof Value.At a ? a.path() : v instanceof Value.Translated t ? t.path() : null;
-            if (p != null && restricted(p, member, record, root).hollow()) {
+        private static JsonPath.Restricted strictly(Value v, String member, Object record, Object root) {
+            JsonPath p = pathOf(v);
+            if (p == null) {
+                return null;
+            }
+            JsonPath.Restricted found = restricted(p, member, record, root);
+            if (found.hollow()) {
                 throw hollowItem(member, p.text());
             }
+            return found;
         }
 
         private static IllegalArgumentException hollowItem(String member, String path) {
@@ -869,10 +896,29 @@ final class Mapping {
                     + "what says whom a record is about is not read past it");
         }
 
-        /** The certificates, each form read strictly ({@link #strictly}). */
+        /**
+         * A list that says whom a record is about, there and not empty, from which its path yields nothing: a filter kept
+         * none of its items ({@code $.certificates[?@.use == 'sig'].pem} over {@code [{"usage": "sig", ...}]}), its
+         * items hold {@code null} or {@code ""}, an index selected nothing or {@code null}. Read as "none", the party
+         * was listed without its certificate, identifier or role, and the chain to its CA decided alone. A list that is
+         * there and empty states none (for the roles, under {@code allowEmpty}).
+         */
+        private static IllegalArgumentException yieldsNothing(String member, String path) {
+            return new IllegalArgumentException(member + ": " + path + " finds a list that holds items and yields nothing from them (a "
+                    + "filter keeps none of them, they hold null or \"\", or an index selects none of them); what says whom a record "
+                    + "is about is not read as none stated then");
+        }
+
+        /**
+         * The certificates, each form read strictly ({@link #strictly}); a form whose list holds items must yield one of
+         * them ({@link #yieldsNothing}).
+         */
         private List<String> certificates(Object record, Object root) {
             for (Value v : values(fields.get("certificates"))) {
-                strictly(v, "certificates", record, root);
+                JsonPath.Restricted listed = strictly(v, "certificates", record, root);
+                if (listed != null && listed.filled() && all(v, "certificates", record, root).isEmpty()) {
+                    throw yieldsNothing("certificates", pathOf(v).text());
+                }
             }
             return texts("certificates", record, root);
         }
@@ -881,24 +927,30 @@ final class Mapping {
          * The identifiers. An item with an {@code each} of its own reads a list strictly ({@link #strictly}), and every
          * item of it that is there must yield its type and its value: an item whose members were renamed upstream
          * ({@code {"kind": ..., "val": ...}}) would otherwise be no identifier, and the party's key bound to nothing. A
-         * list that is there and empty states none. An item without an {@code each} is the record's own: what it does
-         * not find is absent.
+         * list that is there and empty states none; one that holds items must yield an identifier
+         * ({@link #yieldsNothing}), and so must the path of an item's member that finds a list with items. An item
+         * without an {@code each} is the record's own: what it does not find is absent.
          */
         private List<Map<String, Object>> identifiers(Object record, Object root) {
             List<Map<String, Object>> out = new ArrayList<>();
             for (Item item : items(fields.get("identifiers"))) {
                 List<Object> matches = List.of(record);
+                JsonPath.Restricted found = null;
                 if (item.each != null) {
-                    JsonPath.Restricted found = restricted(item.each, "identifiers", record, root);
+                    found = restricted(item.each, "identifiers", record, root);
                     if (found.hollow()) {
                         throw hollowItem("identifiers", item.each.text());
                     }
                     matches = found.nodes();
                 }
-                List<Map<String, Object>> these = mapItems(item, matches, "identifiers", root, Set.of("type", "value"), Items.WHOLE, null);
+                List<Map<String, Object>> these = mapItems(item, matches, "identifiers", root, Set.of("type", "value"), Items.IDENTIFYING,
+                        null);
                 if (item.each != null && these.size() < matches.stream().filter(o -> !Value.blank(o)).count()) {
                     throw new IllegalArgumentException("identifiers: an item of " + item.each.text() + " yields neither its type nor its "
                             + "value; what says whom a record is about is not read past it");
+                }
+                if (found != null && found.filled() && these.isEmpty()) {
+                    throw yieldsNothing("identifiers", item.each.text());
                 }
                 out.addAll(these);
                 bounded(out, "identifiers");
@@ -1004,10 +1056,15 @@ final class Mapping {
             LEAVE_OUT,
             /**
              * Absent when no member that reads the document yields anything; otherwise every member it needs must yield
-             * (identifiers): an identifier whose value is there but not its type would leave the party's key without
-             * its entry.
+             * (pinned contexts): a context whose url is there but not its digest would be shipped unpinned.
              */
             WHOLE,
+            /**
+             * As {@link #WHOLE} (identifiers): an identifier whose value is there but not its type would leave the
+             * party's key without its entry. And a member whose path finds a list that holds items must yield one of
+             * them ({@link #yieldsNothing}): {@code value: $.subjects[0]} over {@code [null, "CN=..."]} is no "absent".
+             */
+            IDENTIFYING,
             /**
              * Every member the mapping configures must yield, and an item yields something (authorizations): an
              * authorization without its type would cover every type of its format, and one without anything would
@@ -1093,6 +1150,10 @@ final class Mapping {
                         value = null;
                     }
                     put(o, k, value);
+                    if (rule == Items.IDENTIFYING && value == null && pathOf(e.getValue()) != null
+                            && pathOf(e.getValue()).meetsItems(match, root)) {
+                        throw yieldsNothing(member + "." + k, pathOf(e.getValue()).text());
+                    }
                     if (rule == Items.STRICT && !o.containsKey(k)) {
                         throw new IllegalArgumentException(member + ": an item yields no " + k
                                 + "; an authorization is never left open where the document does not say so");
@@ -1103,7 +1164,7 @@ final class Mapping {
                 }
                 if (o.keySet().containsAll(needs) && !o.isEmpty()) {
                     out.add(o);
-                } else if (rule == Items.WHOLE && !fromDocument.isEmpty()) {
+                } else if ((rule == Items.WHOLE || rule == Items.IDENTIFYING) && !fromDocument.isEmpty()) {
                     List<String> missing = needs.stream().filter(k -> !o.containsKey(k)).sorted().toList();
                     throw new IllegalArgumentException(member + ": an item yields " + String.join(" and ", fromDocument) + " but no "
                             + String.join(" or ", missing));
