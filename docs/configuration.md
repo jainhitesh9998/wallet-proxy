@@ -581,12 +581,12 @@ What then happens depends on the record:
 - **An entity whose `id`, `roles`, `identifiers` or `certificates` cannot be read**, or that yields no `id`, or no
   role (unless its roles are there and empty under `allowEmpty`), **fails the load**, with a message that names the
   block, the record and the member. These say whom the record is about. The source keeps its last good content.
-- **An entity whose id is text the registry cannot take** (not 1 to 128 letters, digits or `. _ : @ ~ -` starting
-  with a letter or digit, the admin API's rule; or ending in `@` and the id of another framework, a name the registry
-  keeps for that framework's entries) **is listed under a derived id**: `sha256:` and the first 32 hexadecimal digits
-  of the SHA-256 of the mapped id, `SUSPENDED` (or the stricter status it states), with a warning that gives both ids.
-  The load goes on. Which frameworks the service has is not the source's to know: an id with an `@` is taken as it is
-  only when it has one, followed by the source's own framework (`partner:x@partner`).
+- **An entity whose id is text that cannot be an entry's id** (not 1 to 128 letters, digits or `. _ : @ ~ -`
+  starting with a letter or digit, the admin API's rule) **is listed under a derived id**: `sha256:` and the first 32
+  hexadecimal digits of the SHA-256 of the mapped id, `SUSPENDED` (or the stricter status it states), with a warning
+  that gives both ids. The load goes on. An id the rule accepts is kept as written, `@` included (an email address is a
+  common id); one that ends in `@` and another framework's id (`acme@other`) is the registry's to place, under the
+  name of the source's framework (`acme@other@national`), as for every source.
 - **An entity in which anything else cannot be read is listed `SUSPENDED`**, with what identifies it and every member
   that could be read, but none that could not, and a warning that names the record, the members and why. A status
   stricter than `SUSPENDED` that the record states (`REVOKED`, `EXPIRED`) is kept. `SUSPENDED` means here: the list

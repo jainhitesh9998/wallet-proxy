@@ -991,8 +991,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          *       id, listing the record could keep nobody out: the load fails, naming the record and the member;</li>
          *   <li>when anything else cannot be read, the entity is listed with what could be read, not in good standing
          *       (SUSPENDED, or the stricter status the record states), and a warning says what was left out and why;</li>
-         *   <li>so when its id is text the registry cannot take as an entry's id ({@link #refusedId}): it is listed
-         *       under an id derived from it ({@link #derivedId}), not in good standing, and the warning gives both.
+         *   <li>so when its id is text that cannot be an entry's id ({@link #refusedId}): it is listed under an id
+         *       derived from it ({@link #derivedId}), not in good standing, and the warning gives both.
          *       Refused, or left out by the registry, the record would restrict nobody.</li>
          * </ul>
          *
@@ -1069,21 +1069,12 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         /**
-         * Why the registry cannot take {@code id} as an entry's id, or null when it can. The admin API's rule
-         * ({@link #ENTRY_ID}); and a name that ends in {@code @} and the id of another framework, which the registry keeps
-         * for the entries of that framework (an entry listed there when another framework has its id) and does not load
-         * from any other. Which frameworks the service has is not this source's to know: an id with an {@code @} in it
-         * is taken only when it has one, followed by the id of the source's own framework.
+         * Why {@code id} cannot be an entry's id, or null when it can: the admin API's rule ({@link #ENTRY_ID}), whose
+         * characters include {@code @} (an email address is a common id). A name that ends in {@code @} and another
+         * framework's id is the registry's to place: it lists such an entity under {@code <id>@<its framework>}.
          */
-        private String refusedId(String id) {
-            if (!ENTRY_ID.matcher(id).matches()) {
-                return "is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit";
-            }
-            int at = id.indexOf('@');
-            if (at >= 0 && (at != id.lastIndexOf('@') || def.frameworkId() == null || !id.substring(at + 1).equals(def.frameworkId()))) {
-                return "has an @ not followed by this source's framework: such a name is kept for the framework it ends in";
-            }
-            return null;
+        private static String refusedId(String id) {
+            return ENTRY_ID.matcher(id).matches() ? null : "is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit";
         }
 
         /** The id an entity is listed under when its own cannot be one: {@code sha256:} and 32 hex digits of its SHA-256. */

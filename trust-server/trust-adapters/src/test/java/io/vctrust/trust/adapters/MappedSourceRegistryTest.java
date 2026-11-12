@@ -184,6 +184,54 @@ class MappedSourceRegistryTest {
                 + "(id 'withdrawn') cannot be read: it yields no role");
     }
 
+    // 3: ids with @ -------------------------------------------------------------------------------------------------
+
+    /** {@link MappedSourceValidationTest#boundMapping()} with each record's id as the document writes it. */
+    static Map<String, Object> idsAsWritten() {
+        Map<String, Object> m = MappedSourceValidationTest.boundMapping();
+        ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("id", "$.id");
+        return m;
+    }
+
+    @Test
+    void item3_anIdWithAnAtThatTheIdRuleAcceptsIsKeptAsWritten() {
+        // An email address is a common id: it was listed under a derived id, SUSPENDED, since the registry dropped a
+        // name that ends in @ and a framework's id.
+        for (String state : List.of("active", "revoked")) {
+            TestContext ctx = ctx();
+            serveJson(ctx, MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("id", "issuer@example.com", "state", state)));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", idsAsWritten())))) {
+                assertThat(state(m, "partner").warnings()).as(state).isEmpty();
+                var listed = registry.snapshot().entity("issuer@example.com").orElseThrow();
+                assertThat(listed.status().name()).isEqualTo(state.toUpperCase());
+                assertThat(MappedSourceValidationTest.decide(registry, MDL)).as(state)
+                        .isEqualTo(state.equals("active") ? Decision.TRUSTED : Decision.NOT_TRUSTED);
+            }
+        }
+    }
+
+    @Test
+    void item3_anIdThatIsAnotherFrameworksNameIsPlacedByTheRegistryAndKeepsItsPartyOut() {
+        // acme@other in a list of framework "national": the registry lists it as acme@other@national, and keeps it.
+        TestContext ctx = ctx();
+        serveJson(ctx, MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("id", "acme@other", "state", "revoked")));
+        TrustRegistry registry = new TrustRegistry();
+        var s = source(ctx, "national-list", "national", props("mapping", idsAsWritten()));
+        try (TrustSourceManager m = new TrustSourceManager(registry, List.of(
+                new io.vctrust.trust.core.model.TrustFramework("national", "National", null, null, null),
+                new io.vctrust.trust.core.model.TrustFramework("other", "Other", null, null, null)), List.of(s), java.time.Clock.systemUTC())) {
+            m.refresh(s.id());
+            var listed = registry.snapshot().entity("acme@other@national").orElseThrow();
+            assertThat(listed.status()).isEqualTo(EntityStatus.REVOKED);
+            assertThat(listed.frameworkId()).isEqualTo("national");
+            assertThat(listed.certificates()).hasSize(1);
+            assertThat(MappedSourceValidationTest.decide(registry, MDL)).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(state(m, "national-list").warnings()).singleElement().asString()
+                    .startsWith("Entity 'acme@other' is listed as 'acme@other@national'");
+        }
+    }
+
     // 5: what else assumed the old registry: this service's own snapshot -------------------------------------------------
 
     static Map<String, Object> withItem(Map<String, Object> item) {

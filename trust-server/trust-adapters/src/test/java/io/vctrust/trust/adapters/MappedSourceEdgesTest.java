@@ -715,7 +715,6 @@ class MappedSourceEdgesTest {
     void item8_anEntityWhoseIdTheRegistryCannotTakeIsListedUnderADerivedIdAndKeptOut() throws Exception {
         // The revoked issuer, bound by its signing certificate under the shared IACA, with an id the registry cannot take.
         Map<String, String> why = new LinkedHashMap<>();
-        why.put("dmv@other", "has an @ not followed by this source's framework");   // the name "other" keeps for its own
         why.put("dmv two", "is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
         why.put("d".repeat(130), "is not 1 to 128 letters");
         why.forEach((id, reason) -> {
@@ -723,7 +722,6 @@ class MappedSourceEdgesTest {
             serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", id, "state", "revoked")));
             TrustRegistry registry = new TrustRegistry();
             try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", boundMapping())))) {
-                // dmv@other: the registry refused the entry as the source listed it, and the IACA alone decided: TRUSTED.
                 assertThat(decide(registry, MDL)).as(id).isEqualTo(Decision.NOT_TRUSTED);
                 assertThat(state(manager, "partner").lastError()).as(id).isNull();
                 String derived = derived("partner:" + id);
@@ -736,6 +734,16 @@ class MappedSourceEdgesTest {
                         .contains("' is listed as '" + derived + "': it " + reason);
             }
         });
+        // dmv@other was a case above (a derived id) while the registry dropped a name that ends in @ and another
+        // framework's id. It places such an entity itself now: the source lists the id as written (follow-up to the
+        // third round, item 3; MappedSourceRegistryTest.item3_...), and the registry lists it under its own framework.
+        TestContext other = ctx();
+        serveJson(other, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv@other", "state", "revoked")));
+        TrustRegistry placed = new TrustRegistry();
+        try (TrustSourceManager manager = manager(placed, source(other, props("mapping", boundMapping())))) {
+            assertThat(decide(placed, MDL)).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(placed.snapshot().entity("partner:dmv@other@partner").orElseThrow().status()).isEqualTo(EntityStatus.REVOKED);
+        }
         // In good standing otherwise, it is listed SUSPENDED; an @ followed by the source's own framework is an id.
         TestContext ctx = ctx();
         serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv two")));
