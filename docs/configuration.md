@@ -222,7 +222,10 @@ service with an error that names the source. The lists an EU LOTL points to are 
 
 **A source speaks for its own framework only.** Everything it loads is placed in the framework it is configured
 for. Entities with the same id are merged when they come from sources of the same framework, so several sources may
-describe one party together; an id that an entity of another framework already has is listed as `<id>@<framework>`
+describe one party together: roles, identifiers, certificates and authorizations are combined, the most restrictive
+status counts, and the merged entity is valid only where every entry is (the latest `validFrom` and the earliest
+`validUntil` stated), so that an entry saying the registration ended is not outweighed by another that states no
+end; an id that an entity of another framework already has is listed as `<id>@<framework>`
 instead, and an anchor is tied only to an entity of its own framework. A name `<id>@<framework>` (the id of a
 configured framework, or of one a source loads into) belongs to that framework: an entity or anchor of another
 framework written with such an id is not loaded, and the admin API refuses it (`invalid_document`), so the name an

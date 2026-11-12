@@ -126,7 +126,10 @@ public final class RegistrySnapshot {
     /**
      * Merges two entries for one entity, which {@link TrustSourceManager} does only for entries of the same id in
      * the same framework: identifiers, roles, authorizations and metadata are unioned (the earlier source wins on
-     * conflicts), the most restrictive status wins.
+     * conflicts), the most restrictive status wins, and the merged entry is valid only where both are (the later
+     * {@code validFrom} and the earlier {@code validUntil} of those stated; an entry that states none sets no bound).
+     * An entry that says the registration ended, or has not begun, restricts the party as a status does: it must not
+     * lose to another entry for being listed second.
      */
     static TrustedEntity merge(TrustedEntity a, TrustedEntity b) {
         TrustedEntity.Builder m = a.toBuilder();
@@ -159,6 +162,8 @@ public final class RegistrySnapshot {
             }
         });
         m.status(moreRestrictive(a.status(), b.status()));
+        m.validFrom(later(a.validFrom(), b.validFrom()));
+        m.validUntil(earlier(a.validUntil(), b.validUntil()));
         Set<String> sources = new LinkedHashSet<>();
         if (a.provenance() != null) sources.add(a.provenance().sourceId());
         if (b.provenance() != null) sources.add(b.provenance().sourceId());
@@ -169,5 +174,15 @@ public final class RegistrySnapshot {
 
     private static EntityStatus moreRestrictive(EntityStatus a, EntityStatus b) {
         return a.ordinal() >= b.ordinal() ? a : b;
+    }
+
+    /** The later of two instants; null only when neither is stated. */
+    private static Instant later(Instant a, Instant b) {
+        return a == null ? b : b == null || a.isAfter(b) ? a : b;
+    }
+
+    /** The earlier of two instants; null only when neither is stated. */
+    private static Instant earlier(Instant a, Instant b) {
+        return a == null ? b : b == null || a.isBefore(b) ? a : b;
     }
 }
