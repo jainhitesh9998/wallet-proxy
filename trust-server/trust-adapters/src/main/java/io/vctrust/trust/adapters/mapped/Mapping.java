@@ -685,7 +685,8 @@ final class Mapping {
          * Certificates as text, held to what the text says it holds. A text with an armor line in it ({@code -----}) is
          * PEM: the body of each {@code CERTIFICATE} block is exactly one certificate, and outside the blocks a line that
          * holds {@code -----} cannot be read (a damaged armor line: a BEGIN written with four dashes or in lower case, a
-         * block that never ends, a block with another label). Any other line outside the blocks is text that explains
+         * block that never ends, a block with another label), and neither can a run of base64 lines that decodes to DER
+         * ({@link #bareDer}: a certificate without its armor). Any other line outside the blocks is text that explains
          * them, as tools write it ({@code subject=} and {@code issuer=} lines, "Bag Attributes", a byte-order mark), and
          * is passed over: refused, it failed the load of an honest list. Any other text is a base64 value: exactly one
          * certificate, and nothing after it. Two certificates one after the other in one block or one base64 value, a
@@ -723,8 +724,46 @@ final class Mapping {
                     throw new IllegalArgumentException(member + ": a PEM text has a line with ----- outside its certificate blocks (a "
                             + "damaged BEGIN or END line, or a block of something else); every block must be a certificate");
                 }
+                if (!bareDer(outside).isEmpty()) {
+                    throw new IllegalArgumentException(member + ": a PEM text has lines of base64 outside its certificate blocks that "
+                            + "decode to DER (a certificate written without its BEGIN and END lines); every certificate must be in a block");
+                }
             }
             return certificates;
+        }
+
+        /** A line of base64 characters only, of either alphabet, padded or not. */
+        private static final java.util.regex.Pattern BASE64_LINE = java.util.regex.Pattern.compile("[A-Za-z0-9+/_=-]+");
+
+        /**
+         * What the text outside the blocks of a PEM text holds as DER: each run of lines that consist only of base64
+         * characters and decode to DER (a SEQUENCE: its first byte 0x30). Such a run is a certificate written beside the
+         * blocks without its armor; passed over as text that explains them, it was bound to nobody (a revoked party whose
+         * text is one good block and a second certificate as bare base64 lines was bound to the first only). Lines with
+         * anything else in them ({@code subject=}, "Bag Attributes", a word) break a run and stay explanatory text.
+         */
+        static List<byte[]> bareDer(CharSequence outside) {
+            List<byte[]> out = new ArrayList<>();
+            StringBuilder run = new StringBuilder();
+            for (String line : (outside + "\n").split("\r\n|\r|\n", -1)) {
+                String l = line.strip();
+                if (!l.isEmpty() && BASE64_LINE.matcher(l).matches()) {
+                    run.append(l);
+                    continue;
+                }
+                if (!run.isEmpty()) {
+                    try {
+                        byte[] der = io.vctrust.trust.core.util.Base64Url.decodeLenient(run.toString());
+                        if (der.length > 0 && der[0] == 0x30) {
+                            out.add(der);
+                        }
+                    } catch (RuntimeException e) {
+                        // not base64 as a whole: text that explains the blocks
+                    }
+                    run.setLength(0);
+                }
+            }
+            return out;
         }
 
         /** A certificate in base64 (or base64url) DER: one, with nothing after it. */

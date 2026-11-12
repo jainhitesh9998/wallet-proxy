@@ -593,11 +593,13 @@ instant depends on where it was written). A member cannot be read either when:
   of each `-----BEGIN CERTIFICATE-----` block must be exactly one certificate (not two one after the other, nor a
   certificate followed by other bytes), and outside the blocks a line that holds `-----` cannot be read: a damaged
   armor line (a BEGIN line written with four dashes or in lower case, a block that never ends) or a block with another
-  label than `CERTIFICATE` (a key, `TRUSTED CERTIFICATE`). Any other line outside the blocks is text that explains
-  them, as tools write it (`subject=` and `issuer=` lines, `Bag Attributes`, a byte-order mark), and is passed over;
-  so is a certificate written on such a line in base64 without its armor, so write every certificate of a PEM text in
-  a block of its own. Any other text is a base64 value, and must be exactly one certificate (not two one after the
-  other). The certificate it was would otherwise be read as the first, or passed over, and bound to nobody;
+  label than `CERTIFICATE` (a key, `TRUSTED CERTIFICATE`). Nor can a run of lines outside the blocks that consist only
+  of base64 characters and decode to DER (their first byte is `0x30`): a certificate written beside the blocks without
+  its armor, which would be bound to nobody. Write every certificate of a PEM text in a block of its own. Any other
+  line outside the blocks is text that explains them, as tools write it (`subject=` and `issuer=` lines,
+  `Bag Attributes`, a byte-order mark, a word), and is passed over. Any other text is a base64 value, and must be
+  exactly one certificate (not two one after the other). The certificate it was would otherwise be read as the first,
+  or passed over, and bound to nobody;
 - a path of it selects more than 1000 nodes for the record (`null`s and values no translation knows count too), or it
   yields more than 1000 values (all the forms of the member, and the items of a nested `each`, together);
 - one of its values is longer than 8,192 characters, or it would take the record beyond 65,536 characters of mapped
