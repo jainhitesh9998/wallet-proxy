@@ -6,3 +6,4 @@ io.vctrust.trust.adapters.lote.LoteSourceFactory
 io.vctrust.trust.adapters.vical.VicalSourceFactory
 io.vctrust.trust.adapters.federation.OpenIdFederationSourceFactory
 io.vctrust.trust.adapters.ebsi.EbsiTirSourceFactory
+io.vctrust.trust.adapters.mapped.MappedSourceFactory
