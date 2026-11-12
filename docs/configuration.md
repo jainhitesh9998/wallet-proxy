@@ -21,6 +21,17 @@ clients, frameworks or sources: started as it is, the service refuses every API 
 Configure it with an external `application.yml`, environment variables (`TRUST_SERVICE_ISSUER=...`) or arguments
 (`--trust.service.issuer=...`), as with any Spring Boot application.
 
+Every property under `trust.` that a configuration file or an argument sets must be one the service knows, whatever
+its list indices (`trust.clients[1].frameworks[0]` is the known `trust.clients[].frameworks[]`), with names read as
+Spring Boot reads them (`signing-key-file`, `signingKeyFile` and `signing_key_file` are one name). Any other name,
+a misspelt `trust.revocaton.enabled` say, stops the service at startup with the name and where it was written
+(`trust.revocaton.enabled (from URL [file:/etc/trust/application.yml] - 3:14) is not a property this service knows`),
+in every configuration source that sets it, also one whose lists a source of higher precedence replaces. Below the
+maps that are read as they come (a source's `properties`, a framework's `attributes`, `trust.did.registries`, and
+each trust mechanism, which [has rules of its own](#trust-mechanisms)) any name is accepted. Environment variables and
+system properties are not checked: a platform that sets `TRUST_SERVICE_PORT` for a service named `trust` does not stop
+it.
+
 The demo configuration is a profile,
 [`application-demo.yml`](../trust-server/trust-server/src/main/resources/application-demo.yml)
 (`--spring.profiles.active=demo`; `scripts/start-trust-server.sh` and `scripts/dev-up.sh` use it): a wallet, a verifier
@@ -364,19 +375,22 @@ How mechanisms apply:
   block, or a member that would never apply (an `x509` block when `keys` does not accept `x5c`, a `did` block when it
   does not accept `did`). The message names the mechanism:
   `Trust mechanism trust.mechanisms[0] ('national-id'): x509 is given, but keys does not accept x5c: it would never apply`.
-  A property under `trust.` that binds to nothing stops the service as well, in a configuration file or an argument
-  (Spring Boot leaves environment variables and system properties out of this check): mechanisms written as a map by
-  id instead of a list, or a misspelt `trust.mechanism`, are refused with a message that names them
-  (`The elements [trust.mechanisms.national-id.for.role, ...] were left unbound`).
+  A property under `trust.` that the service does not know stops it as well, in a configuration file or an argument
+  (see [Trust service](#trust-service)): `trust.mechanisms` is a list, so mechanisms written as a map by id are refused
+  (`trust.mechanisms.national-id.for.role (from ...) is not a property this service knows: trust.mechanisms is a list,
+  and 'national-id' is not an index`), and so is a misspelt `trust.mechanism`.
   The log names the mechanisms in force when it starts (`Trust mechanisms, tried in this order: [national-id]`), and
   `GET /admin/v1/registry` lists their ids (`mechanisms`).
 - **One list, from one place.** `trust.mechanisms` is a list, and Spring Boot takes a list as a whole from the
   configuration source of highest precedence that sets any of it (a profile's file, a file given with
   `spring.config.additional-location`, an argument, an environment variable): the list of a source below it is
-  replaced, never merged by position or by id. Where the replaced entries name a member that the replacing ones do not,
-  the service reports it as left unbound and does not start; otherwise the replacement is silent. An argument that sets
-  one member of one mechanism (`--trust.mechanisms[0].x509.revocation=required`) therefore does not change that member:
-  it stands for the whole list, and the service refuses to start. Write the whole list in one source. Members whose
+  replaced, never merged by position or by id. So is every list under `trust.` (`clients`, `sources`, a client's
+  `frameworks`, ...). What the replaced list's entries set is left behind and not used, also members that the
+  replacing entries do not name: the service starts with the replacing list. The check of names does not count list
+  indices, so what is left behind is not refused, while a name the service does not know is refused in whichever source
+  it is written. An argument that sets one member of one mechanism (`--trust.mechanisms[0].x509.revocation=required`)
+  therefore does not change that member: it stands for the whole list, a mechanism with that member alone, and the
+  service refuses to start (`Trust mechanism trust.mechanisms[0]: id is required`). Write the whole list in one source. Members whose
   names are kebab-case (`key-usage`, `extended-key-usage`, `same-country-as-anchor`, `max-validity-days`,
   `crl-distribution-point`, `max-intermediates`) cannot be set through environment variables: a variable's name
   carries no `-`, so `TRUST_MECHANISMS_0_X509_PROFILE_MAXINTERMEDIATES` names a member `maxintermediates`, which the

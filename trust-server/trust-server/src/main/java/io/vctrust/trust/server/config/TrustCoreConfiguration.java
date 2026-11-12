@@ -41,9 +41,11 @@ import io.vctrust.trust.server.signing.ServiceKeyManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -61,6 +63,18 @@ import java.util.Set;
 public class TrustCoreConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(TrustCoreConfiguration.class);
+
+    /**
+     * All {@code trust.*} configuration. Before it is bound, every property under {@code trust.} that a configuration
+     * file or an argument sets must be one it knows, list indices aside: a misspelt name stops the service here, with
+     * the name and where it was written, before anything reads the configuration.
+     */
+    @Bean
+    @ConfigurationProperties(prefix = "trust")
+    TrustProperties trustProperties(Environment environment) {
+        TrustPropertyNames.check(environment);
+        return new TrustProperties();
+    }
 
     @Bean
     Clock clock() {

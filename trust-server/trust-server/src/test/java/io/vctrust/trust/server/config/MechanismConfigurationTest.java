@@ -127,7 +127,7 @@ class MechanismConfigurationTest {
 
     /**
      * Mechanisms written as a map by id bind to no list at all: without a check the service would start with none, and
-     * apply none of them. Every property under trust.* that binds to nothing stops the service instead.
+     * apply none of them. A property under trust.mechanisms whose next element is not an index stops the service instead.
      */
     @Test
     void mechanismsWrittenAsAMapStopTheService() throws IOException {
@@ -137,7 +137,8 @@ class MechanismConfigurationTest {
                     national-id:
                       for: { role: issuer }
                       keys: [x5c]
-                """)).hasMessageContaining("trust.mechanisms.national-id.for.role").hasMessageContaining("left unbound");
+                """)).hasMessageContaining("trust.mechanisms.national-id.for.role")
+                .hasMessageContaining("trust.mechanisms is a list, and 'national-id' is not an index");
     }
 
     @Test
@@ -147,7 +148,7 @@ class MechanismConfigurationTest {
                   mechanism:
                     - id: national-id
                       for: { role: issuer }
-                """)).hasMessageContaining("trust.mechanism[0].id").hasMessageContaining("left unbound");
+                """)).hasMessageContaining("trust.mechanism[0].id").hasMessageContaining("is not a property this service knows");
     }
 
     /** The innermost cause of the failure to start with this configuration file. */

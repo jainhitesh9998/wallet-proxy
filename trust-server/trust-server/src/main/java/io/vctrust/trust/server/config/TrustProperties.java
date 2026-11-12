@@ -1,7 +1,5 @@
 package io.vctrust.trust.server.config;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -9,16 +7,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * All {@code trust.*} configuration. See {@code application.yml} for a documented example.
+ * All {@code trust.*} configuration. See {@code application.yml} for a documented example. Bound as the bean
+ * {@code TrustCoreConfiguration.trustProperties}.
  *
- * <p>A property under {@code trust.} that binds to nothing stops the service at startup: a misspelt name, or trust
- * mechanisms written as a map by id instead of a list, would otherwise be dropped without a word, and the service would
- * run without what the operator believes is configured. Free-form maps ({@code sources[].properties}, a framework's
- * {@code attributes}, {@code did.registries}) take any key. Spring Boot leaves environment variables and system
- * properties out of this check: a variable that merely starts with {@code TRUST_} (a container platform sets such
- * variables for a service of that name) does not stop the service.
+ * <p>A property under {@code trust.} in a configuration file or an argument that names nothing here stops the service
+ * at startup ({@link TrustPropertyNames}): a misspelt name, or trust mechanisms written as a map by id instead of a
+ * list, would otherwise be dropped without a word. The known names are this class's bean properties, so a property
+ * added here is known there without more.
  */
-@ConfigurationProperties(prefix = "trust", ignoreUnknownFields = false)
 public class TrustProperties {
 
     private Service service = new Service();
