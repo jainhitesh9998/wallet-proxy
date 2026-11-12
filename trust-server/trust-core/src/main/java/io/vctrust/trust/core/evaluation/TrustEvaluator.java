@@ -563,9 +563,11 @@ public class TrustEvaluator {
             // A mechanism with an x509 block says which anchors count and what their chains must satisfy. A pin is no such
             // anchor: accepted, it would bring the certificate past every one of those requirements, so that the
             // mechanism would loosen what it is there to tighten. Certificate material binds an entity under such a
-            // mechanism only through a chain that validated to an anchor of the governing domain.
+            // mechanism only through a chain that validated to an anchor of the governing domain. When an anchor of that
+            // domain did issue the chain, the chain's own error (a profile check, a revocation) says why it does not
+            // count, and the anchor is not what is missing.
             TrustMechanism m = ev.mechanism();
-            if (m != null && m.x509() != null) {
+            if (m != null && m.x509() != null && !key.x509().anchorFound()) {
                 ev.reasons().add(Reason.error("mechanism.anchor_required", "Trust mechanism '" + m.id()
                         + "' accepts a certificate only through a chain to an anchor of domain '" + governingDomain(ev)
                         + "'; a pinned certificate does not replace the anchor"));
