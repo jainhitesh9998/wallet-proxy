@@ -89,7 +89,10 @@ class MappedSourceEndToEndTest {
                     "authorities", List.of(Map.of("kid", "utopia-iaca", "kind", "https://partner.example/kinds/iaca",
                             "certificate", pem("iaca"), "issuer_id", "utopia-dmv", "doctypes", List.of("org.iso.18013.5.1.mDL"))),
                     "links", Map.of("next", "/v1/issuers?page=2")));
+            // A page repeats the facts of its list: a page that does not is not a page of this list.
             String page2 = Json.write(Map.of(
+                    "publisher", "Partner Registry", "version", 7, "issued", now.minus(Duration.ofHours(1)).toString(),
+                    "next_update", now.plus(Duration.ofDays(1)).toString(),
                     "issuers", List.of(Map.of("id", "suspended-college", "enabled", true, "state", "suspended",
                             "display", Map.of("name", "Suspended College"), "credential_issuer", "https://college.example")),
                     "links", Map.of()));

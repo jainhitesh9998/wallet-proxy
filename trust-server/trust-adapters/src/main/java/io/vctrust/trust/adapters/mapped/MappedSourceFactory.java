@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
@@ -161,6 +162,11 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
         if (mapping.pages != null && (location == null || !ResourceLoader.isRemote(location))) {
             throw new IllegalArgumentException("mapping.pages needs an https location: the next pages are on its origin");
+        }
+        if (jws && mapping.pages != null && (mapping.list == null || mapping.list.sequence() == null && mapping.list.issuedAt() == null)) {
+            throw new IllegalArgumentException("format: jws with pages needs list.sequence or list.issuedAt mapped: each page is "
+                    + "signed on its own, and only a fact that every page repeats ties a page to the others (a page of an older "
+                    + "list, or another document of the same signer, would otherwise pass for one)");
         }
         Map<String, String> headers = headers(p.get("headers"), origin);
         String publicUri = text(p, "publicUri");
@@ -302,6 +308,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             List<TrustAnchor> anchors = new ArrayList<>();
             int entityRecords = 0;
             int anchorRecords = 0;
+            Facts first = null;
             Facts facts = null;
             Set<String> visited = new HashSet<>();
             Document page = null;
@@ -311,7 +318,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     if (page == null) {
                         page = ResourceLoader.isRemote(config.location()) ? fetch(URI.create(config.location()), now, warnings)
                                 : new Document(document(ctx.resources().load(config.location()), now, warnings), null);
-                        facts = facts(page.root(), now, warnings);
+                        first = mapped(page.root());
+                        facts = facts(first, now, warnings);
                         if (page.uri() != null) {
                             visited.add(page.uri().toString());
                         }
@@ -350,6 +358,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         break;
                     }
                     page = fetch(next, now, warnings);
+                    samePage(first, page.root(), pages + 1);
                 }
             } catch (IOException e) {
                 throw new TrustSourceException("Cannot read the list: " + e.getMessage(), e);
@@ -507,15 +516,50 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         /** The list facts the mapping names. One it names that the document lacks fails the load: the format has changed. */
-        private Facts facts(Object root, Instant now, Warnings warnings) throws TrustSourceException {
+        private Facts mapped(Object root) throws TrustSourceException {
             Mapping.ListFacts l = config.mapping().list;
             if (l == null) {
                 return new Facts(null, null, null, null);
             }
-            String issuer = fact(l.issuer(), "issuer", root);
-            String sequence = fact(l.sequence(), "sequence", root);
-            Instant issuedAt = date(l.issuedAt(), "issuedAt", root);
-            Instant nextUpdate = date(l.nextUpdate(), "nextUpdate", root);
+            return new Facts(fact(l.issuer(), "issuer", root), fact(l.sequence(), "sequence", root),
+                    date(l.issuedAt(), "issuedAt", root), date(l.nextUpdate(), "nextUpdate", root));
+        }
+
+        /**
+         * A page after the first repeats the facts of the first: every one the mapping names, with the same value. Each
+         * page is fetched (and, for a JWS, signed) on its own; a page of an older list, or another document of the same
+         * signer, is not a page of this one, and a list that changed between two requests is not one list either.
+         */
+        private void samePage(Facts first, Object root, int page) throws TrustSourceException {
+            Facts these;
+            try {
+                these = mapped(root);
+            } catch (TrustSourceException e) {
+                throw new TrustSourceException("Page " + page + " of the list: " + e.getMessage());
+            }
+            differs("issuer", first.issuer(), these.issuer(), page);
+            differs("sequence", first.sequence(), these.sequence(), page);
+            differs("issuedAt", first.issuedAt(), these.issuedAt(), page);
+            differs("nextUpdate", first.nextUpdate(), these.nextUpdate(), page);
+        }
+
+        private static void differs(String fact, Object first, Object here, int page) throws TrustSourceException {
+            if (!Objects.equals(first, here)) {
+                throw new TrustSourceException("Page " + page + " of the list says " + fact + " " + shown(here)
+                        + " where page 1 says " + shown(first) + ": the pages are not of one list");
+            }
+        }
+
+        private static String shown(Object fact) {
+            return fact == null ? "nothing" : fact instanceof Instant i ? i.toString() : Mapping.quote(fact);
+        }
+
+        /** Page 1's facts, held to what they say: not past the next update, not issued in the future. */
+        private Facts facts(Facts f, Instant now, Warnings warnings) throws TrustSourceException {
+            String issuer = f.issuer();
+            String sequence = f.sequence();
+            Instant issuedAt = f.issuedAt();
+            Instant nextUpdate = f.nextUpdate();
             if (nextUpdate != null && now.isAfter(nextUpdate)) {
                 if (!config.allowExpired()) {
                     throw new TrustSourceException("The list is past its next update " + nextUpdate
