@@ -49,8 +49,9 @@ same rules (the [evaluation vectors](architecture.md#conformance) keep the two a
 [`library.mjs`](examples/trust-methods/library.mjs) asks every question of this guide through the library:
 
 ```sh
-node docs/examples/trust-methods/library.mjs            # decided on the device, from the service's snapshot
-node docs/examples/trust-methods/library.mjs pinned     # no service: only trust pinned in the app
+node docs/examples/trust-methods/library.mjs                 # decided on the device, from the service's snapshot
+node docs/examples/trust-methods/library.mjs pinned          # no service: only trust pinned in the app
+node docs/examples/trust-methods/library.mjs pinned strict   # the same, under the app's own minimum rules
 ```
 
 ## X.509 chains
