@@ -216,6 +216,25 @@ class MappedSourceValidationTest {
     }
 
     @Test
+    void a_aRequiredMemberThatSaysWhomTheRecordIsAboutAndYieldsNothingFailsTheLoad() {
+        // The partner renamed signing_certificates: listed without its certificate (and suspended), the issuer's key
+        // would be tied to no entry, and the anchor alone would decide about it.
+        Map<String, Object> m = boundMapping();
+        ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("required", List.of("certificates"));
+        Map<String, Object> d = boundList(1, members("state", "revoked", "certificates", null, "signing_certificates", List.of(der("ds"))));
+        d.put("issuers", List.of(((List<?>) d.get("issuers")).getFirst(), Map.of("id", "college", "credential_issuer",
+                "https://college.example", "state", "active", "certificates", List.of(der("ds-nl")))));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            assertThat(decide(registry, MDL)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(state(manager, "partner").lastError()).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be "
+                    + "read: certificates is required and yields nothing");
+        }
+    }
+
+    @Test
     void a_aBlockNoneOfWhoseRecordsCanBeReadCompletelyFailsTheLoad() {
         TestContext ctx = ctx();
         Map<String, Object> d = boundList(1, members("valid_until", "soon"));
