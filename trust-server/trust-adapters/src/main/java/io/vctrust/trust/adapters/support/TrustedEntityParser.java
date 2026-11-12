@@ -76,8 +76,9 @@ public final class TrustedEntityParser {
     private static final Map<String, String> READ_CONSTRAINTS = Map.of("doctypes", "docTypes", "crlurls", "crlUrls", "crl", "crl");
 
     /**
-     * What an entry written from outside the deployment may be called (an admin API entry, a record of a mapped
-     * source): it becomes a path segment, a database key and a field of the audit log.
+     * What an entry written through the admin API may be called: it becomes a path segment, a database key and a field
+     * of the audit log. A record of a mapped source becomes none of these, and its id is kept as written whenever an
+     * entry can carry it (MappedSourceFactory); this rule does not apply to it.
      */
     public static final Pattern ENTRY_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:@~-]{0,127}");
 

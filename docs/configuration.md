@@ -618,12 +618,14 @@ What then happens depends on the record:
   the list writes it: a `static` registry that withdraws `https://dmv.utopia.example` withdraws the party the mapped
   list has under that id (the two are one entry, merged by the registry, the stricter status standing), and a mapped
   CA whose `entity` is `Utopia DMV` belongs to the entity `Utopia DMV` of whichever source of the framework lists it.
-  An id that ends in `@` and another framework's id (`acme@other`) is the registry's to place, under the source's
-  framework (`acme@other@national`). The admin API's stricter rule for an entry's id does not apply here: an entry
-  written through it becomes a path segment, a database key and a field of the audit log, and a mapped record none of
-  these. Any other id (one with a line break or a bidi override in it, or longer than 512 characters) is replaced by
-  its derived id: `sha256:` and the whole SHA-256 of the id as written (UTF-8), in hexadecimal; so is an id the list
-  writes in that very form, so that no id the list writes can be the one another becomes. A derived id is this
+  When no source of the framework lists the id a CA's `entity` names, the CA is not loaded, and the source's state
+  says so ([Frameworks and sources](#frameworks-and-sources)). An id that ends in `@` and another framework's id
+  (`acme@other`) is the registry's to place, under the source's framework (`acme@other@national`). The admin API's
+  stricter rule for an entry's id does not apply here: an entry written through it becomes a path segment, a database
+  key and a field of the audit log, and a mapped record none of these. Any other id (one with a line break or a bidi
+  override in it, or longer than 512 characters) is replaced by its derived id: `sha256:` and the whole SHA-256 of
+  the id as written (UTF-8), in hexadecimal; so is an id the list writes in that very form, so that no id the list
+  writes can be the one another becomes. A derived id is this
   source's alone, and no other source names the party by it; nothing else about the record changes: its status is
   the one the list states, and a CA tied to such an id is tied to the entity it became. Two different ids never become
   one entry; one id twice is one entry (the strictest of its records standing). One warning a load says how many ids
