@@ -191,4 +191,52 @@ class MappedSourceFollowUpsTest {
         assertThat(MappedSourceProbesTest.revokedDmv(byHash, MappedSourceValidationTest.members("certificates", null)))
                 .isEqualTo(Map.entry("loaded", Decision.TRUSTED));
     }
+
+    // 7: two ids that differ only by a lone surrogate ------------------------------------------------------------------
+
+    /** JSON with every character outside ASCII written as an escape, so that a lone surrogate reaches the parser. */
+    static String ascii(String json) {
+        StringBuilder b = new StringBuilder();
+        for (char c : json.toCharArray()) {
+            b.append(c > 0x7e ? String.format("\\u%04x", (int) c) : String.valueOf(c));
+        }
+        return b.toString();
+    }
+
+    static String sha256(byte... bytes) throws Exception {
+        return "sha256:" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+    }
+
+    @Test
+    void item7_twoIdsThatDifferOnlyByALoneSurrogateStayTwoEntries() throws Exception {
+        Map<String, Object> mapping = Json.parseObject("""
+                {"entities": [{"each": "$.issuers[*]", "id": "$.id", "roles": ["CREDENTIAL_ISSUER"], "certificates": "$.certificates[*]",
+                   "authorizations": [{"each": "$.credentials[*]", "format": "$.format", "type": "$.type"}],
+                   "status": {"path": "$.state", "values": {"active": "ACTIVE"}, "default": "REVOKED"}}],
+                 "anchors": [{"each": "$.cas[*]", "id": "$.kid", "domain": "mdoc-iaca", "certificate": "$.certificate"}]}""");
+        // "A\ud800" pins ds-nl and may issue the mDL; "A\udc00" pins the DS and may issue the PID only.
+        Map<String, Object> doc = Map.of("issuers", List.of(
+                        Map.of("id", "A\uD800", "state", "active", "certificates", List.of(der("ds-nl")),
+                                "credentials", List.of(Map.of("format", "mso_mdoc", "type", MDL))),
+                        Map.of("id", "A\uDC00", "state", "active", "certificates", List.of(der("ds")),
+                                "credentials", List.of(Map.of("format", "mso_mdoc", "type", MappedSourceValidationTest.PID))),
+                        Map.of("id", "B\né", "state", "active")),
+                "cas", List.of(Map.of("kid", "utopia-iaca", "certificate", der("iaca"))));
+        TestContext ctx = ctx();
+        serveJson(ctx, ascii(Json.write(doc)));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", mapping)))) {
+            assertThat(state(m, "partner").lastError()).isNull();
+            // UTF-8 wrote both lone surrogates as '?': one derived id, one entry authorized for both, and the DS's mDL TRUSTED.
+            String high = sha256((byte) 'A', (byte) 0xED, (byte) 0xA0, (byte) 0x80);
+            String low = sha256((byte) 'A', (byte) 0xED, (byte) 0xB0, (byte) 0x80);
+            // An id without a lone surrogate keeps the derived id it had: the SHA-256 of its UTF-8.
+            String plain = sha256("B\né".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertThat(registry.snapshot().entities()).extracting(TrustedEntity::id).containsExactlyInAnyOrder(high, low, plain);
+            assertThat(registry.snapshot().entity(low).orElseThrow().authorizations()).extracting(a -> a.type())
+                    .containsExactly(MappedSourceValidationTest.PID);
+            assertThat(MappedSourceValidationTest.decide(registry, MDL)).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(MappedSourceValidationTest.decide(registry, MappedSourceValidationTest.PID)).isEqualTo(Decision.TRUSTED);
+        }
+    }
 }

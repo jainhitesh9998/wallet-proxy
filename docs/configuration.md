@@ -640,7 +640,9 @@ What then happens depends on the record:
   key and a field of the audit log, and a mapped record none of these. Any other id (one with a line break or a bidi
   override in it, or longer than 512 characters) is replaced by its derived id: `sha256:` and the whole SHA-256 of
   the id as written (UTF-8), in hexadecimal; so is an id the list writes in that very form, so that no id the list
-  writes can be the one another becomes. A derived id is this
+  writes can be the one another becomes. Half of a surrogate pair standing alone (`\ud800` in a JSON string) counts
+  as the three bytes UTF-8 gives any other character of its range, as WTF-8 writes it: plain UTF-8 has no form for it
+  and writes `?`, so `x\ud800` and `x\udc00` would be one entry. A derived id is this
   source's alone, and no other source names the party by it; nothing else about the record changes: its status is
   the one the list states, and a CA tied to such an id is tied to the entity it became. Two different ids never become
   one entry; one id twice is one entry (the strictest of its records standing). One warning a load says how many ids

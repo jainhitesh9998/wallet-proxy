@@ -1199,15 +1199,44 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         /**
          * The id a record is listed under when its own cannot be an entry's id as written: {@code sha256:} and the
          * whole SHA-256 of the id as written, in UTF-8, in hexadecimal. The whole digest, so that two different ids
-         * cannot become one entry.
+         * cannot become one entry; and the bytes of every id its own ({@link #utf8KeepingLoneSurrogates}).
          */
         static String derivedId(String id) {
             try {
-                byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(StandardCharsets.UTF_8));
+                byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(utf8KeepingLoneSurrogates(id));
                 return "sha256:" + java.util.HexFormat.of().formatHex(digest);
             } catch (java.security.NoSuchAlgorithmException e) {
                 throw new IllegalStateException(e);
             }
+        }
+
+        /**
+         * The id in UTF-8, with half of a surrogate pair that stands alone written as the three bytes UTF-8 gives any
+         * other code point of its range (as WTF-8 writes it). {@code String.getBytes(UTF_8)} writes every lone surrogate
+         * as {@code ?}: {@code x\uD800} and {@code x\uDC00} (and {@code x?}) had one derived id, and two parties became
+         * one entry. Text without a lone surrogate is encoded as UTF-8 encodes it, and no valid UTF-8 holds the bytes a
+         * lone surrogate gets ({@code ED A0..BF xx}), so two different ids never have the same bytes.
+         */
+        static byte[] utf8KeepingLoneSurrogates(String id) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(id.length() + 8);
+            id.codePoints().forEach(c -> {
+                if (c < 0x80) {
+                    out.write(c);
+                } else if (c < 0x800) {
+                    out.write(0xC0 | c >> 6);
+                    out.write(0x80 | c & 0x3F);
+                } else if (c < 0x10000) {
+                    out.write(0xE0 | c >> 12);
+                    out.write(0x80 | c >> 6 & 0x3F);
+                    out.write(0x80 | c & 0x3F);
+                } else {
+                    out.write(0xF0 | c >> 18);
+                    out.write(0x80 | c >> 12 & 0x3F);
+                    out.write(0x80 | c >> 6 & 0x3F);
+                    out.write(0x80 | c & 0x3F);
+                }
+            });
+            return out.toByteArray();
         }
 
         /**

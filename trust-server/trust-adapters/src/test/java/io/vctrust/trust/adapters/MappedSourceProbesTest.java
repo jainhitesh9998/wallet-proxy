@@ -161,10 +161,24 @@ class MappedSourceProbesTest {
 
     // 1: an id is a label (since the fifth round: kept as written whenever an entry can carry it) ----------------------
 
-    /** An id as the source lists it when an entry cannot carry it: {@code sha256:} and the whole SHA-256, in hexadecimal. */
+    /**
+     * An id as the source lists it when an entry cannot carry it: {@code sha256:} and the whole SHA-256, in hexadecimal,
+     * of its UTF-8, half of a surrogate pair standing alone as the three bytes of its code point (since the follow-ups
+     * after publication: UTF-8 wrote it as '?', and two ids that differ by one became one entry).
+     */
     static String derived(String id) {
         try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            id.codePoints().forEach(c -> {
+                if (c < 0x10000 && Character.isSurrogate((char) c)) {
+                    bytes.write(0xE0 | c >> 12);
+                    bytes.write(0x80 | c >> 6 & 0x3F);
+                    bytes.write(0x80 | c & 0x3F);
+                } else {
+                    bytes.writeBytes(new String(Character.toChars(c)).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            });
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray());
             return "sha256:" + java.util.HexFormat.of().formatHex(digest);
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
