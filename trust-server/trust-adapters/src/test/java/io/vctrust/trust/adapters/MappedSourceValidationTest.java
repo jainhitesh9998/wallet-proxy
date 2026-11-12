@@ -880,6 +880,53 @@ class MappedSourceValidationTest {
         }
     }
 
+    // J: a whole load has a deadline ---------------------------------------------------------------------------------
+
+    @Test
+    void j_aLoadStillFetchingPagesAfterLimitsDurationFails() throws Exception {
+        TestContext ctx = ctx();
+        MappedSourceRulesTest.MutableClock clock = new MappedSourceRulesTest.MutableClock(NOW);
+        // A registry that takes two minutes for every page, and has four.
+        io.vctrust.trust.core.spi.SourceContext slow = new io.vctrust.trust.core.spi.SourceContext() {
+            @Override
+            public io.vctrust.trust.core.spi.HttpFetcher http() {
+                return request -> {
+                    clock.now = clock.now.plus(Duration.ofMinutes(2));
+                    return ctx.http.execute(request);
+                };
+            }
+
+            @Override
+            public io.vctrust.trust.core.spi.ResourceLoader resources() {
+                return ctx.resources();
+            }
+
+            @Override
+            public java.time.Clock clock() {
+                return clock;
+            }
+        };
+        List<String> urls = List.of(MappedSourceRulesTest.LOCATION, PAGE_2, PAGE_3, MappedSourceRulesTest.LOCATION + "?page=4");
+        for (int i = 0; i < urls.size(); i++) {
+            Map<String, Object> d = MappedSourceRulesTest.doc("p" + i);
+            if (i + 1 < urls.size()) {
+                d.put("next", urls.get(i + 1));
+            }
+            ctx.http.json(urls.get(i), Json.write(d));
+        }
+        Map<String, Object> m = MappedSourceRulesTest.mapping();
+        m.put("pages", Map.of("next", "$.next"));
+        java.util.function.Function<Map<String, Object>, TrustSource> create = p -> new io.vctrust.trust.adapters.mapped.MappedSourceFactory()
+                .create(new io.vctrust.trust.core.spi.SourceDefinition("partner", "mapped", "partner", null, true, p), slow);
+        assertThat(MappedSourceRulesTest.loadError(create.apply(props("mapping", m)))).contains("The list is still being read after PT5M "
+                + "(limits.duration)");
+        assertThat(ctx.http.requests).hasSize(3);   // the fourth page is not asked for
+        clock.now = NOW;
+        assertThat(create.apply(props("mapping", m, "limits", Map.of("duration", "PT10M"))).load().entities()).hasSize(4);
+        assertThat(MappedSourceRulesTest.loadError(create.apply(props("mapping", m, "limits", Map.of("duration", "soon")))))
+                .contains("limits.duration must be a duration such as PT5M, longer than none");
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();

@@ -72,6 +72,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     static final int DEFAULT_MAX_ANCHORS = 1_000;
     /** The characters of mapped text one load may yield, all records together (64 Mi). */
     static final int DEFAULT_MAX_TEXT = 67_108_864;
+    /** How long a load may still be fetching pages: whoever serves them slowly would otherwise hold the load forever. */
+    static final Duration DEFAULT_MAX_DURATION = Duration.ofMinutes(5);
     static final int MAX_WARNINGS = 50;
     static final Duration ON_DEMAND_TTL = Duration.ofMinutes(10);
     static final Duration ON_DEMAND_NEGATIVE_TTL = Duration.ofMinutes(1);
@@ -94,7 +96,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
 
     /** The configuration, as read and checked when the source is created. */
     record Config(String location, URI origin, String publicUri, Map<String, String> headers, boolean jws, PinnedKeys keys,
-                  boolean allowUnverified, boolean allowExpired, int maxEntities, int maxAnchors, int maxText, Mapping mapping) {
+                  boolean allowUnverified, boolean allowExpired, int maxEntities, int maxAnchors, int maxText, Duration maxDuration,
+                  Mapping mapping) {
 
         /**
          * Header names only, and the location without its query: header values are credentials, a query often holds
@@ -248,14 +251,16 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         int maxEntities = DEFAULT_MAX_ENTITIES;
         int maxAnchors = DEFAULT_MAX_ANCHORS;
         int maxText = DEFAULT_MAX_TEXT;
+        Duration maxDuration = DEFAULT_MAX_DURATION;
         if (p.containsKey("limits")) {
-            Map<String, Object> l = Mapping.members(p.get("limits"), "limits", Set.of("entities", "anchors", "text"));
+            Map<String, Object> l = Mapping.members(p.get("limits"), "limits", Set.of("entities", "anchors", "text", "duration"));
             maxEntities = l.containsKey("entities") ? Mapping.positive(l.get("entities"), "limits.entities") : maxEntities;
             maxAnchors = l.containsKey("anchors") ? Mapping.positive(l.get("anchors"), "limits.anchors") : maxAnchors;
             maxText = l.containsKey("text") ? Mapping.positive(l.get("text"), "limits.text") : maxText;
+            maxDuration = l.containsKey("duration") ? Mapping.duration(l.get("duration"), "limits.duration", "PT5M") : maxDuration;
         }
         return new Config(location, origin, publicUri, headers, jws, keys, allowUnverified, bool(p, "allowExpired"),
-                maxEntities, maxAnchors, maxText, mapping);
+                maxEntities, maxAnchors, maxText, maxDuration, mapping);
     }
 
     private static String text(Map<String, Object> p, String key) {
@@ -474,7 +479,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     if (next == null) {
                         break;
                     }
+                    inTime(now);
                     page = fetch(next, now, warnings);
+                    inTime(now);
                     samePage(first, page.root(), pages + 1);
                 }
             } catch (IOException e) {
@@ -639,6 +646,17 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         private record Document(Object root, URI uri) {
+        }
+
+        /**
+         * A load still fetching pages {@code limits.duration} after it started fails: whoever serves the pages slowly
+         * (each within the outbound client's timeouts) would otherwise hold the load, and the refresh of this source,
+         * for as long as it likes. Checked before and after each page after the first.
+         */
+        private void inTime(Instant started) throws TrustSourceException {
+            if (ctx.clock().instant().isAfter(started.plus(config.maxDuration()))) {
+                throw new TrustSourceException("The list is still being read after " + config.maxDuration() + " (limits.duration)");
+            }
         }
 
         /** What the first page says about the pages: its own number (0 or 1) and the count, as far as they are mapped. */

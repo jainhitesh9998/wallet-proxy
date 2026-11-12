@@ -218,17 +218,7 @@ final class Mapping {
         } else {
             miss.add(404);
         }
-        Duration maxAge = null;
-        if (m.containsKey("maxAge")) {
-            try {
-                maxAge = Duration.parse(String.valueOf(m.get("maxAge")).trim());
-            } catch (DateTimeParseException e) {
-                maxAge = Duration.ZERO;
-            }
-            if (maxAge.isNegative() || maxAge.isZero()) {
-                throw new IllegalArgumentException("mapping.lookup.maxAge must be a duration such as PT24H, longer than none");
-            }
-        }
+        Duration maxAge = m.containsKey("maxAge") ? duration(m.get("maxAge"), "mapping.lookup.maxAge", "PT24H") : null;
         return new Lookup(url, Set.copyOf(types), List.copyOf(prefixes), Block.entity(m.get("entity"), "mapping.lookup.entity", false),
                 Set.copyOf(miss), maxAge);
     }
@@ -897,6 +887,20 @@ final class Mapping {
             return true;
         }
         throw new IllegalArgumentException(where + "." + key + " must be true or false");
+    }
+
+    /** An ISO 8601 duration longer than none ({@code PT5M}). */
+    static Duration duration(Object raw, String where, String example) {
+        Duration d;
+        try {
+            d = Duration.parse(String.valueOf(raw).trim());
+        } catch (DateTimeParseException e) {
+            d = Duration.ZERO;
+        }
+        if (d.isNegative() || d.isZero()) {
+            throw new IllegalArgumentException(where + " must be a duration such as " + example + ", longer than none");
+        }
+        return d;
     }
 
     static int positive(Object raw, String where) {
