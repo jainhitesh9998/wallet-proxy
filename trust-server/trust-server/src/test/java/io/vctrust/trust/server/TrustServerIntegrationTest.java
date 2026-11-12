@@ -881,6 +881,29 @@ class TrustServerIntegrationTest {
                 "context", Map.of("credentialFormat", "ldp_vc", "credentialTypes", java.util.Arrays.asList("UniversityDegreeCredential", null))));
         assertThat(nullType.statusCode()).as(nullType.body()).isEqualTo(400);
         assertThat(nullType.body()).contains("credentialTypes").doesNotContain("io.vctrust");
+        // A member that is not of the type it is declared as is refused, not read as the text of a number, and not a 500.
+        // The client library throws for the same shapes (request-shapes.test.ts).
+        Map<String, Object> ok = Map.of("identifier", "https://x.example");
+        Map<String, Map<String, Object>> wrong = new java.util.LinkedHashMap<>();
+        wrong.put("subject.x5c[0]", Map.of("subject", Map.of("x5c", java.util.Arrays.asList((Object) null))));
+        wrong.put("subject.x5c[1]", Map.of("subject", Map.of("x5c", List.of(Certificates.toBase64(IACA.certificate()), 7))));
+        wrong.put("subject.identifier", Map.of("subject", Map.of("identifier", 7)));
+        wrong.put("subject.kid", Map.of("subject", Map.of("identifier", "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK", "kid", true)));
+        wrong.put("context.credentialTypes[0]", Map.of("subject", ok, "context", Map.of("credentialTypes", List.of(7))));
+        wrong.put("context.credentialType", Map.of("subject", ok, "context", Map.of("credentialType", 7)));
+        wrong.put("context.credentialFormat", Map.of("subject", ok, "context", Map.of("credentialFormat", List.of("mso_mdoc"))));
+        wrong.put("context.responseUri", Map.of("subject", ok, "context", Map.of("responseUri", Map.of("uri", "https://x.example"))));
+        wrong.forEach((member, body) -> {
+            Map<String, Object> request = new java.util.LinkedHashMap<>(body);
+            request.put("role", "issuer");
+            try {
+                var r = post("/api/v1/evaluate", "key-a", request);
+                assertThat(r.statusCode()).as(member + ": " + r.body()).isEqualTo(400);
+                assertThat(r.body()).as(member).contains(member + " must be a string").doesNotContain("io.vctrust");
+            } catch (Exception e) {
+                throw new AssertionError(member, e);
+            }
+        });
         var type = get("/api/v1/entities/lookup?identifier=x&type=nonsense", "key-a");
         assertThat(type.statusCode()).isEqualTo(400);
         assertThat(type.body()).contains("Unknown identifier type").doesNotContain("io.vctrust");

@@ -204,6 +204,31 @@ export async function validateChainOnDevice(chain: Certificate[], anchors: Local
   return validateCertificateChain(chain, anchors, { ...opts, revocation: { ...revocation, crls: [...revocation.crls, ...got.crls], failures: got.failures } });
 }
 
+/**
+ * The members of a query that are strings must be strings, as the service refuses a request otherwise (400, Dtos.Text):
+ * read as something else (a credential type 7 as no type here and as the type "7" there, a null certificate as an
+ * unreadable chain), the two evaluators would decide the same question differently. A single member that is null or
+ * absent is absent; a list is a list of strings, without null.
+ */
+function requireShape(query: TrustQuery): void {
+  const single = (where: string, v: unknown) => {
+    if (v !== undefined && v !== null && typeof v !== 'string') throw new Error(`${where} must be a string`);
+  };
+  const list = (where: string, v: unknown) => {
+    if (v === undefined || v === null) return;
+    if (!Array.isArray(v)) throw new Error(`${where} must be a list of strings`);
+    v.forEach((x, i) => { if (typeof x !== 'string') throw new Error(`${where}[${i}] must be a string`); });
+  };
+  const { subject, context } = query as { subject?: Record<string, unknown>; context?: Record<string, unknown> };
+  single('subject.identifier', subject?.identifier);
+  list('subject.x5c', subject?.x5c);
+  single('subject.kid', subject?.kid);
+  single('context.credentialFormat', context?.credentialFormat);
+  single('context.credentialType', context?.credentialType);
+  single('context.responseUri', context?.responseUri);
+  list('context.credentialTypes', context?.credentialTypes);
+}
+
 /** One evaluation: the query as the steps read it, and the reasons they give. */
 interface Evaluation {
   query: TrustQuery;
@@ -309,11 +334,8 @@ export class LocalEvaluator {
     // Every type the credential asserts must be authorized (a W3C VC may carry several). Each is read by the one rule of
     // present(), as the primary type is: what else counts as blank differs between platforms (String.trim here,
     // Character.isWhitespace on the service), and a type one evaluator drops and the other checks is decided differently.
+    requireShape(query);
     const listed = query.context?.credentialTypes ?? [];
-    if (!Array.isArray(listed) || listed.some((t) => typeof t !== 'string')) {
-      // As the service refuses such a request: something that is not a type is neither a type nor the absence of one.
-      throw new Error('context.credentialTypes must be a list of types (strings)');
-    }
     const types = [...new Set([type, ...listed.map(present)].filter((t): t is string => t !== undefined))];
     const role = readRole(query.role);
     return { query, data, now, role, wantRole: roleName(role), format, type, types,

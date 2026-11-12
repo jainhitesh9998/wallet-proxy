@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
@@ -70,6 +71,21 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     ResponseEntity<Object> unexpected(Exception e) {
         log.error("Unhandled error", e);
         return respond(problem(HttpStatus.INTERNAL_SERVER_ERROR, "internal_error", "Internal error"));
+    }
+
+    /**
+     * A body that cannot be read. When the reason is a member of the wrong type ({@link Dtos.WrongType}), the answer
+     * names the member, as an invalid request does; otherwise Spring's answer, which names nothing of the service.
+     */
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatusCode status,
+                                                                  WebRequest request) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof Dtos.WrongType wrong) {
+                return respond(problem(HttpStatus.BAD_REQUEST, "invalid_request", wrong.getMessage()));
+            }
+        }
+        return super.handleHttpMessageNotReadable(ex, headers, status, request);
     }
 
     /** Spring MVC's own errors (missing parameter, wrong method, ...): problem+json as well. */
