@@ -541,7 +541,8 @@ instant depends on where it was written). A member cannot be read either when:
   restricting list is read, and whatever does not yield a type makes the record unreadable: `[]`, `[null]` or `{}`
   under `$.types[*]`, an index past the end, a filter that keeps nothing, an object without the member the path goes
   on to, the wrong kind, a value the translation does not know. Write it only for an upstream that means "every type"
-  by no type;
+  by no type. An item that says `allowAnyType: true` and gives its `type` a `default` is a configuration error: an item
+  that states no type would get the default under one and cover every type of its format under the other;
 - it is a restricting list (an `authorizations` item's `each`, an anchor's `docTypes`) that is there and yields
   nothing: `credentials: []`, `[null]` or `{}` under a mapped `authorizations`, a filter that keeps none of them, and
   the same for `docTypes`. This holds wherever the list is in the path, and for an index as for `[*]`:

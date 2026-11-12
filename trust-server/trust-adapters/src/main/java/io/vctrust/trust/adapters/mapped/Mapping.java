@@ -1255,6 +1255,12 @@ final class Mapping {
             throw new IllegalArgumentException(where + ": allowAnyType applies to an item whose type is read from a member of the "
                     + "item ($.name..., or a translation of one)");
         }
+        if (allowAnyType && type instanceof Value.Translated t && t.fallback() != null) {
+            // An item that states no type gets the default under one and every type of its format under the other: which
+            // one the operator meant cannot be told, and either silently ignored would be a guess.
+            throw new IllegalArgumentException(where + ": allowAnyType and a default on type contradict each other: an item that "
+                    + "states no type would get the default under one and cover every type of its format under the other; remove one");
+        }
         return new Item(each, java.util.Collections.unmodifiableMap(members), allowEmpty, allowAnyType);
     }
 

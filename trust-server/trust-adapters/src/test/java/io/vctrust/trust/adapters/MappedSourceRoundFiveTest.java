@@ -182,4 +182,52 @@ class MappedSourceRoundFiveTest {
                             + "$.certificates[*] finds text where [*] needs a list or an object");
         });
     }
+
+    // 2: allowAnyType with a default on the type ----------------------------------------------------------------------
+
+    /** The DS issuer authorized by {@code credentials} as {@code item} reads them, each credential of mso_mdoc without a type. */
+    static TrustSourceManager authorizedBy(TrustRegistry registry, Map<String, Object> item) {
+        TestContext ctx = ctx();
+        serveJson(ctx, MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("credentials",
+                List.of(Map.of("format", "mso_mdoc")))));
+        return manager(registry, source(ctx, props("mapping", MappedSourceValidationTest.withAuthorizations(item))));
+    }
+
+    static Map<String, Object> typeItem(Object allowAnyType, Object type) {
+        Map<String, Object> item = new LinkedHashMap<>(Map.of("each", "$.credentials[*]", "format", "$.format", "type", type));
+        if (allowAnyType != null) {
+            item.put("allowAnyType", allowAnyType);
+        }
+        return item;
+    }
+
+    @Test
+    void item2_allowAnyTypeAndADefaultOnTheTypeAreAConfigurationError() {
+        Map<String, Object> withDefault = Map.of("path", "$.type", "values", Map.of("mdl", MDL), "default", "none.at.all");
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = authorizedBy(registry, typeItem(true, withDefault))) {
+            // The default was ignored: the issuer was authorized for every type of mso_mdoc, and its PID was TRUSTED.
+            assertThat(state(m, "partner").lastError()).isEqualTo("Source 'partner' (mapped): mapping.entities[0].authorizations[0]: "
+                    + "allowAnyType and a default on type contradict each other: an item that states no type would get the default "
+                    + "under one and cover every type of its format under the other; remove one");
+            assertThat(MappedSourceValidationTest.decide(registry, MappedSourceValidationTest.PID)).isNotEqualTo(Decision.TRUSTED);
+        }
+        // Either alone reads as it did: the default (allowAnyType false or not said) authorizes the type it names;
+        // allowAnyType without a default authorizes every type of the format.
+        for (Object allowAnyType : java.util.Arrays.asList(false, null)) {
+            TrustRegistry r = new TrustRegistry();
+            try (TrustSourceManager m = authorizedBy(r, typeItem(allowAnyType, withDefault))) {
+                assertThat(state(m, "partner").lastError()).as(String.valueOf(allowAnyType)).isNull();
+                assertThat(r.snapshot().entity("partner:dmv").orElseThrow().authorizations()).as(String.valueOf(allowAnyType))
+                        .singleElement().satisfies(a -> assertThat(a.type()).isEqualTo("none.at.all"));
+                assertThat(MappedSourceValidationTest.decide(r, MappedSourceValidationTest.PID)).isEqualTo(Decision.NOT_TRUSTED);
+                assertThat(MappedSourceValidationTest.decide(r, MDL)).isEqualTo(Decision.NOT_TRUSTED);
+            }
+        }
+        TrustRegistry any = new TrustRegistry();
+        try (TrustSourceManager m = authorizedBy(any, typeItem(true, Map.of("path", "$.type", "values", Map.of("mdl", MDL))))) {
+            assertThat(state(m, "partner").lastError()).isNull();
+            assertThat(MappedSourceValidationTest.decide(any, MappedSourceValidationTest.PID)).isEqualTo(Decision.TRUSTED);
+        }
+    }
 }
