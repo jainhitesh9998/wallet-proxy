@@ -2,6 +2,7 @@ package io.vctrust.trust.adapters.mapped;
 
 import io.vctrust.trust.adapters.support.AdapterSupport;
 import io.vctrust.trust.adapters.support.TrustedEntityParser;
+import io.vctrust.trust.core.model.EntityStatus;
 import io.vctrust.trust.core.model.Identifier;
 import io.vctrust.trust.core.model.Provenance;
 import io.vctrust.trust.core.model.TrustAnchor;
@@ -377,11 +378,97 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             for (Tally t : anchorTallies) {
                 t.check(warnings);
             }
+            anchors = onePerId(anchors);
+            entities = strictest(entities, warnings);
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("pages", pages);
             details.put("format", config.jws() ? "jws" : "json");
             ListInfo info = new ListInfo(facts.issuer(), facts.sequence(), facts.issuedAt(), facts.nextUpdate(), signature(), details);
             return new SourceLoadResult(entities, anchors, info, warnings.list());
+        }
+
+        /**
+         * One anchor per id. Records of one load that map to the same id must say the same thing (certificate, domain,
+         * status, entity, constraints), and then are one anchor; otherwise the load fails. The registry keeps the first
+         * anchor of an id, so a CA withdrawn further down the list would stay active.
+         */
+        private static List<TrustAnchor> onePerId(List<TrustAnchor> anchors) throws TrustSourceException {
+            Map<String, TrustAnchor> byId = new LinkedHashMap<>();
+            for (TrustAnchor a : anchors) {
+                TrustAnchor held = byId.putIfAbsent(a.id(), a);
+                if (held == null) {
+                    continue;
+                }
+                List<String> differ = new ArrayList<>();
+                if (!held.certificate().equals(a.certificate())) {
+                    differ.add("certificate");
+                }
+                if (!held.domain().equals(a.domain())) {
+                    differ.add("domain");
+                }
+                if (held.status() != a.status()) {
+                    differ.add("status");
+                }
+                if (!Objects.equals(held.entityId(), a.entityId())) {
+                    differ.add("entity");
+                }
+                if (!held.constraints().equals(a.constraints())) {
+                    differ.add("constraints");
+                }
+                if (!differ.isEmpty()) {
+                    throw new TrustSourceException("Anchor " + Mapping.quote(a.id()) + " is given twice in the list with a different "
+                            + String.join(" and ", differ.size() <= 2 ? differ : List.of(String.join(", ", differ.subList(0, differ.size() - 1)),
+                            differ.getLast())) + ": which one holds cannot be told");
+                }
+            }
+            return List.copyOf(byId.values());
+        }
+
+        /**
+         * Records of one load that give one id are one entity: the registry merges them (one entity per country of a
+         * certificate list, say), taking the union of what they list. Within the load none of them may relax or hide
+         * what another states: each gets the strictest status, the latest validFrom and the earliest validUntil of
+         * them all, with a warning when they disagreed. (The registry's merge kept the stricter status already, but the
+         * first record's validity, so that a later record's earlier end was lost.)
+         */
+        private static List<TrustedEntity> strictest(List<TrustedEntity> entities, Warnings warnings) {
+            Map<String, List<TrustedEntity>> byId = new LinkedHashMap<>();
+            entities.forEach(e -> byId.computeIfAbsent(e.id(), k -> new ArrayList<>()).add(e));
+            if (byId.size() == entities.size()) {
+                return entities;
+            }
+            Map<String, TrustedEntity> strictest = new LinkedHashMap<>();
+            byId.forEach((id, records) -> {
+                if (records.size() == 1) {
+                    return;
+                }
+                EntityStatus status = records.getFirst().status();
+                Instant from = null;
+                Instant until = null;
+                for (TrustedEntity e : records) {
+                    status = e.status().ordinal() > status.ordinal() ? e.status() : status;   // as the registry ranks them
+                    from = e.validFrom() == null || from != null && !e.validFrom().isAfter(from) ? from : e.validFrom();
+                    until = e.validUntil() == null || until != null && !e.validUntil().isBefore(until) ? until : e.validUntil();
+                }
+                EntityStatus s = status;
+                Instant f = from;
+                Instant u = until;
+                if (records.stream().anyMatch(e -> e.status() != s || !Objects.equals(e.validFrom(), f) || !Objects.equals(e.validUntil(), u))) {
+                    warnings.add("Entity " + Mapping.quote(id) + " has " + records.size() + " records that disagree on its status or "
+                            + "validity; each keeps the strictest: status " + s + ", valid from " + (f == null ? "always" : f)
+                            + ", valid until " + (u == null ? "no end" : u));
+                    strictest.put(id, records.getFirst().toBuilder().status(s).validFrom(f).validUntil(u).build());
+                }
+            });
+            if (strictest.isEmpty()) {
+                return entities;
+            }
+            List<TrustedEntity> out = new ArrayList<>(entities.size());
+            for (TrustedEntity e : entities) {
+                TrustedEntity s = strictest.get(e.id());
+                out.add(s == null ? e : e.toBuilder().status(s.status()).validFrom(s.validFrom()).validUntil(s.validUntil()).build());
+            }
+            return out;
         }
 
         /**

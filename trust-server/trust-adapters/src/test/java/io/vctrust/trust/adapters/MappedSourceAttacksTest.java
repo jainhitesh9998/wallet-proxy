@@ -502,4 +502,73 @@ class MappedSourceAttacksTest {
         serveJson(many, withContexts(3, 1_001));
         assertThat(loadError(source(many, props("mapping", m)))).contains("identifiers: yields more than 1000 values for one record");
     }
+
+    // F6: the same id twice in one document: the first record won, also over a later REVOKED -------------------------
+
+    static Map<String, Object> withAuthorities(List<Map<String, Object>> authorities) {
+        Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        d.put("authorities", authorities);
+        return d;
+    }
+
+    static Map<String, Object> anchorMapping() {
+        Map<String, Object> m = MappedSourceRulesTest.mapping();
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "status", Map.of("path", "$.state", "values", Map.of("active", "ACTIVE"), "default", "REVOKED"), "docTypes", "$.doctypes[*]")));
+        return m;
+    }
+
+    @Test
+    void f6_twoRecordsOfOneAnchorIdMustSayTheSameThing() throws Exception {
+        TestContext ctx = ctx();
+        Map<String, Object> iaca = Map.of("kid", "iaca", "certificate", MappedTesting.der("iaca"), "state", "active",
+                "doctypes", List.of("org.iso.18013.5.1.mDL"));
+        // The CA withdrawn further down the list: the first record does not win.
+        Map<String, Object> withdrawn = new LinkedHashMap<>(iaca);
+        withdrawn.put("state", "withdrawn");
+        serveJson(ctx, withAuthorities(List.of(iaca, withdrawn)));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", anchorMapping())))) {
+            assertThat(state(m, "partner").lastError()).isEqualTo("Anchor 'iaca' is given twice in the list with a different status: "
+                    + "which one holds cannot be told");
+            assertThat(registry.snapshot().allAnchors()).isEmpty();
+        }
+        Map<String, Object> other = new LinkedHashMap<>(iaca);
+        other.put("certificate", MappedTesting.der("rp-ca"));
+        other.put("doctypes", List.of("eu.europa.ec.eudi.pid.1"));
+        serveJson(ctx, withAuthorities(List.of(iaca, other)));
+        assertThat(loadError(source(ctx, props("mapping", anchorMapping()))))
+                .isEqualTo("Anchor 'iaca' is given twice in the list with a different certificate and constraints: which one holds cannot be told");
+        // The same record twice is one anchor.
+        serveJson(ctx, withAuthorities(List.of(iaca, iaca)));
+        assertThat(source(ctx, props("mapping", anchorMapping())).load().anchors()).extracting(a -> a.id()).containsExactly("iaca");
+    }
+
+    @Test
+    void f6_recordsOfOneEntityIdCannotRelaxOrHideWhatAnotherStates() {
+        TestContext ctx = ctx();
+        Map<String, Object> m = entities("validUntil", "$.valid_until", "validFrom", "$.valid_from");
+        java.time.Instant soon = MappedSourceRulesTest.NOW.plus(Duration.ofDays(1));
+        java.time.Instant later = MappedSourceRulesTest.NOW.plus(Duration.ofDays(30));
+        java.time.Instant before = MappedSourceRulesTest.NOW.minus(Duration.ofDays(30));
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        d.put("issuers", List.of(
+                Map.of("id", "a", "credential_issuer", "https://a.example", "state", "active", "valid_from", before.toString()),
+                Map.of("id", "a", "credential_issuer", "https://a2.example", "state", "suspended", "valid_until", soon.toString()),
+                Map.of("id", "a", "credential_issuer", "https://a3.example", "state", "active", "valid_until", later.toString(),
+                        "valid_from", MappedSourceRulesTest.NOW.minus(Duration.ofDays(1)).toString()),
+                Map.of("id", "b", "credential_issuer", "https://b.example", "state", "active")));
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            var a = registry.snapshot().entity("partner:a").orElseThrow();
+            assertThat(a.status()).isEqualTo(io.vctrust.trust.core.model.EntityStatus.SUSPENDED);
+            assertThat(a.validUntil()).isEqualTo(soon);
+            assertThat(a.validFrom()).isEqualTo(MappedSourceRulesTest.NOW.minus(Duration.ofDays(1)));
+            assertThat(a.identifiers()).hasSize(3);
+            assertThat(state(manager, "partner").warnings()).containsExactly("Entity 'partner:a' has 3 records that disagree on its "
+                    + "status or validity; each keeps the strictest: status SUSPENDED, valid from " + MappedSourceRulesTest.NOW.minus(Duration.ofDays(1))
+                    + ", valid until " + soon);
+        }
+    }
 }
