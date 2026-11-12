@@ -5151,6 +5151,186 @@
           "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
         }
       }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "did.vm_not_found"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "did.vm_not_found"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "kid with '#' that is neither a DID URL nor a fragment: a verification method the identifier's DID document does not have",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "x#y"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "did.vm_not_found"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "did.vm_not_found"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "kid that is a fragment after a space: not a reference relative to the DID",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : " #z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "did.vm_not_found"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "did.vm_not_found"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "kid that names the key with an upper-case scheme: not a DID URL",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "DID:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "did.vm_not_found"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "did.vm_not_found"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "DID URL kid whose fragment holds a line break: a verification method the DID document does not have",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\n"
+        }
+      }
     }
   ],
   "description" : "Generated by EvaluationVectorsTest from cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",

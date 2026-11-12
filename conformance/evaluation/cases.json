@@ -1896,6 +1896,66 @@
           "credentialType": " "
         }
       }
+    },
+    {
+      "name": "kid with '#' that is neither a DID URL nor a fragment: a verification method the identifier's DID document does not have",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "x#y"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential"
+        }
+      }
+    },
+    {
+      "name": "kid that is a fragment after a space: not a reference relative to the DID",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": " #z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential"
+        }
+      }
+    },
+    {
+      "name": "kid that names the key with an upper-case scheme: not a DID URL",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "DID:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential"
+        }
+      }
+    },
+    {
+      "name": "DID URL kid whose fragment holds a line break: a verification method the DID document does not have",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\n"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential"
+        }
+      }
     }
   ]
 }

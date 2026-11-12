@@ -8,7 +8,12 @@ export interface ParsedDid {
   fragment?: string;
 }
 
-const DID_RE = /^did:([a-z0-9]+):((?:[A-Za-z0-9._\-]|%[0-9A-Fa-f]{2}|:)*(?:[A-Za-z0-9._\-]|%[0-9A-Fa-f]{2}))(?:[/?][^#]*)?(?:#(.*))?$/;
+/**
+ * The fragment is read as written, whatever it holds (a line break too), as the service reads it (Did.java): it names a
+ * verification method, and one the document does not have is not found there. '.' would stop at a line break and make
+ * such a DID URL invalid here and a missing key there.
+ */
+const DID_RE = /^did:([a-z0-9]+):((?:[A-Za-z0-9._\-]|%[0-9A-Fa-f]{2}|:)*(?:[A-Za-z0-9._\-]|%[0-9A-Fa-f]{2}))(?:[/?][^#]*)?(?:#([\s\S]*))?$/;
 
 /** Longer than any DID in use (a did:jwk of a large RSA key is about a thousand characters); the service applies the same limit. */
 export const MAX_DID_LENGTH = 4096;

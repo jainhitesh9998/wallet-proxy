@@ -630,9 +630,12 @@ export class LocalEvaluator {
     if (!did || !ref) return null;
     const { reasons } = ev;
     // The DID URL lets the resolver skip a snapshot document that lacks this (e.g. rotated) key.
-    // A relative reference ("#key-1") names a key of the DID.
+    // A relative reference ("#key-1") names a key of the DID. A reference that is neither a DID URL nor a bare fragment
+    // ("x#y", " #key-1", "DID:key:…#…") names no key of any DID: it is looked up as written in the DID's own document,
+    // which has no verification method of that id, as on the service (DidResolutionResult.verificationMethod). Resolved
+    // as a DID URL itself, it would fail to resolve and only be warned about.
     const kid = ref.startsWith('#') ? `${did}${ref}` : ref;
-    const res = await this.resolveDid(kid.includes('#') ? kid : did);
+    const res = await this.resolveDid(kid.startsWith('did:') && kid.includes('#') ? kid : did);
     const err = didError(res);
     if (err || !res.didDocument) {
       reasons.push(warning('did.unresolved', `DID ${did} could not be resolved: ${err ?? 'no document'}`));
