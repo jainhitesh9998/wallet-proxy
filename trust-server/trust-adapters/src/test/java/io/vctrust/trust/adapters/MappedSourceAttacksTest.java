@@ -629,4 +629,34 @@ class MappedSourceAttacksTest {
         serveJws(ctx, MappedSourceRulesTest.signedWithChain(root, root, MappedSourceRulesTest.doc("a")));
         assertThat(s.load().entities()).hasSize(1);
     }
+
+    // F9: failed lookups were repeated without pause ----------------------------------------------------------------
+
+    @Test
+    void f9_aFailedLookupIsRememberedForThirtySecondsLikeAMiss() throws Exception {
+        TestContext ctx = ctx();
+        MappedSourceRulesTest.MutableClock clock = new MappedSourceRulesTest.MutableClock(MappedSourceRulesTest.NOW);
+        ctx.clock = clock;
+        OnDemandResolver r = (OnDemandResolver) source(ctx, lookupOnly());
+        ctx.http.respond(BASE + "did%3Aexample%3Abroken", 500, "text/plain", utf8("down"));
+        assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:broken"))).hasMessageContaining("HTTP 500");
+        // Every client request that asks about the identifier would otherwise send one to the registry.
+        for (int i = 0; i < 5; i++) {
+            assertThat(r.resolve(Identifier.did("did:example:broken"))).isEmpty();
+        }
+        assertThat(ctx.http.requests).hasSize(1);
+        clock.now = MappedSourceRulesTest.NOW.plusSeconds(29);
+        assertThat(r.resolve(Identifier.did("did:example:broken"))).isEmpty();
+        assertThat(ctx.http.requests).hasSize(1);
+        // After 30 seconds it is asked again; now it answers.
+        clock.now = MappedSourceRulesTest.NOW.plusSeconds(31);
+        ctx.http.json(BASE + "did%3Aexample%3Abroken", Json.write(Map.of("id", "broken", "did", "did:example:broken")));
+        assertThat(r.resolve(Identifier.did("did:example:broken"))).isPresent();
+        assertThat(ctx.http.requests).hasSize(2);
+        // An answer that cannot be read is a failure too.
+        ctx.http.json(BASE + "did%3Aexample%3Aodd", "[\"not\", \"an\", \"answer\"");
+        assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:odd"))).isInstanceOf(TrustSourceException.class);
+        assertThat(r.resolve(Identifier.did("did:example:odd"))).isEmpty();
+        assertThat(ctx.http.requests).hasSize(3);
+    }
 }

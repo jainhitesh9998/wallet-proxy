@@ -73,6 +73,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     static final int MAX_WARNINGS = 50;
     static final Duration ON_DEMAND_TTL = Duration.ofMinutes(10);
     static final Duration ON_DEMAND_NEGATIVE_TTL = Duration.ofMinutes(1);
+    static final Duration ON_DEMAND_FAILURE_TTL = Duration.ofSeconds(30);
     static final int ON_DEMAND_MAX_ENTRIES = 5_000;
     /** A list issued further in the future than this would make every genuine list after it look older. */
     static final Duration CLOCK_SKEW = Duration.ofMinutes(5);
@@ -908,6 +909,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             try {
                 found = ask(identifier, now);
             } catch (TrustSourceException e) {
+                // Remembered like a miss, for a short time: every client request about the identifier would otherwise
+                // send one to a registry that is failing.
+                answers.put(identifier.key(), Optional.empty(), now.plus(ON_DEMAND_FAILURE_TTL));
                 throw reported(e);
             }
             answers.put(identifier.key(), found, now.plus(found.isPresent() ? ON_DEMAND_TTL : ON_DEMAND_NEGATIVE_TTL));
