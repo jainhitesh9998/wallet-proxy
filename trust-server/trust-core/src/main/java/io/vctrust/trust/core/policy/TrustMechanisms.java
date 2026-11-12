@@ -114,7 +114,9 @@ public final class TrustMechanisms {
     /**
      * Reads {@code trust.mechanisms} as the configuration states it: a list of trees of maps, lists and scalars
      * (kebab-case member names, as everywhere under {@code trust.*}). Scalars may be typed (YAML) or text (properties,
-     * environment): {@code true}, {@code 7}, or {@code "true"}, {@code "7"}.
+     * arguments): {@code true}, {@code 7}, or {@code "true"}, {@code "7"}. Environment variables can give only the members
+     * whose names are one word: a variable's name has no '-', so {@code ..._MAXINTERMEDIATES} names a member
+     * {@code maxintermediates}, which is refused here like any other member this reader does not know.
      *
      * @throws IllegalArgumentException naming the mechanism and the member, for anything that is not exactly understood
      */

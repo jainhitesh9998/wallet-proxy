@@ -334,7 +334,10 @@ decision from the same chain. There is no member for anything else of a certific
 How mechanisms apply:
 
 - **The first that matches governs.** Mechanisms are tried in the order they are listed; the first whose `for`
-  matches governs the question. A question that none matches is decided exactly as without mechanisms.
+  matches governs the question. A question that none matches is decided exactly as without mechanisms. **List the
+  strictest mechanism first.** A question matches by any type it asserts, so a W3C credential that asserts a type of a
+  lenient mechanism listed early and a type of a strict one listed later is governed by the lenient one, and the strict
+  one never applies to it; the same holds for a broad mechanism (no `types`, or a prefix) listed before a narrow one.
 - **A mechanism only tightens.** Everything built in keeps applying to a governed question: RFC 5280 validation, the
   built-in certificate profile of the question, the anchor's `docTypes`, what binds a certificate to the question (the
   DNS name of an `x509_san_dns` client identifier, `x509_hash`), DID relationships, identifier binding, the entity's
@@ -357,8 +360,24 @@ How mechanisms apply:
   block, or a member that would never apply (an `x509` block when `keys` does not accept `x5c`, a `did` block when it
   does not accept `did`). The message names the mechanism:
   `Trust mechanism trust.mechanisms[0] ('national-id'): x509 is given, but keys does not accept x5c: it would never apply`.
+  A property under `trust.` that binds to nothing stops the service as well, in a configuration file or an argument
+  (Spring Boot leaves environment variables and system properties out of this check): mechanisms written as a map by
+  id instead of a list, or a misspelt `trust.mechanism`, are refused with a message that names them
+  (`The elements [trust.mechanisms.national-id.for.role, ...] were left unbound`).
   The log names the mechanisms in force when it starts (`Trust mechanisms, tried in this order: [national-id]`), and
   `GET /admin/v1/registry` lists their ids (`mechanisms`).
+- **One list, from one place.** `trust.mechanisms` is a list, and Spring Boot takes a list as a whole from the
+  configuration source of highest precedence that sets any of it (a profile's file, a file given with
+  `spring.config.additional-location`, an argument, an environment variable): the list of a source below it is
+  replaced, never merged by position or by id. Where the replaced entries name a member that the replacing ones do not,
+  the service reports it as left unbound and does not start; otherwise the replacement is silent. An argument that sets
+  one member of one mechanism (`--trust.mechanisms[0].x509.revocation=required`) therefore does not change that member:
+  it stands for the whole list, and the service refuses to start. Write the whole list in one source. Members whose
+  names are kebab-case (`key-usage`, `extended-key-usage`, `same-country-as-anchor`, `max-validity-days`,
+  `crl-distribution-point`, `max-intermediates`) cannot be set through environment variables: a variable's name
+  carries no `-`, so `TRUST_MECHANISMS_0_X509_PROFILE_MAXINTERMEDIATES` names a member `maxintermediates`, which the
+  service refuses (`x509.profile.maxintermediates is not a member this service knows`). Give mechanisms in a
+  configuration file.
 
 | Code | Meaning |
 | --- | --- |
