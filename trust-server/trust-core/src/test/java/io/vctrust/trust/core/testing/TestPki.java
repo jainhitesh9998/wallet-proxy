@@ -185,6 +185,16 @@ public final class TestPki {
     /** A CRL issued by {@code issuer} (signed with {@code signer}'s key when given), with crlNumber 1. */
     public static X509CRL crl(Issued issuer, Instant thisUpdate, Instant nextUpdate, List<Revoked> revoked,
                               Consumer<X509v2CRLBuilder> extra, PrivateKey signer) {
+        return crl(issuer, thisUpdate, nextUpdate, revoked, extra, signer, BigInteger.ONE);
+    }
+
+    /** A CRL issued and signed by {@code issuer} with the given crlNumber. */
+    public static X509CRL crl(Issued issuer, Instant thisUpdate, Instant nextUpdate, List<Revoked> revoked, BigInteger crlNumber) {
+        return crl(issuer, thisUpdate, nextUpdate, revoked, null, null, crlNumber);
+    }
+
+    private static X509CRL crl(Issued issuer, Instant thisUpdate, Instant nextUpdate, List<Revoked> revoked,
+                               Consumer<X509v2CRLBuilder> extra, PrivateKey signer, BigInteger crlNumber) {
         try {
             X509v2CRLBuilder b = new X509v2CRLBuilder(X500Name.getInstance(issuer.certificate().getSubjectX500Principal().getEncoded()),
                     Date.from(thisUpdate));
@@ -194,7 +204,7 @@ public final class TestPki {
             for (Revoked r : revoked) {
                 b.addCRLEntry(r.serial(), Date.from(r.date()), r.reason());
             }
-            b.addExtension(Extension.cRLNumber, false, new CRLNumber(BigInteger.ONE));
+            b.addExtension(Extension.cRLNumber, false, new CRLNumber(crlNumber));
             b.addExtension(Extension.authorityKeyIdentifier, false, new JcaX509ExtensionUtils().createAuthorityKeyIdentifier(issuer.certificate()));
             if (extra != null) {
                 extra.accept(b);

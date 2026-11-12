@@ -380,9 +380,10 @@ public class TrustEvaluator {
                 rule == null ? null : rule.profile());
         boolean revocationRequired = ev.profile().requireRevocationStatus() || (rule != null && rule.revocationRequired());
         String docType = CredentialFormats.MSO_MDOC.equals(ev.format()) ? ev.type() : null;
+        // The CRLs that count are those of the client's frameworks: the ones its snapshot carries to the device.
         PathValidationResult x509 = pathValidator.validate(chain, anchors, new X509PathValidator.Options(ev.now(), certProfile,
                 new CertificateProfile.ProfileContext(claim.expectedDns(), docType), null)
-                .withRevocation(revocation, revocationRequired));
+                .withRevocation(revocation.forFrameworks(ev.profile()::accepts), revocationRequired));
         if (x509.valid()) {
             // The leaf's names are authenticated once the chain validates; use them to find the registered entity.
             Certificates.subjectKeyIdentifier(leaf).ifPresent(s -> proven.add(Identifier.of(IdentifierType.X509_SKI, s)));

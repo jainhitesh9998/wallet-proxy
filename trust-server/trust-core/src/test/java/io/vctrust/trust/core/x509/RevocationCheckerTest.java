@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -204,6 +205,109 @@ class RevocationCheckerTest {
         var u = validate(List.of(unreachable.certificate()), root, new Crls(), true);
         assertThat(u.valid()).isFalse();
         assertThat(u.revocation().getFirst().reason()).startsWith("CRL unavailable: HTTP 404");
+    }
+
+    /** The status of {@code DS} from CRLs held for its issuer, in the order given. */
+    private static CertificateRevocation statusFrom(List<X509CRL> held) {
+        Crls crls = new Crls();
+        held.forEach(c -> crls.hold(IACA, c));
+        return validate(List.of(DS.certificate()), IACA, crls, false).revocation().getFirst();
+    }
+
+    /**
+     * Several usable CRLs for one certificate decide as on the device (checkRevocation in trust-client): a revocation
+     * in any of them stands, and otherwise the newest decides (by thisUpdate, then CRL number). The order they are held
+     * in decides nothing.
+     */
+    @Test
+    void ofSeveralCrlsARevocationInAnyStandsAndOtherwiseTheNewestDecides() {
+        Instant now = Instant.now();
+        Instant lastWeek = now.minus(Duration.ofDays(7));
+        Instant today = now.minus(Duration.ofHours(1));
+        Instant nextWeek = now.plus(Duration.ofDays(7));
+        X509CRL oldGood = TestPki.crl(IACA, lastWeek, nextWeek, List.of(), BigInteger.ONE);
+        X509CRL newRevoked = TestPki.crl(IACA, today, nextWeek, List.of(Revoked.of(DS, 1)), BigInteger.TWO);
+        X509CRL oldRevoked = TestPki.crl(IACA, lastWeek, nextWeek, List.of(Revoked.of(DS, 1)), BigInteger.ONE);
+        X509CRL newGood = TestPki.crl(IACA, today, nextWeek, List.of(), BigInteger.TWO);
+        X509CRL oldHold = TestPki.crl(IACA, lastWeek, nextWeek, List.of(Revoked.of(DS, 6)), BigInteger.ONE);
+        X509CRL newHold = TestPki.crl(IACA, today, nextWeek, List.of(Revoked.of(DS, 6)), BigInteger.TWO);
+        for (boolean reversed : List.of(false, true)) {
+            java.util.function.BiFunction<X509CRL, X509CRL, CertificateRevocation> held = (a, b) -> statusFrom(reversed ? List.of(b, a) : List.of(a, b));
+            // A stale CRL from before the revocation does not take it back, whichever arrived first.
+            assertThat(held.apply(oldGood, newRevoked)).as("reversed=" + reversed).satisfies(s -> {
+                assertThat(s.status()).isEqualTo(Status.REVOKED);
+                assertThat(s.thisUpdate()).isEqualTo(today.truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
+            });
+            // A revocation stands in an older CRL too: a certificate does not come back from a revocation.
+            assertThat(held.apply(oldRevoked, newGood).status()).as("reversed=" + reversed).isEqualTo(Status.REVOKED);
+            // Two that agree: the newest is the one reported.
+            assertThat(held.apply(oldGood, newGood)).as("reversed=" + reversed).satisfies(s -> {
+                assertThat(s.status()).isEqualTo(Status.GOOD);
+                assertThat(s.thisUpdate()).isEqualTo(today.truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
+            });
+            // A hold can be lifted: it counts only when the newest CRL says it.
+            assertThat(held.apply(oldHold, newGood).status()).as("reversed=" + reversed).isEqualTo(Status.GOOD);
+            assertThat(held.apply(oldGood, newHold).status()).as("reversed=" + reversed).isEqualTo(Status.ON_HOLD);
+            // Issued at the same second: the higher CRL number is the newer.
+            X509CRL firstHold = TestPki.crl(IACA, today, nextWeek, List.of(Revoked.of(DS, 6)), BigInteger.ONE);
+            X509CRL secondGood = TestPki.crl(IACA, today, nextWeek, List.of(), BigInteger.TWO);
+            X509CRL firstGood = TestPki.crl(IACA, today, nextWeek, List.of(), BigInteger.ONE);
+            X509CRL secondHold = TestPki.crl(IACA, today, nextWeek, List.of(Revoked.of(DS, 6)), BigInteger.TWO);
+            assertThat(held.apply(firstHold, secondGood).status()).as("reversed=" + reversed).isEqualTo(Status.GOOD);
+            assertThat(held.apply(firstGood, secondHold).status()).as("reversed=" + reversed).isEqualTo(Status.ON_HOLD);
+        }
+        // A CRL that cannot be used decides nothing, also when it is held first.
+        X509CRL expiredRevoking = TestPki.crl(IACA, now.minus(Duration.ofDays(14)), now.minus(Duration.ofDays(1)), List.of(Revoked.of(DS, 1)), BigInteger.TEN);
+        assertThat(statusFrom(List.of(expiredRevoking, oldGood)).status()).isEqualTo(Status.GOOD);
+    }
+
+    /** A source that holds CRLs per framework, as the service's CrlService does. */
+    static final class FrameworkCrls implements RevocationChecker.CrlSource {
+        final Map<String, Crl> byFramework = new java.util.LinkedHashMap<>();
+
+        @Override
+        public List<Crl> heldFor(X509Certificate issuer) {
+            return List.copyOf(byFramework.values());
+        }
+
+        @Override
+        public List<Crl> heldFor(X509Certificate issuer, java.util.function.Predicate<String> frameworks) {
+            return byFramework.entrySet().stream().filter(e -> frameworks.test(e.getKey())).map(Map.Entry::getValue).toList();
+        }
+
+        @Override
+        public Crl fetch(String url) throws IOException {
+            throw new IOException("HTTP 404 from " + url);
+        }
+    }
+
+    @Test
+    void askedForAClientsFrameworksOnlyTheirCrlsCount() {
+        FrameworkCrls crls = new FrameworkCrls();
+        crls.byFramework.put("official", Crl.parse(der(TestPki.crl(IACA, Revoked.of(DS, 1))), "http://ca.test/current.crl", Instant.now()));
+        crls.byFramework.put("partner", Crl.parse(der(TestPki.crl(IACA, Instant.now().minus(Duration.ofDays(7)), Instant.now().plus(Duration.ofDays(7)),
+                List.of(), null, null)), "http://ca.test/last-week.crl", Instant.now()));
+        RevocationChecker checker = new RevocationChecker(crls, "trust-service");
+        java.util.function.Function<RevocationChecker, CertificateRevocation> status =
+                c -> validate(List.of(DS.certificate()), IACA, c, false).revocation().getFirst();
+        assertThat(status.apply(checker.forFrameworks(Set.of("official")::contains)).status()).isEqualTo(Status.REVOKED);
+        assertThat(status.apply(checker.forFrameworks(Set.of("partner")::contains))).satisfies(s -> {
+            assertThat(s.status()).isEqualTo(Status.GOOD);
+            assertThat(s.crlUrl()).isEqualTo("http://ca.test/last-week.crl");
+        });
+        assertThat(status.apply(checker.forFrameworks(Set.of("official", "partner")::contains)).status()).isEqualTo(Status.REVOKED);
+        assertThat(status.apply(checker.forFrameworks(f -> false))).satisfies(s -> {
+            assertThat(s.status()).isEqualTo(Status.UNKNOWN);
+            assertThat(s.reason()).isEqualTo("no CRL is published for it");
+        });
+        // Not asked for any frameworks: every CRL held counts.
+        assertThat(status.apply(checker).status()).isEqualTo(Status.REVOKED);
+        // Revocation switched off: the frameworks change nothing, the status is unknown and says why.
+        assertThat(status.apply(new RevocationChecker(RevocationChecker.CrlSource.SWITCHED_OFF, "trust-service")
+                .forFrameworks(Set.of("official")::contains))).satisfies(s -> {
+            assertThat(s.status()).isEqualTo(Status.UNKNOWN);
+            assertThat(s.reason()).isEqualTo(RevocationChecker.CrlSource.SWITCHED_OFF.unavailable());
+        });
     }
 
     @Test

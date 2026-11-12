@@ -207,15 +207,17 @@ own certificate is where the CA above it publishes, not where it does.
 
 ### What the service does
 
-- Fetches each anchor's CRL and accepts it only if the anchor issued it: same issuer name, signature by the
-  anchor's key.
+- Fetches each anchor's CRL from where the anchor's framework says the CA publishes: that framework's anchor records
+  of the certificate (`crlUrls`, `crl`), or the certificate's own distribution point as in the table above. Another
+  framework that lists the same certificate does not change that: its `crlUrls` or `crl` count for its own clients
+  only. A CRL is accepted only if the anchor issued it: same issuer name, signature by the anchor's key.
 - Refreshes it at the earlier of `trust.revocation.refresh` (1 h) and the CRL's next update. When a fetch fails it
   retries within five minutes and keeps the CRL it holds while that one is still current; the failure is logged
   (`CRL <url> for anchor <subject>: <reason>`).
 - Refuses a CRL older than the one it holds (issued earlier, or with a lower CRL number): a CRL from before a
   revocation, served again, would take the revocation back.
-- Ships the current CRL of every anchor a client can see in that client's snapshot (`crls`), up to
-  `snapshot-max-crl-bytes` (256 KiB) each. A larger one is left out, and so is one that could not be loaded; a device
+- Ships the current CRLs of the anchors a client can see, as their frameworks configure them, in that client's
+  snapshot (`crls`), up to `snapshot-max-crl-bytes` (256 KiB) each. A larger one is left out, and so is one that could not be loaded; a device
   then fetches the CRL itself, for a certificate the anchor issued from where the anchor publishes (its `crlUrls`,
   or its own distribution point: see below), or from a distribution point the certificate names. An anchor whose
   CRL is only pushed with `crl`, and that names no location anywhere, gives the device nowhere to look: raise the
@@ -223,8 +225,8 @@ own certificate is where the CA above it publishes, not where it does.
 - Relays any other CRL: `GET /api/v1/proxy/crl?url=<distribution point>`, cached until the earlier of `refresh`
   and its next update. The relay passes on only what parses as a CRL, byte for byte, and does not verify it: it
   does not know the issuer, the device does.
-- For its own decisions (`POST /api/v1/evaluate`) it fetches the CRLs of CAs below an anchor itself
-  (`fetch-on-demand`).
+- For its own decisions (`POST /api/v1/evaluate`) it uses the anchor CRLs of the frameworks the asking client sees,
+  the ones that client's snapshot carries, and fetches the CRLs of CAs below an anchor itself (`fetch-on-demand`).
 
 ### What the device does
 
@@ -258,9 +260,11 @@ scope covers the certificate (its issuing distribution point, when it has one).
 | `ON_HOLD` | It lists the certificate with reason `certificateHold` | `x509.on_hold` | `NOT_TRUSTED` until the hold is lifted |
 | `UNKNOWN` | No such CRL could be had: none is published, the download failed, the CA publishes only OCSP, or the CRL is of a kind that cannot be evaluated | `x509.revocation_unknown` | A warning; an error (`NOT_TRUSTED`) for a client profile with `require-revocation-status: true` |
 
-The device is stricter than the service in two places: when it holds several CRLs for a certificate, a revocation
-in any of them stands and otherwise the newest decides; and a CRL that states no next update is used for seven
-days after it was issued, not indefinitely.
+When several such CRLs count for a certificate (a client that sees two frameworks whose anchor records of one CA
+name different locations, say), a revocation in any of them stands, and otherwise the newest decides: the one
+issued last, by `thisUpdate` and then CRL number. The service and the device apply this rule alike. The device is stricter
+than the service in one place: a CRL that states no next update is used for seven days after it was issued, not
+indefinitely.
 
 ### Try it
 

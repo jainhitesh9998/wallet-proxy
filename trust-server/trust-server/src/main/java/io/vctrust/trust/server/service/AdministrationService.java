@@ -88,8 +88,8 @@ public class AdministrationService {
 
     /**
      * The CRL of every trust anchor, as the service holds it: one entry per anchor certificate and CRL location, with
-     * its dates, when it was fetched and will be next, the last error, whether it is current and whether snapshots
-     * carry it. A CRL that cannot be loaded leaves devices without it ({@code x509.revocation_unknown}); this is where
+     * the frameworks it is for (their clients get it and are decided by it), its dates, when it was fetched and will be
+     * next, the last error, whether it is current and whether snapshots carry it. A CRL that cannot be loaded leaves devices without it ({@code x509.revocation_unknown}); this is where
      * an operator sees that. Empty when revocation is off: then the service holds no CRL.
      */
     public List<Map<String, Object>> anchorCrls(ClientProfile admin) {

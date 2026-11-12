@@ -434,6 +434,15 @@ refusal does not say which address a host resolved to.
 | `trust.revocation.relay-crls` / `relay-status-lists` | `true` | Serve `/api/v1/proxy/crl` and `/api/v1/proxy/status-list` |
 | `trust.revocation.status-list-default-ttl` / `status-list-max-ttl` / `max-status-list-bytes` | `PT5M` / `PT1H` / 2 MiB | Relay caching and size |
 
+Where a CA publishes its CRL is configured per framework. For one framework and one anchor certificate, the CRL
+locations are those the framework's anchor records of the certificate name (`constraints.crlUrls`, a CRL pushed
+with `constraints.crl`), and when they name none and the certificate is self-issued, its own distribution point. An
+anchor record of another framework for the same certificate does not enter: its locations are for its own
+framework's clients. A client's snapshot carries the CRLs of the frameworks it sees, and the service's own decisions
+for that client (`POST /api/v1/evaluate`) use the same CRLs, besides those it fetches for CAs below an anchor. When
+several CRLs count for one certificate, a revocation in any of them stands and otherwise the newest decides, on the
+service as on the device.
+
 Where a CRL comes from, how a certificate's status is decided on the service and on the device, and how status
 lists are checked: [CRLs](trust-methods.md#crls) and [credential status lists](trust-methods.md#credential-status-lists).
 
@@ -444,7 +453,7 @@ For an admin client, under `/admin/v1`:
 | Request | Does |
 | --- | --- |
 | `GET /sources`, `POST /sources/{id}/refresh` | Source states; load one now |
-| `GET /crls` | The anchor CRLs the service holds, one entry per anchor certificate and CRL location: `issuer` (the certificate's thumbprint), `anchorIds`, `subject`, `url` (absent for a pushed CRL), `thisUpdate`, `nextUpdate`, `crlNumber`, `revoked`, `bytes`, `fetchedAt`, `nextFetch`, the last `error`, whether the CRL held is `current`, and whether it is `inSnapshots` (current and no larger than `snapshot-max-crl-bytes`). Empty with `trust.revocation.enabled: false` |
+| `GET /crls` | The anchor CRLs the service holds, one entry per anchor certificate and CRL location: `issuer` (the certificate's thumbprint), `anchorIds`, `frameworks` (the frameworks whose anchor records name this location: their clients get this CRL and are decided by it), `subject`, `url` (absent for a pushed CRL), `thisUpdate`, `nextUpdate`, `crlNumber`, `revoked`, `bytes`, `fetchedAt`, `nextFetch`, the last `error`, whether the CRL held is `current`, and whether it is `inSnapshots` (current and no larger than `snapshot-max-crl-bytes`). Empty with `trust.revocation.enabled: false` |
 | `GET /registry`, `GET /clients` | What is loaded; the client profiles |
 | `GET /managed/{entities\|anchors}` | The managed entries |
 | `PUT /managed/{entities\|anchors}/{id}` | Add or replace one (body: an entity or anchor in the registry format) |

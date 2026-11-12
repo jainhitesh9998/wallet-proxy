@@ -25,14 +25,16 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Revocation checking for a validated certificate path (RFC 5280 §6.3): every certificate below the trust anchor
- * is looked up in a CRL issued by its issuer — CRLs held for that issuer (trust anchor CRLs) first, then the CRLs
- * at the certificate's own distribution points. OCSP is never used: a request names the certificate being checked,
- * and the profiles this service serves (ISO 18013-5, HAIP) publish CRLs.
+ * is looked up in the CRLs issued by its issuer — CRLs held for that issuer (trust anchor CRLs) first, then, when
+ * none of those can be used, the CRLs at the certificate's own distribution points. When several CRLs can be used,
+ * a revocation in any of them stands and otherwise the newest decides. OCSP is never used: a request names the
+ * certificate being checked, and the profiles this service serves (ISO 18013-5, HAIP) publish CRLs.
  *
  * <p>Devices apply the same rules to the CRLs in the trust snapshot, so the service and the device agree.
  */
@@ -172,8 +174,17 @@ public final class RevocationChecker {
             }
         };
 
-        /** CRLs held for certificates issued by {@code issuer} (e.g. the CRLs of a trust anchor). */
+        /** CRLs held for certificates issued by {@code issuer} (e.g. the CRLs of a trust anchor), in every framework. */
         List<Crl> heldFor(X509Certificate issuer);
+
+        /**
+         * CRLs held for certificates issued by {@code issuer} in the frameworks {@code frameworks} accepts: where a CA
+         * publishes is configured per framework, and a client is decided for by the CRLs of the frameworks it sees,
+         * as its snapshot carries them. A source that does not hold CRLs per framework holds the same for all.
+         */
+        default List<Crl> heldFor(X509Certificate issuer, Predicate<String> frameworks) {
+            return heldFor(issuer);
+        }
 
         /** The CRL published at a distribution point; throws when it cannot be obtained. */
         Crl fetch(String url) throws IOException;
@@ -190,14 +201,30 @@ public final class RevocationChecker {
 
     private final CrlSource crls;
     private final String source;
+    /** The frameworks whose CRLs count; null: those of every framework. */
+    private final Predicate<String> frameworks;
 
     /**
      * @param crls   where CRLs come from; {@link CrlSource#SWITCHED_OFF} when revocation checking is switched off
      * @param source reported as {@link CertificateRevocation#source()}
      */
     public RevocationChecker(CrlSource crls, String source) {
+        this(crls, source, null);
+    }
+
+    private RevocationChecker(CrlSource crls, String source, Predicate<String> frameworks) {
         this.crls = Objects.requireNonNull(crls, "crls: CrlSource.SWITCHED_OFF when revocation checking is switched off");
         this.source = source;
+        this.frameworks = frameworks;
+    }
+
+    /**
+     * The same checker for one client: of the CRLs held for an issuer, only those of the frameworks
+     * {@code frameworks} accepts count ({@link CrlSource#heldFor(X509Certificate, Predicate)}), which are the CRLs
+     * that client's snapshot carries. CRLs fetched from a certificate's own distribution points count as before.
+     */
+    public RevocationChecker forFrameworks(Predicate<String> frameworks) {
+        return new RevocationChecker(crls, source, Objects.requireNonNull(frameworks, "frameworks"));
     }
 
     /**
@@ -238,17 +265,21 @@ public final class RevocationChecker {
         }
         String why = null;
         Set<String> tried = new HashSet<>();
-        for (Crl crl : crls.heldFor(issuer)) {
+        // What each usable CRL says. The CRLs held come first; the certificate's own distribution points are fetched
+        // only when none of those can be used, as on the device.
+        List<Verdict> said = new ArrayList<>();
+        for (Crl crl : frameworks == null ? crls.heldFor(issuer) : crls.heldFor(issuer, frameworks)) {
             if (crl.url() != null) {
                 tried.add(crl.url());
             }
             Verdict v = evaluate(index, crl, c, issuer, time);
             if (v.decided() != null) {
-                return v.decided();
+                said.add(v);
+            } else {
+                why = why == null ? v.why() : why;
             }
-            why = why == null ? v.why() : why;
         }
-        for (String url : Certificates.crlDistributionPoints(c)) {
+        for (String url : said.isEmpty() ? Certificates.crlDistributionPoints(c) : List.<String>of()) {
             if (!isHttp(url) || !tried.add(url)) {
                 continue;
             }
@@ -261,9 +292,18 @@ public final class RevocationChecker {
             }
             Verdict v = evaluate(index, crl, c, issuer, time);
             if (v.decided() != null) {
-                return v.decided();
+                said.add(v);
+            } else {
+                why = why == null ? v.why() : why;
             }
-            why = why == null ? v.why() : why;
+        }
+        // A revocation in any usable CRL stands: a stale CRL from before it, served again or named by someone else,
+        // does not take it back. A hold can be lifted, so like a "not revoked" it holds only when the newest CRL says
+        // it. The same rule as the device's (checkRevocation in trust-client).
+        Verdict revoked = newest(said.stream().filter(v -> v.decided().status() == CertificateRevocation.Status.REVOKED).toList());
+        Verdict decisive = revoked != null ? revoked : newest(said);
+        if (decisive != null) {
+            return decisive.decided();
         }
         if (why == null && Certificates.ocspUrls(c).stream().anyMatch(RevocationChecker::isHttp)) {
             why = "the issuer publishes only OCSP, which is not used";
@@ -272,10 +312,28 @@ public final class RevocationChecker {
                 null, null, null, null, null);
     }
 
-    private record Verdict(CertificateRevocation decided, String why) {
+    /** What one CRL says about a certificate ({@code decided}), or why it says nothing ({@code why}). */
+    private record Verdict(CertificateRevocation decided, String why, Crl crl) {
         static Verdict skip(String why) {
-            return new Verdict(null, why);
+            return new Verdict(null, why, null);
         }
+    }
+
+    /** The verdict of the most recently issued CRL: by thisUpdate, then CRL number; on a tie, the first. */
+    private static Verdict newest(List<Verdict> verdicts) {
+        Verdict best = null;
+        for (Verdict v : verdicts) {
+            if (best == null || newer(v.crl(), best.crl())) {
+                best = v;
+            }
+        }
+        return best;
+    }
+
+    private static boolean newer(Crl a, Crl b) {
+        int t = a.thisUpdate().compareTo(b.thisUpdate());
+        return t > 0 || (t == 0 && a.crlNumber().isPresent() && b.crlNumber().isPresent()
+                && a.crlNumber().get().compareTo(b.crlNumber().get()) > 0);
     }
 
     private Verdict evaluate(int index, Crl held, X509Certificate c, X509Certificate issuer, Instant time) {
@@ -319,12 +377,12 @@ public final class RevocationChecker {
         CRLReason reason = entry == null ? null : entry.getRevocationReason();
         if (entry == null || reason == CRLReason.REMOVE_FROM_CRL) {
             return new Verdict(status(index, c, CertificateRevocation.Status.GOOD, null, null, "crl", held.url(),
-                    held.thisUpdate(), held.nextUpdate()), null);
+                    held.thisUpdate(), held.nextUpdate()), null, held);
         }
         CertificateRevocation.Status s = reason == CRLReason.CERTIFICATE_HOLD
                 ? CertificateRevocation.Status.ON_HOLD : CertificateRevocation.Status.REVOKED;
         return new Verdict(status(index, c, s, reasonName(reason), entry.getRevocationDate().toInstant(), "crl",
-                held.url(), held.thisUpdate(), held.nextUpdate()), null);
+                held.url(), held.thisUpdate(), held.nextUpdate()), null, held);
     }
 
     /** Null when the CRL's Issuing Distribution Point scope covers {@code c}; otherwise why not. */

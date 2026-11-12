@@ -45,8 +45,11 @@ import java.util.function.Predicate;
  *
  * <p>Trust anchor CRLs come from the anchor's {@code constraints.crlUrls}, a CRL pushed with the anchor
  * ({@code constraints.crl}), or — for self-issued anchors without either — the anchor's own CRL distribution points.
- * Each is verified against the anchor (issuer name and signature), refreshed in the background before its
- * {@code nextUpdate}, and shipped in client snapshots so devices check revocation without asking anyone.
+ * That configuration is per framework: the anchor records of one framework decide where its clients' CRL for a
+ * certificate comes from, never those of another framework listing the same certificate. Each CRL is verified
+ * against the anchor (issuer name and signature), refreshed in the background before its {@code nextUpdate}, and
+ * shipped in the snapshots of the clients of the frameworks that use it, so devices check revocation without asking
+ * anyone; the service's own decisions for a client use the same CRLs ({@link #heldFor(X509Certificate, Predicate)}).
  *
  * <p>CRLs at other distribution points (certificates issued by intermediates) are fetched on demand, cached per URL
  * until their next update, for server-side checks and the CRL relay. Those are verified by whoever uses them.
@@ -58,7 +61,10 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     private static final Duration MIN_REFRESH = Duration.ofMinutes(1);
     private static final Duration ERROR_RETRY = Duration.ofMinutes(5);
 
-    /** A trust anchor's CRL: one per anchor certificate and CRL location ({@code url} null when pushed). */
+    /**
+     * A trust anchor's CRL: one per anchor certificate and CRL location ({@code url} null when pushed). {@code anchors}
+     * are the anchor records that use it: those of the frameworks whose configuration names this location.
+     */
     public record AnchorCrl(String issuer, X509Certificate issuerCertificate, List<TrustAnchor> anchors, String url,
                             Crl crl, Instant fetchedAt, String error, Instant nextFetch) {
 
@@ -131,8 +137,15 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
 
     @Override
     public List<Crl> heldFor(X509Certificate issuer) {
+        return heldFor(issuer, framework -> true);
+    }
+
+    /** The CRLs held for {@code issuer} that an anchor of a framework {@code frameworks} accepts uses. */
+    @Override
+    public List<Crl> heldFor(X509Certificate issuer, Predicate<String> frameworks) {
         String thumb = Certificates.sha256Thumbprint(issuer);
-        return anchorCrls.values().stream().filter(a -> a.issuer().equals(thumb) && a.crl() != null).map(AnchorCrl::crl).toList();
+        return anchorCrls.values().stream().filter(a -> a.issuer().equals(thumb) && a.crl() != null
+                && a.anchors().stream().anyMatch(anchor -> frameworks.test(anchor.frameworkId()))).map(AnchorCrl::crl).toList();
     }
 
     @Override
@@ -264,19 +277,29 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
         return crl.crlNumber().isPresent() && held.crlNumber().isPresent() && crl.crlNumber().get().compareTo(held.crlNumber().get()) < 0;
     }
 
-    /** One target per anchor certificate and CRL location. */
-    /** @param fetch whether CRLs are fetched at all; without it only the CRLs pushed with an anchor are targets */
+    /**
+     * One target per anchor certificate and CRL location, with the anchors whose framework uses it. Where a CA
+     * publishes is configured per framework: for one framework and certificate, the locations are those its anchor
+     * records of the certificate name ({@code crlUrls}, a pushed {@code crl}), and when they name none and the
+     * certificate is self-issued, the certificate's own distribution points. What an anchor record of another
+     * framework says about the same certificate does not enter: whoever writes one framework's list would otherwise
+     * choose the CRL, a stale one say, that the clients of another framework are told and decided by.
+     *
+     * @param fetch whether CRLs are fetched at all; without it only the CRLs pushed with an anchor are targets
+     */
     private static Map<String, Target> targets(Collection<TrustAnchor> anchors, boolean fetch) {
-        Map<String, List<TrustAnchor>> byCert = new LinkedHashMap<>();
+        Map<List<String>, List<TrustAnchor>> byFrameworkAndCert = new LinkedHashMap<>();
         for (TrustAnchor a : anchors) {
-            byCert.computeIfAbsent(a.thumbprint(), k -> new ArrayList<>()).add(a);
+            byFrameworkAndCert.computeIfAbsent(Arrays.asList(a.frameworkId(), a.thumbprint()), k -> new ArrayList<>()).add(a);
         }
-        Map<String, Target> out = new LinkedHashMap<>();
-        for (Map.Entry<String, List<TrustAnchor>> e : byCert.entrySet()) {
-            X509Certificate cert = e.getValue().getFirst().certificate();
+        Map<String, Target> found = new LinkedHashMap<>();
+        Map<String, List<TrustAnchor>> users = new LinkedHashMap<>();
+        for (List<TrustAnchor> group : byFrameworkAndCert.values()) {
+            X509Certificate cert = group.getFirst().certificate();
+            String issuer = group.getFirst().thumbprint();
             Set<String> urls = new LinkedHashSet<>();
             List<byte[]> inline = new ArrayList<>();
-            for (TrustAnchor a : e.getValue()) {
+            for (TrustAnchor a : group) {
                 urls.addAll(configuredUrls(a));
                 if (a.constraints().get("crl") instanceof String s && !s.isBlank()) {
                     inline.add(s.getBytes(StandardCharsets.US_ASCII));
@@ -285,16 +308,23 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
             if (urls.isEmpty() && inline.isEmpty() && Certificates.isSelfIssued(cert)) {
                 Certificates.crlDistributionPoints(cert).stream().filter(CrlService::isHttp).forEach(urls::add);
             }
-            List<TrustAnchor> list = List.copyOf(e.getValue());
+            Map<String, Target> own = new LinkedHashMap<>();
             for (String url : fetch ? urls : Set.<String>of()) {
-                Target t = new Target(e.getKey(), cert, list, url, null);
-                out.put(t.key(), t);
+                Target t = new Target(issuer, cert, List.of(), url, null);
+                own.put(t.key(), t);
             }
             for (byte[] b : inline) {
-                Target t = new Target(e.getKey(), cert, list, null, b);
-                out.putIfAbsent(t.key(), t);
+                Target t = new Target(issuer, cert, List.of(), null, b);
+                own.putIfAbsent(t.key(), t);
             }
+            // Frameworks that name the same location share one CRL: fetched once, held once, used by each.
+            own.forEach((key, t) -> {
+                found.putIfAbsent(key, t);
+                users.computeIfAbsent(key, k -> new ArrayList<>()).addAll(group);
+            });
         }
+        Map<String, Target> out = new LinkedHashMap<>();
+        found.forEach((key, t) -> out.put(key, new Target(t.issuer(), t.certificate(), List.copyOf(users.get(key)), t.url(), t.inline())));
         return out;
     }
 
@@ -329,8 +359,8 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
     }
 
     /**
-     * Snapshot claim {@code crls}: current, verified CRLs of the anchors a client can see, at most
-     * {@code maxBytes} each, deduplicated by issuer and location.
+     * Snapshot claim {@code crls}: current, verified CRLs used by the anchors a client can see (those of its
+     * frameworks), at most {@code maxBytes} each, deduplicated by issuer and location.
      */
     public List<Map<String, Object>> snapshotClaims(Predicate<TrustAnchor> visible, int maxBytes) {
         Instant now = clock.instant();
@@ -359,9 +389,9 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
 
     /**
      * Operator view of the anchor CRLs of the anchors {@code visible} selects: one entry per anchor certificate and
-     * CRL location, with what is held, when it was fetched and will be next, the last error, whether it is current
-     * and whether snapshots carry it. A member without a value is left out: a pushed CRL has no url, a CRL that never
-     * loaded has no dates, a load that went well has no error.
+     * CRL location, with the anchors and frameworks that use it, what is held, when it was fetched and will be next,
+     * the last error, whether it is current and whether snapshots carry it. A member without a value is left out: a
+     * pushed CRL has no url, a CRL that never loaded has no dates, a load that went well has no error.
      *
      * @param snapshotMaxBytes the largest CRL a snapshot carries ({@code trust.revocation.snapshot-max-crl-bytes})
      */
@@ -376,6 +406,9 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("issuer", a.issuer());
             m.put("anchorIds", ids);
+            // The frameworks whose clients get this CRL and are decided by it: those whose anchor records name its location.
+            m.put("frameworks", a.anchors().stream().filter(visible).map(TrustAnchor::frameworkId).distinct()
+                    .sorted(Comparator.nullsFirst(Comparator.naturalOrder())).toList());
             m.put("subject", a.issuerCertificate().getSubjectX500Principal().getName());
             if (a.url() != null) {
                 m.put("url", a.url());
