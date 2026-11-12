@@ -83,11 +83,14 @@ final class JsonPath {
      * @param there whether a {@code [*]} or a filter of the path, wherever it is, met a list or an object: the list is
      *              there, and when it yields nothing it restricts to nothing ({@code "doctypes": []} under
      *              {@code $.doctypes[*].id} as well as under {@code $.doctypes[*]})
-     * @param lost  whether something the list holds was left out on the way: a filter left out an item that is not
-     *              null, or an item it selected has null where the path goes on. Such a list is not empty, and
-     *              {@code allowEmpty} does not stand for it
+     * @param lost   whether something the list holds was left out on the way: a filter left out an item that is not
+     *               null, or an item it selected has null where the path goes on. Such a list is not empty, and
+     *               {@code allowEmpty} does not stand for it
+     * @param hollow whether, past a list, an item holds nothing where the path goes on: the item is {@code null}, or the
+     *               member the path goes on to is. For a member that says whom a record is about, such an item cannot
+     *               be read (an item without that member at all is {@link #restricted}'s error)
      */
-    record Restricted(List<Object> nodes, boolean there, boolean lost) {
+    record Restricted(List<Object> nodes, boolean there, boolean lost, boolean hollow) {
     }
 
     /**
@@ -104,7 +107,7 @@ final class JsonPath {
         if (s.lacking() != null) {
             throw new IllegalArgumentException(s.lacking());
         }
-        return new Restricted(s.nodes(), s.there(), s.lost());
+        return new Restricted(s.nodes(), s.there(), s.lost(), s.hollow());
     }
 
     /** The member a path from the current record names first ({@code types} in {@code $.types[0].id}); null for any other path. */
@@ -121,7 +124,7 @@ final class JsonPath {
      * What a path selected, and what {@link #restricted} needs: whether a list segment met a container, whether a
      * non-null item was lost on the way, and why an item lacks what the path goes on to (null when none does).
      */
-    private record Selection(List<Object> nodes, boolean there, boolean lost, String lacking) {
+    private record Selection(List<Object> nodes, boolean there, boolean lost, boolean hollow, String lacking) {
     }
 
     private Selection selection(Object current, Object root) {
@@ -133,7 +136,7 @@ final class JsonPath {
             try {
                 Selection s = evaluate(root);
                 m = new Memo(new WeakReference<>(root), new Selection(Collections.unmodifiableList(s.nodes()), s.there(), s.lost(),
-                        s.lacking()), null);
+                        s.hollow(), s.lacking()), null);
             } catch (IllegalArgumentException e) {
                 m = new Memo(new WeakReference<>(root), null, e.getMessage());
             }
@@ -161,13 +164,18 @@ final class JsonPath {
         boolean afterList = false;
         boolean there = false;
         boolean lost = false;
+        boolean hollow = false;
         String lacking = null;
         for (Segment s : segments) {
-            boolean list = s instanceof Wildcard || s instanceof Filter;
+            // An index reads a list as [*] does: one that meets a list and selects nothing, or null, is read as a list
+            // that is there and selects nothing, or null (fourth round).
+            boolean list = s instanceof Wildcard || s instanceof Filter || s instanceof Index;
             List<Object> next = new ArrayList<>();
             for (Object n : nodes) {
                 if (Value.blank(n)) {
-                    // Nothing there (an empty string is absent like null): nothing to look into.
+                    // Nothing there (an empty string is absent like null): nothing to look into. Past a list, an item
+                    // that holds nothing where the path goes on is hollow: what the path goes on to is not there.
+                    hollow |= afterList;
                     continue;
                 }
                 if (!s.accepts(n)) {
@@ -194,6 +202,7 @@ final class JsonPath {
                             + "; a list that restricts is not read past an item it cannot read";
                 } else if (afterList && Value.blank(next.getLast())) {
                     lost = true;
+                    hollow = true;
                 }
             }
             afterList |= list;
@@ -202,7 +211,7 @@ final class JsonPath {
                 break;
             }
         }
-        return new Selection(nodes, there, lost, lacking);
+        return new Selection(nodes, there, lost, hollow, lacking);
     }
 
     /** What a node of a document is, in words, for a message. */

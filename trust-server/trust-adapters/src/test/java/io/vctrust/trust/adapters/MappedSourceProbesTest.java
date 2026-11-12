@@ -323,4 +323,93 @@ class MappedSourceProbesTest {
         assertThat(anyType("$.types[*].id", credential("types", List.of(Map.of("id", PID), Map.of("name", "x")))))
                 .isEqualTo(Map.entry(EntityStatus.SUSPENDED, Decision.NOT_TRUSTED));
     }
+
+    // 3: an identifying member is read strictly past a list; an index is a list segment ------------------------------------
+
+    /** The revoked issuer "dmv" with {@code members} put over it, under a mapping whose block has {@code block} put over it. */
+    static Map.Entry<String, Decision> revokedDmv(Map<String, Object> block, Map<String, Object> members) {
+        Map<String, Object> m = MappedSourceValidationTest.boundMapping();
+        ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).putAll(block);
+        Map<String, Object> dmv = new LinkedHashMap<>(Map.of("state", "revoked"));
+        dmv.putAll(members);
+        TestContext ctx = ctx();
+        serveJson(ctx, MappedSourceValidationTest.boundList(1, dmv));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            String error = state(manager, "partner").lastError();
+            return Map.entry(error == null ? "loaded" : error, MappedSourceValidationTest.decide(registry, MDL));
+        }
+    }
+
+    @Test
+    void item3_certificatesPastAListAreReadStrictly() {
+        // As the documented snapshot mapping writes it: each certificate an object holding the certificate.
+        Map<String, Object> pathOn = Map.of("certificates", "$.certificates[*].certificate");
+        Map<String, Object> nullCertificate = new LinkedHashMap<>();
+        nullCertificate.put("certificate", null);
+        Map<String, Object> cases = new LinkedHashMap<>();
+        cases.put("[{pem}]", List.of(Map.of("pem", der("ds"))));
+        cases.put("[{certificate: null}]", List.of(nullCertificate));
+        cases.put("[{}]", List.of(Map.of()));
+        cases.put("[null]", java.util.Collections.singletonList(null));
+        cases.put("[{certificate}, {cert}]", List.of(Map.of("certificate", der("ds-nl")), Map.of("cert", der("ds"))));
+        cases.forEach((what, certificates) -> {
+            // Listed REVOKED without the DS certificate, the chain decided alone: TRUSTED.
+            var r = revokedDmv(pathOn, MappedSourceValidationTest.members("certificates", certificates));
+            assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(what).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: ");
+        });
+        // There and empty: no certificate stated, which is not one that cannot be read; one there is read.
+        assertThat(revokedDmv(pathOn, MappedSourceValidationTest.members("certificates", List.of()))).isEqualTo(Map.entry("loaded",
+                Decision.TRUSTED));
+        assertThat(revokedDmv(pathOn, MappedSourceValidationTest.members("certificates", List.of(Map.of("certificate", der("ds"))))))
+                .isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+    }
+
+    @Test
+    void item3_identifierItemsAndRolesPastAListAreReadStrictly() {
+        Map<String, Object> ids = Map.of("identifiers", List.of(Map.of("each", "$.ids[*]", "type", "$.type", "value", "$.value")));
+        // Renamed members in an item of a list there: no identifier was read, and the record listed without one.
+        assertThat(revokedDmv(ids, MappedSourceValidationTest.members("ids", List.of(Map.of("kind", "DNS", "val", "dmv.utopia.example")))).getKey())
+                .startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: identifiers: ");
+        assertThat(revokedDmv(ids, MappedSourceValidationTest.members("ids", List.of())).getKey()).isEqualTo("loaded");
+        assertThat(revokedDmv(ids, MappedSourceValidationTest.members("ids", List.of(Map.of("type", "DNS", "value", "dmv.utopia.example"))))
+                .getKey()).isEqualTo("loaded");
+        // roles: { path: $.roles[*].name, allowEmpty: true } over [null]: listed without a role ("none stated").
+        Map<String, Object> roles = Map.of("roles", Map.of("path", "$.roles[*].name", "allowEmpty", true));
+        assertThat(revokedDmv(roles, MappedSourceValidationTest.members("roles", java.util.Collections.singletonList(null))).getKey())
+                .startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: roles: ");
+        assertThat(revokedDmv(roles, MappedSourceValidationTest.members("roles", List.of(Map.of("title", "issuer")))).getKey())
+                .startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: roles: ");
+    }
+
+    @Test
+    void item3_anIndexThatMeetsAListAndSelectsNothingIsThereAndEmpty() {
+        // each: $.credentials[0] over []: the issuer was unconstrained, authorized for the PID.
+        Map<String, Object> m = MappedSourceValidationTest.withAuthorizations(Map.of("each", "$.credentials[0]", "format", "$.format",
+                "type", "$.type"));
+        TestContext ctx = ctx();
+        serveJson(ctx, MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("credentials", List.of())));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            assertThat(MappedSourceValidationTest.decide(registry, PID)).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).isEqualTo(EntityStatus.SUSPENDED);
+        }
+        // docTypes: $.doctypes[0] over [] or [null]: the IACA was free to sign any doctype.
+        for (Object doctypes : List.of(List.of(), java.util.Collections.singletonList(null))) {
+            Map<String, Object> anchored = MappedSourceValidationTest.boundMapping();
+            anchored.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate",
+                    "$.certificate", "docTypes", "$.doctypes[0]")));
+            Map<String, Object> d = MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("certificates", null));
+            d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", der("iaca"), "doctypes", doctypes),
+                    Map.of("kid", "rp-ca", "certificate", der("rp-ca"))));
+            TestContext c = ctx();
+            serveJson(c, d);
+            TrustRegistry r = new TrustRegistry();
+            try (TrustSourceManager manager = manager(r, source(c, props("mapping", anchored)))) {
+                assertThat(MappedSourceValidationTest.decide(r, PID)).as(String.valueOf(doctypes)).isNotEqualTo(Decision.TRUSTED);
+                assertThat(r.snapshot().allAnchors()).as(String.valueOf(doctypes)).extracting(a -> a.id()).containsExactly("rp-ca");
+            }
+        }
+    }
 }

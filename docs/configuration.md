@@ -544,9 +544,10 @@ instant depends on where it was written). A member cannot be read either when:
   by no type;
 - it is a restricting list (an `authorizations` item's `each`, an anchor's `docTypes`) that is there and yields
   nothing: `credentials: []`, `[null]` or `{}` under a mapped `authorizations`, a filter that keeps none of them, and
-  the same for `docTypes`. This holds wherever the list is in the path: `$.doctypes[*].id` over `"doctypes": []`, or
-  `$.credentials[*].types[*]` over `"credentials": []`, restricts to nothing too; and past a list, an item that lacks
-  the member the path goes on to (`[{}]` under `$.doctypes[*].id`) cannot be read. An empty list says "none", which
+  the same for `docTypes`. This holds wherever the list is in the path, and for an index as for `[*]`:
+  `$.doctypes[*].id` over `"doctypes": []`, `$.doctypes[0]` over `[]`, or `$.credentials[*].types[*]` over
+  `"credentials": []`, restricts to nothing too; and past a list, an item that lacks the member the path goes on to
+  (`[{}]` under `$.doctypes[*].id`) cannot be read. An empty list says "none", which
   is not "no restriction"; only a member that is not there at all, `null` or `""`, is absent. In a restricting list, a
   value its translation does not know (and no `default`) cannot be read either: left out, it would narrow the list
   or empty it. Unless the mapping says `allowEmpty: true` for that list: on a nested item
@@ -564,6 +565,12 @@ instant depends on where it was written). A member cannot be read either when:
   unpinned;
 - it is an identifier item that yields its `value` but no `type` (or the reverse); an item that finds nothing at all is
   absent. Display items and context URLs without what they need are left out;
+- it says whom the record is about (`roles`, `certificates`, an `identifiers` item with an `each` of its own), and
+  past a list or an index an item does not yield what the path goes on to: a member missing, `null`, the wrong kind
+  (`$.certificates[*].certificate` over `[{"pem": ...}]`, `[{"certificate": null}]`, `[{}]` or `[null]`), or an
+  identifier item of the list that yields neither its type nor its value (its members renamed upstream). A list there
+  and empty states none (for `roles`, only under `allowEmpty`). Read loosely, the party would be listed without what
+  ties it to its key, and its CA alone would decide;
 - it is `roles`, translated, and the document holds a role the translation does not know (and no `default`); or
   `roles` under `allowEmpty`, and the list is there but yields nothing for another reason than having no item: a
   filter emptied it, or its items are `null`;

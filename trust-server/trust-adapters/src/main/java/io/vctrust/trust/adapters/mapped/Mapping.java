@@ -492,8 +492,8 @@ final class Mapping {
                 // What identifies the record first: what it says about whom matters most.
                 r.read("id", () -> text("id", record, root));
                 r.readKeepingEmpty("roles", () -> roles(record, root));
-                r.read("identifiers", () -> objects("identifiers", record, root, Set.of("type", "value"), Items.WHOLE));
-                r.read("certificates", () -> pem(texts("certificates", record, root), "certificates"));
+                r.read("identifiers", () -> identifiers(record, root));
+                r.read("certificates", () -> pem(certificates(record, root), "certificates"));
                 r.read("name", () -> describing(r, () -> text("name", record, root)));
                 r.read("display", () -> objects(items(fields.get("display")), "display", record, root, Set.of("name"), Items.LEAVE_OUT,
                         r.leftOut));
@@ -754,6 +754,7 @@ final class Mapping {
             List<String> out = new ArrayList<>();
             boolean noneStated = false;
             for (Value v : values(fields.get("roles"))) {
+                strictly(v, "roles", record, root);
                 if (v.allowEmpty()) {
                     Value.Restricting found;
                     try {
@@ -790,6 +791,61 @@ final class Mapping {
                 bounded(out, "roles");
             }
             return out.isEmpty() ? (noneStated ? List.of() : null) : out;
+        }
+
+        /**
+         * A form of a member that says whom a record is about (roles, certificates), read as a restricting list is read:
+         * past a list (or an index), an item that does not have the member the path goes on to, or holds nothing where
+         * it goes on, cannot be read. Read leniently, {@code $.certificates[*].certificate} over {@code [{"pem": ...}]}
+         * listed the party without its certificate, and the chain to its CA decided alone.
+         */
+        private static void strictly(Value v, String member, Object record, Object root) {
+            JsonPath p = v instanceof Value.At a ? a.path() : v instanceof Value.Translated t ? t.path() : null;
+            if (p != null && restricted(p, member, record, root).hollow()) {
+                throw hollowItem(member, p.text());
+            }
+        }
+
+        private static IllegalArgumentException hollowItem(String member, String path) {
+            return new IllegalArgumentException(member + ": " + path + " finds an item that holds nothing where the path goes on; "
+                    + "what says whom a record is about is not read past it");
+        }
+
+        /** The certificates, each form read strictly ({@link #strictly}). */
+        private List<String> certificates(Object record, Object root) {
+            for (Value v : values(fields.get("certificates"))) {
+                strictly(v, "certificates", record, root);
+            }
+            return texts("certificates", record, root);
+        }
+
+        /**
+         * The identifiers. An item with an {@code each} of its own reads a list strictly ({@link #strictly}), and every
+         * item of it that is there must yield its type and its value: an item whose members were renamed upstream
+         * ({@code {"kind": ..., "val": ...}}) would otherwise be no identifier, and the party's key bound to nothing. A
+         * list that is there and empty states none. An item without an {@code each} is the record's own: what it does
+         * not find is absent.
+         */
+        private List<Map<String, Object>> identifiers(Object record, Object root) {
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Item item : items(fields.get("identifiers"))) {
+                List<Object> matches = List.of(record);
+                if (item.each != null) {
+                    JsonPath.Restricted found = restricted(item.each, "identifiers", record, root);
+                    if (found.hollow()) {
+                        throw hollowItem("identifiers", item.each.text());
+                    }
+                    matches = found.nodes();
+                }
+                List<Map<String, Object>> these = mapItems(item, matches, "identifiers", root, Set.of("type", "value"), Items.WHOLE, null);
+                if (item.each != null && these.size() < matches.stream().filter(o -> !Value.blank(o)).count()) {
+                    throw new IllegalArgumentException("identifiers: an item of " + item.each.text() + " yields neither its type nor its "
+                            + "value; what says whom a record is about is not read past it");
+                }
+                out.addAll(these);
+                bounded(out, "identifiers");
+            }
+            return out;
         }
 
         /**

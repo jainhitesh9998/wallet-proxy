@@ -215,10 +215,13 @@ class MappedSourceValidationTest {
                 Map.of("kind", "DID", "value", "did:example:dmv")))));
         assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", typed)))).startsWith("mapping.entities[0]: record 1 (id "
                 + "'partner:dmv') cannot be read: identifiers: an item yields value but no type");
-        // An item that finds nothing at all is absent, as is one whose only path finds nothing.
+        // An item of a list there that finds nothing at all was absent here; since the fourth round (item 3) it cannot be
+        // read: its members may be renamed upstream, and the party's key would be bound to nothing.
+        serveJson(ctx, boundList(1, members("ids", List.of(Map.of("comment", "none yet")))));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", typed)))).startsWith("mapping.entities[0]: record 1 (id "
+                + "'partner:dmv') cannot be read: identifiers: an item of $.ids[*] yields neither its type nor its value");
+        // The record's own item whose only path finds nothing is absent.
         try {
-            serveJson(ctx, boundList(1, members("ids", List.of(Map.of("comment", "none yet")))));
-            assertThat(source(ctx, props("mapping", typed)).load().entities()).hasSize(2);
             serveJson(ctx, boundList(1, members("credential_issuer", null)));   // {type: URL, value: $.credential_issuer}
             assertThat(source(ctx, props("mapping", boundMapping())).load().entities()).filteredOn(e -> e.id().equals("partner:dmv"))
                     .singleElement().satisfies(e -> assertThat(e.identifiers()).isEmpty());
