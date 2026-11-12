@@ -380,4 +380,16 @@ the other way round.
   update; the source's state shows the error.
 - The relays tell whether a host answers. They do not reach internal addresses, but a client can learn through them
   whether a public host is reachable from the service.
+- A device refuses a snapshot dated more than five minutes after its own clock. A snapshot dated ahead of the true
+  time (signed by a service whose clock ran ahead, say) is therefore taken by a device whose clock runs ahead too,
+  and once that clock is corrected the stored snapshot is dated in the future. It is kept, its rules stay in force,
+  and its data is not used: decisions are made from pinned trust. It also stays the device's reference for rollback
+  protection until the clock reaches its issue time, less the five minutes: a later snapshot dated before it is
+  refused as a rollback (`sync()` fails with "Snapshot is dated in the future: check the clock of this device"), so
+  no snapshot is usable until then. A device whose clock was merely behind recovers when it is corrected: the
+  snapshots it refused are taken, and a stored one it kept is used again.
+- When two entities a client sees pin one JSON-LD context URL to different digests, the context is left out of that
+  client's snapshot, and the device then takes it as not vouched for: the wallet warns about a credential that uses
+  it instead of refusing the credential. A pin protects a context only for the clients that do not also see a source
+  that contradicts it.
 - The wallet is a demonstration: software keys, no secure hardware, no user authentication.
