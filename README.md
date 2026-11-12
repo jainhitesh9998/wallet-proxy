@@ -20,13 +20,51 @@ specification when the proxy cannot serve. Without the service, only trust pinne
 
 ```mermaid
 flowchart LR
-  Lists[Trust lists] --> Service[Trust service]
-  Service -- "signed snapshot" --> Lib[Client library]
-  Lib -- "lookups: proxy first" --> Service
-  Service --> Parties[Issuers, verifiers, CAs, DID hosts]
+  subgraph Device["On the device"]
+    Wallet[Wallet] -- "every trust decision and lookup" --> Lib[Client library]
+  end
+  Lib -- "signed snapshot, lookups (proxy first)" --> Service[Trust service]
+  Service -- "compiles" --> Lists[Trust lists]
+  Service -- "fetches what they publish" --> Parties[Issuers, verifiers, CAs, DID hosts]
   Lib -. "fallback: standard mechanism" .-> Parties
-  Wallet[Wallet] --> Lib
+  Wallet -- "OpenID4VCI, OpenID4VP" --> Parties
 ```
+
+An arrow points from the one who asks to the one who answers.
+
+### Who uses what
+
+- **The wallet gets its trust from the library and from nowhere else.** The wallet core takes a trust client and asks
+  it whether an issuer or a verifier is trusted, and for what it needs to know about them: issuer metadata, DID
+  documents, revocation lists, status lists, JSON-LD contexts. Trust pinned in the app is given to the library too.
+  The demo app is a UI over the wallet core.
+- **The wallet still speaks OpenID4VCI and OpenID4VP to the issuer and the verifier itself.** The trust service is not
+  part of that exchange: it proxies trust material, not the protocols.
+- **Issuers and verifiers use nothing from this repository.** They are who the wallet asks *about*: entries in the
+  trust lists, whose published material the service fetches (or the library, as fallback). An issuer or verifier that
+  follows the specifications works unchanged. The reference issuer and verifier in [`test-ecosystem/`](test-ecosystem)
+  are built on third-party implementations for that reason, and depend on neither the library nor the wallet core.
+
+```
+apps/wallet  ──►  @vctrust/wallet-core  ──►  @vctrust/trust-client  ──►  trust service
+                                                      └──►  standard mechanisms, pinned trust (fallback)
+test-ecosystem (reference issuer, verifier)  ──►  third-party implementations only
+```
+
+### What the wallet gets through the library
+
+| What the wallet needs | Where it comes from | When the service cannot serve |
+| --- | --- | --- |
+| Is this issuer or verifier trusted? (an X.509 chain to a listed anchor, a DID, an identifier) | Decided on the device, from the signed snapshot | Trust pinned in the app |
+| Certificate revocation lists (CRLs) | In the snapshot for the trust anchors; through the proxy for CAs below them | The certificate's distribution point |
+| Credential status lists (Token Status List, Bitstring Status List) | Through the proxy | The list's own URI |
+| DID documents | In the snapshot for listed DIDs; through the proxy for others | The DID method (`did:web` over https; `did:key` and `did:jwk` are computed locally) |
+| Issuer and authorization server metadata | Through the proxy | Discovery at the issuer |
+| JSON-LD contexts | In the snapshot, or their digest | The context's URL, reported as not vouched for |
+
+Whatever is relayed is verified on the device: a CRL against the CA that issued it, a status list against its signer,
+everything else against the pinned key of the service. OCSP is not used. Details:
+[Lookups](docs/architecture.md#lookups-proxy-first-standards-as-fallback).
 
 - [Architecture](docs/architecture.md): the registry, the snapshot, how a decision is made, the proxy, what happens
   when things fail, the security model, the evidence of conformance.
@@ -39,9 +77,9 @@ flowchart LR
 | --- | --- |
 | [`trust-server/`](trust-server) | The trust service: `trust-core` (registry, evaluator, X.509, DID), `trust-adapters` (trust list formats), `trust-server` (Spring Boot API). Java 21, Maven |
 | [`packages/trust-client/`](packages/trust-client) | **The client library**, `@vctrust/trust-client`. TypeScript; Node, browsers, React Native. No platform crypto dependencies |
-| [`packages/wallet-core/`](packages/wallet-core) | `@vctrust/wallet-core`: OpenID4VCI 1.0, OpenID4VP 1.0 and HAIP wallet logic with credential verification, on top of the library |
-| [`apps/wallet/`](apps/wallet) | A demo wallet (Expo: Android, iOS, web) |
-| [`test-ecosystem/`](test-ecosystem) | A reference issuer and verifier built on third-party implementations, to test against |
+| [`packages/wallet-core/`](packages/wallet-core) | `@vctrust/wallet-core`: OpenID4VCI 1.0, OpenID4VP 1.0 and HAIP wallet logic with credential verification. Every trust decision and lookup goes through the library |
+| [`apps/wallet/`](apps/wallet) | A demo wallet (Expo: Android, iOS, web): a UI over the wallet core |
+| [`test-ecosystem/`](test-ecosystem) | A reference issuer and verifier to test against, built on third-party implementations. They do not use the library |
 | [`conformance/`](conformance) | Shared test PKI, evaluation vectors both evaluators must agree on, credentials from real issuers |
 | [`e2e/`](e2e), [`scripts/`](scripts) | UI tests; build, run and test helpers |
 
