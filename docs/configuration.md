@@ -194,6 +194,15 @@ that is older than the one already loaded (issued earlier, or with a lower seque
 as the service runs. A source that fails to load keeps its last good content; its state (`GET /admin/v1/sources`)
 shows the error.
 
+What a source tells clients about where its list comes from (the `sourceUri` in the `provenance` of what it loads,
+and the `trustedListUri` that `vical`, `etsi-tl` and `etsi-lote` put on their anchors and entities, which a DCQL
+`trusted_authorities` entry of type `etsi_tl` is matched against) is its location only when that is an `http(s)` URL.
+A `file:`, `classpath:` or plain path on the service's host is not published at all. A source that loads a local copy
+of a public list, such as an air-gapped service that mirrors an ETSI trusted list, names the list's public URL in
+`publicUri` (an optional property of `static`, `x509-bundle`, `vical`, `etsi-tl` and `etsi-lote`): that is published
+instead, so `etsi_tl` matching works for the mirror. `publicUri` must be an `http(s)` URL; anything else stops the
+service with an error that names the source. The lists an EU LOTL points to are published under their own locations.
+
 **A source speaks for its own framework only.** Everything it loads is placed in the framework it is configured
 for. Entities with the same id are merged when they come from sources of the same framework, so several sources may
 describe one party together; an id that an entity of another framework already has is listed as `<id>@<framework>`

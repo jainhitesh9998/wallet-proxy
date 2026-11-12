@@ -1,5 +1,6 @@
 package io.vctrust.trust.adapters.etsi;
 
+import io.vctrust.trust.adapters.support.AdapterSupport;
 import io.vctrust.trust.adapters.support.SignerVerification;
 import io.vctrust.trust.core.model.EntityRole;
 import io.vctrust.trust.core.model.EntityStatus;
@@ -59,7 +60,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * for a LOTL); {@code territories} filter; {@code serviceTypeDomains} (service type URI → trust domain);
  * {@code signerCertificates} / {@code signerCertificateLocation} to require a valid XML signature;
  * {@code verifyPointerSignatures} (validate national TLs against the LOTL's pointer certificates);
- * {@code allowExpired} (default false: a list past its NextUpdate is not loaded).
+ * {@code allowExpired} (default false: a list past its NextUpdate is not loaded); {@code publicUri}, published as the
+ * location of the list named by {@code location} (see {@link AdapterSupport#publishedLocation}). The lists a LOTL
+ * points to are published under their own locations, which are web locations.
  *
  * <p>A signature counts only when it is the list's own: the one {@code ds:Signature} directly under the root
  * element, with a reference to that root (TS 119 612 §5.7.1, an enveloped signature). A signed list placed
@@ -95,6 +98,7 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
 
     @Override
     public TrustSource create(SourceDefinition def, SourceContext ctx) {
+        AdapterSupport.publicUri(def); // a bad one is a configuration error, refused before the service starts
         return new TrustSource() {
             /** The newest list seen at each location, so that an older one served later is refused. */
             private final Map<String, ListInfo> newest = new ConcurrentHashMap<>();
@@ -145,13 +149,15 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                                 Parsed tl = fresh(parse(ResourceLoader.remoteOnly(ctx.resources()).load(p.location), p.location, ps, ctx.clock().instant(),
                                         !def.bool("verifyPointerSignatures", true), allowExpired));
                                 warnings.addAll(tl.warnings);
-                                map(tl, def, domains, includeAll, ctx.clock().instant(), entities, anchors);
+                                map(tl, AdapterSupport.publishedLocation(p.location), def, domains, includeAll, ctx.clock().instant(),
+                                        entities, anchors);
                             } catch (Exception e) {
                                 warnings.add("TL " + p.territory + " (" + p.location + "): " + e.getMessage());
                             }
                         }
                     } else {
-                        map(root, def, domains, includeAll, ctx.clock().instant(), entities, anchors);
+                        map(root, AdapterSupport.publishedLocation(def, location), def, domains, includeAll, ctx.clock().instant(),
+                                entities, anchors);
                     }
                     Map<String, Object> details = new LinkedHashMap<>(root.info.details());
                     details.put("pointers", root.pointers.size());
@@ -274,15 +280,16 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
         return new Parsed(location, info, territory, pointers, providers, warnings);
     }
 
-    static void map(Parsed tl, SourceDefinition def, Map<String, String> domains, boolean includeAll, Instant now,
+    /** @param published what is published as the list's location ({@link AdapterSupport#publishedLocation}); null: nothing */
+    static void map(Parsed tl, String published, SourceDefinition def, Map<String, String> domains, boolean includeAll, Instant now,
                     List<TrustedEntity> entities, List<TrustAnchor> anchors) {
-        Provenance prov = Provenance.of(def.id(), "etsi-tl", def.frameworkId(), tl.location, now);
+        Provenance prov = Provenance.of(def.id(), "etsi-tl", def.frameworkId(), published, now);
         for (Provider p : tl.providers) {
             String entityId = "etsi-tl:" + (tl.territory == null ? "xx" : tl.territory.toLowerCase(Locale.ROOT)) + ":"
                     + HexFormat.of().formatHex(Hashes.sha256(String.valueOf(p.name).getBytes(StandardCharsets.UTF_8))).substring(0, 16);
             TrustedEntity.Builder b = TrustedEntity.builder(entityId).framework(def.frameworkId()).provenance(prov)
                     .display(new LocalizedDisplay("en", p.name, p.tradeName, null))
-                    .attribute("territory", tl.territory).attribute("trustedListUri", tl.location)
+                    .attribute("territory", tl.territory).attribute("trustedListUri", published)
                     .attribute("informationUri", p.informationUri);
             boolean anyRelevant = false;
             boolean anyActive = false;
@@ -306,7 +313,7 @@ public final class EtsiTrustedListSourceFactory implements TrustSourceFactory {
                     Map<String, Object> constraints = new LinkedHashMap<>();
                     constraints.put("serviceType", s.type);
                     if (s.name != null) constraints.put("serviceName", s.name);
-                    constraints.put("trustedListUri", tl.location);
+                    if (published != null) constraints.put("trustedListUri", published);
                     anchors.add(new TrustAnchor(null, TrustDomain.of(domain), c, def.frameworkId(), entityId,
                             active ? EntityStatus.ACTIVE : EntityStatus.REVOKED, constraints, prov));
                     b.identifier(IdentifierType.X509_SUBJECT, Certificates.subjectName(c));

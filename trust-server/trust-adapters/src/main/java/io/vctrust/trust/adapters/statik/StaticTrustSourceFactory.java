@@ -20,7 +20,8 @@ import java.util.Map;
 
 /**
  * {@code type: static} — entities and anchors maintained in a YAML/JSON document in the service's native
- * format. Properties: {@code location} (classpath:, file: or https:).
+ * format. Properties: {@code location} (classpath:, file: or https:); optional {@code publicUri}, published as the
+ * source of what it loads in place of a location on this host (see {@link AdapterSupport#publishedLocation}).
  */
 public final class StaticTrustSourceFactory implements TrustSourceFactory {
 
@@ -31,6 +32,7 @@ public final class StaticTrustSourceFactory implements TrustSourceFactory {
 
     @Override
     public TrustSource create(SourceDefinition def, SourceContext ctx) {
+        AdapterSupport.publicUri(def); // a bad one is a configuration error, refused before the service starts
         return new TrustSource() {
             @Override
             public SourceDefinition definition() {
@@ -45,7 +47,8 @@ public final class StaticTrustSourceFactory implements TrustSourceFactory {
                     Map<String, Object> doc = AdapterSupport.parseYamlOrJson(ctx.resources().load(location));
                     // What a registry fetched from elsewhere names is fetched from the web too, never read from this host.
                     ResourceLoader named = ResourceLoader.isRemote(location) ? ResourceLoader.remoteOnly(ctx.resources()) : ctx.resources();
-                    Provenance prov = Provenance.of(def.id(), type(), def.frameworkId(), location, ctx.clock().instant());
+                    Provenance prov = Provenance.of(def.id(), type(), def.frameworkId(),
+                            AdapterSupport.publishedLocation(def, location), ctx.clock().instant());
                     List<TrustedEntity> entities = new ArrayList<>();
                     List<TrustAnchor> anchors = new ArrayList<>();
                     List<String> warnings = new ArrayList<>();

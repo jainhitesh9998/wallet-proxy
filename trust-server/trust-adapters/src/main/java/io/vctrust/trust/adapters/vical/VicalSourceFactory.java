@@ -1,5 +1,6 @@
 package io.vctrust.trust.adapters.vical;
 
+import io.vctrust.trust.adapters.support.AdapterSupport;
 import io.vctrust.trust.adapters.support.Cose;
 import io.vctrust.trust.adapters.support.SignerVerification;
 import io.vctrust.trust.core.model.CredentialAuthorization;
@@ -37,7 +38,7 @@ import java.util.Map;
  *
  * <p>Properties: {@code location}; {@code signerCertificates} / {@code signerCertificateLocation} (the VICAL
  * provider's root; required unless {@code allowUnverified: true}); {@code allowExpired} (default false: a VICAL
- * past its nextUpdate is not loaded).
+ * past its nextUpdate is not loaded); {@code publicUri} (see {@link AdapterSupport#publishedLocation}).
  */
 public final class VicalSourceFactory implements TrustSourceFactory {
 
@@ -50,6 +51,7 @@ public final class VicalSourceFactory implements TrustSourceFactory {
 
     @Override
     public TrustSource create(SourceDefinition def, SourceContext ctx) {
+        AdapterSupport.publicUri(def); // a bad one is a configuration error, refused before the service starts
         return new TrustSource() {
             @Override
             public SourceDefinition definition() {
@@ -113,7 +115,8 @@ public final class VicalSourceFactory implements TrustSourceFactory {
 
         JsonNode vical = CBOR.readTree(payload);
         String provider = vical.path("vicalProvider").asText(null);
-        Provenance prov = Provenance.of(def.id(), "vical", def.frameworkId(), location, now);
+        String published = AdapterSupport.publishedLocation(def, location);
+        Provenance prov = Provenance.of(def.id(), "vical", def.frameworkId(), published, now);
         List<TrustedEntity> entities = new ArrayList<>();
         List<TrustAnchor> anchors = new ArrayList<>();
         Map<String, TrustedEntity.Builder> byAuthority = new LinkedHashMap<>();
@@ -138,13 +141,13 @@ public final class VicalSourceFactory implements TrustSourceFactory {
                     .framework(def.frameworkId()).role(EntityRole.CREDENTIAL_ISSUER).provenance(prov)
                     .display(LocalizedDisplay.of("en", authority))
                     .attribute("issuingCountry", country).attribute("stateOrProvinceName", state)
-                    .attribute("vicalProvider", provider).attribute("trustedListUri", location));
+                    .attribute("vicalProvider", provider).attribute("trustedListUri", published));
             docTypes.forEach(d -> b.authorization(CredentialAuthorization.of(CredentialFormats.MSO_MDOC, d)));
             b.identifier(IdentifierType.X509_SUBJECT, Certificates.subjectName(cert));
             Certificates.subjectKeyIdentifier(cert).ifPresent(s -> b.identifier(IdentifierType.X509_SKI, s));
             Map<String, Object> constraints = new LinkedHashMap<>();
             constraints.put("docTypes", docTypes);
-            constraints.put("trustedListUri", location);
+            if (published != null) constraints.put("trustedListUri", published);
             if (country != null) constraints.put("issuingCountry", country);
             if (state != null) constraints.put("stateOrProvinceName", state);
             anchors.add(new TrustAnchor(null, TrustDomain.MDOC_IACA, cert, def.frameworkId(), entityId, null, constraints, prov));

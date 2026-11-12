@@ -250,7 +250,9 @@ only as signed when the signature is the list's own (for ETSI trusted lists: the
 the root element, referring to that root; a signed list carried inside another document signs nothing of it). A
 list past its next update, or older than the one already loaded, is refused: either may be a state from before a
 withdrawal, served again. Anchor CRLs are held to the same rule. A document fetched from elsewhere, or sent to the
-admin API, can name web locations only, never a file of the service's host.
+admin API, can name web locations only, never a file of the service's host; and where a source says its list comes
+from reaches clients only as a web location (its own, or the `publicUri` of a list read from a local copy), never as
+a file of the service's host.
 
 **What the service fetches.** Everything goes through one guarded HTTP client: https only (plain http for hosts
 the operator allows, and for CRLs, which are signed), no private, loopback, link-local or otherwise internal

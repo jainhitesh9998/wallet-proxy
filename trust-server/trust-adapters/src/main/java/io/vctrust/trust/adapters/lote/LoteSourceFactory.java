@@ -2,6 +2,7 @@ package io.vctrust.trust.adapters.lote;
 
 import com.nimbusds.jose.JWSObject;
 import com.nimbusds.jose.crypto.factories.DefaultJWSVerifierFactory;
+import io.vctrust.trust.adapters.support.AdapterSupport;
 import io.vctrust.trust.adapters.support.SignerVerification;
 import io.vctrust.trust.core.json.Json;
 import io.vctrust.trust.core.model.EntityRole;
@@ -39,7 +40,7 @@ import java.util.Map;
  *
  * <p>Properties: {@code location}; {@code signerCertificates} (required to accept a signed list);
  * {@code serviceTypeDomains} overrides; {@code allowExpired} (default false: a LoTE past NextUpdate is
- * rejected as TS 119 602 requires).
+ * rejected as TS 119 602 requires); {@code publicUri} (see {@link AdapterSupport#publishedLocation}).
  */
 public final class LoteSourceFactory implements TrustSourceFactory {
 
@@ -71,6 +72,7 @@ public final class LoteSourceFactory implements TrustSourceFactory {
 
     @Override
     public TrustSource create(SourceDefinition def, SourceContext ctx) {
+        AdapterSupport.publicUri(def); // a bad one is a configuration error, refused before the service starts
         return new TrustSource() {
             @Override
             public SourceDefinition definition() {
@@ -147,7 +149,8 @@ public final class LoteSourceFactory implements TrustSourceFactory {
         String territory = Json.string(info, "SchemeTerritory");
         Map<String, Mapping> mappings = new LinkedHashMap<>(DEFAULTS);
         def.map("serviceTypeDomains").forEach((k, v) -> mappings.put(k, new Mapping(EntityRole.OTHER, List.of(String.valueOf(v)))));
-        Provenance prov = Provenance.of(def.id(), "etsi-lote", def.frameworkId(), location, now);
+        String published = AdapterSupport.publishedLocation(def, location);
+        Provenance prov = Provenance.of(def.id(), "etsi-lote", def.frameworkId(), published, now);
 
         List<TrustedEntity> entities = new ArrayList<>();
         List<TrustAnchor> anchors = new ArrayList<>();
@@ -160,7 +163,7 @@ public final class LoteSourceFactory implements TrustSourceFactory {
                     + HexFormat.of().formatHex(Hashes.sha256(String.valueOf(name).getBytes(StandardCharsets.UTF_8))).substring(0, 16);
             TrustedEntity.Builder b = TrustedEntity.builder(id).framework(def.frameworkId()).provenance(prov)
                     .display(new LocalizedDisplay("en", name, localized(tei == null ? null : tei.get("TETradeName")), null))
-                    .attribute("territory", territory).attribute("loteType", loteType).attribute("trustedListUri", location);
+                    .attribute("territory", territory).attribute("loteType", loteType).attribute("trustedListUri", published);
             List<String> serviceTypes = new ArrayList<>();
             List<Object> services = Json.array(te.get("TrustedEntityServices"));
             for (Object so : services == null ? List.of() : services) {
@@ -186,7 +189,7 @@ public final class LoteSourceFactory implements TrustSourceFactory {
                         for (String domain : m == null ? List.<String>of() : m.domains()) {
                             Map<String, Object> constraints = new LinkedHashMap<>();
                             constraints.put("serviceType", st);
-                            constraints.put("trustedListUri", location);
+                            if (published != null) constraints.put("trustedListUri", published);
                             anchors.add(new TrustAnchor(null, TrustDomain.of(domain), cert, def.frameworkId(), id,
                                     active ? EntityStatus.ACTIVE : EntityStatus.REVOKED, constraints, prov));
                         }

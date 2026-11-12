@@ -51,6 +51,8 @@ class TrustServerIntegrationTest {
     static Path dataDir;
 
     static final String CONTEXT = "{\"@context\":{\"degree\":\"https://vocab.example/degree\"}}";
+    /** The URI the second registry is publicly known by: it is read from a file, and published under this name. */
+    static final String REGISTRY_B_PUBLIC_URI = "https://lists.trust.test/registry-b.yaml";
 
     static {
         try {
@@ -172,6 +174,7 @@ class TrustServerIntegrationTest {
         r.add("trust.sources[2].type", () -> "static");
         r.add("trust.sources[2].framework", () -> "fw-b");
         r.add("trust.sources[2].properties.location", () -> registryB.toUri().toString());
+        r.add("trust.sources[2].properties.publicUri", () -> REGISTRY_B_PUBLIC_URI);
         r.add("trust.sources[1].id", () -> "managed");
         r.add("trust.sources[1].type", () -> "managed");
         r.add("trust.sources[1].framework", () -> "local");
@@ -348,6 +351,71 @@ class TrustServerIntegrationTest {
         assertThat(jwt.getJWTClaimsSet().getAudience()).containsExactly("wallet-a");
         assertThat(((Map<String, Object>) jwt.getJWTClaimsSet().getClaim("data")).get("decision")).isEqualTo("NOT_TRUSTED");
 
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void noLocationOnTheServicesHostReachesAClient() throws Exception {
+        // Both static registries, the signing key and the OAuth JWKS are files in dataDir: its name is in their
+        // locations, and must be in nothing a client receives.
+        String directory = dataDir.getFileName().toString();
+        assertThat(env.getProperty("trust.sources[0].properties.location")).contains(directory);
+        List<String> received = new java.util.ArrayList<>();
+
+        // The snapshot, decoded, for a wallet and for an operator (who sees every framework).
+        for (String key : List.of("key-a", "key-admin")) {
+            var claims = SignedJWT.parse(get("/api/v1/snapshot", key).body()).getJWTClaimsSet();
+            received.add(claims.toString());
+            for (String claim : List.of("entities", "anchors")) {
+                for (Map<String, Object> record : (List<Map<String, Object>>) claims.getClaim(claim)) {
+                    Map<String, Object> provenance = (Map<String, Object>) record.getOrDefault("provenance", Map.of());
+                    if ("reg".equals(provenance.get("sourceId"))) {
+                        assertThat(provenance).as(claim).doesNotContainKey("sourceUri");
+                    } else if ("reg-b".equals(provenance.get("sourceId"))) {
+                        assertThat(provenance).as(claim).containsEntry("sourceUri", REGISTRY_B_PUBLIC_URI);
+                    }
+                }
+            }
+        }
+
+        // A decision about an entity of the registry read from a file, plain and signed.
+        var trusted = post("/api/v1/evaluate", "key-a", Map.of("role", "issuer",
+                "subject", Map.of("x5c", List.of(Certificates.toBase64(DS.certificate()))),
+                "context", Map.of("credentialFormat", "mso_mdoc", "credentialType", "org.iso.18013.5.1.mDL")));
+        assertThat(json(trusted).get("decision")).isEqualTo("TRUSTED");
+        assertThat((Map<String, Object>) ((Map<String, Object>) json(trusted).get("entity")).get("provenance")).doesNotContainKey("sourceUri");
+        received.add(trusted.body());
+        received.add(SignedJWT.parse(post("/api/v1/evaluate", "key-a", Map.of("role", "issuer", "subject", Map.of("identifier", UPSTREAM_BASE + "/issuer")),
+                "Accept", "application/jwt").body()).getPayload().toString());
+
+        // The registry as a client sees it, and what the proxy attaches to issuer metadata.
+        for (String path : List.of("/api/v1/issuers", "/api/v1/verifiers", "/api/v1/frameworks",
+                "/api/v1/entities/lookup?identifier=" + UPSTREAM_BASE + "/issuer", "/api/v1/proxy/issuer-metadata?issuer=" + UPSTREAM_BASE + "/issuer")) {
+            for (String key : List.of("key-a", "key-admin")) {
+                var r = get(path, key);
+                assertThat(r.statusCode()).as(path).isEqualTo(200);
+                received.add(r.body());
+                received.add(SignedJWT.parse(get(path, key, "Accept", "application/jwt").body()).getPayload().toString());
+            }
+        }
+        received.add(get("/.well-known/trust-service", null).body());
+        // Problem documents.
+        received.add(post("/api/v1/evaluate", "key-a", Map.of("role", "nonsense", "subject", Map.of("identifier", "x"))).body());
+        received.add(get("/api/v1/entities/lookup?identifier=x&type=nonsense", "key-a").body());
+        received.add(get("/api/v1/proxy/crl?url=" + UPSTREAM_BASE + "/status/page", "key-a").body());
+        received.add(get("/api/v1/snapshot", "wrong-key").body());
+        assertThat(received).allSatisfy(body -> assertThat(body).doesNotContain(directory));
+
+        // DCQL trusted_authorities: the list read from a file is matched by the URI it is published under; the file's
+        // own location matches nothing, so a query naming a path learns nothing about the service's files.
+        var authorities = json(post("/api/v1/evaluate", "key-admin", Map.of("role", "issuer",
+                "subject", Map.of("identifier", "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"),
+                "context", Map.of("trustedAuthorities", List.of(
+                        Map.of("type", "etsi_tl", "values", List.of(REGISTRY_B_PUBLIC_URI)),
+                        Map.of("type", "etsi_tl", "values", List.of(env.getProperty("trust.sources[2].properties.location"))))))));
+        assertThat(((Map<String, Object>) authorities.get("entity")).get("id")).isEqualTo("b-issuer");
+        assertThat((List<Map<String, Object>>) ((Map<String, Object>) authorities.get("evidence")).get("trustedAuthorities"))
+                .extracting(m -> m.get("matched")).containsExactly(true, false);
     }
 
     @Test

@@ -22,8 +22,8 @@ import java.util.Map;
 /**
  * {@code type: x509-bundle} — trust anchors from a PEM/DER bundle or a JSON document holding a base64
  * certificate. Properties: {@code domain}, {@code certificateLocation}, optional {@code certificateJsonField},
- * optional {@code entity} to link anchors to a registry entity, optional {@code docTypes}, and {@code sha256}: the
- * fingerprints the certificates must have.
+ * optional {@code entity} to link anchors to a registry entity, optional {@code docTypes}, {@code sha256}: the
+ * fingerprints the certificates must have, and optional {@code publicUri} (see {@link AdapterSupport#publishedLocation}).
  *
  * <p>A certificate fetched over the network becomes a trust anchor only when it matches a pinned fingerprint: without
  * the pin, whoever answers at that URL decides what is trusted. {@code allowUnpinned: true} accepts that for a
@@ -47,6 +47,7 @@ public final class X509BundleSourceFactory implements TrustSourceFactory {
 
     @Override
     public TrustSource create(SourceDefinition def, SourceContext ctx) {
+        AdapterSupport.publicUri(def); // a bad one is a configuration error, refused before the service starts
         return new TrustSource() {
             @Override
             public SourceDefinition definition() {
@@ -60,7 +61,7 @@ public final class X509BundleSourceFactory implements TrustSourceFactory {
                     List<X509Certificate> certs = AdapterSupport.certificates(def.properties(), ctx.resources());
                     checkPins(certs);
                     Provenance prov = Provenance.of(def.id(), type(), def.frameworkId(),
-                            def.string("certificateLocation"), ctx.clock().instant());
+                            AdapterSupport.publishedLocation(def, def.string("certificateLocation")), ctx.clock().instant());
                     Map<String, Object> constraints = def.list("docTypes").isEmpty() ? Map.of()
                             : Map.of("docTypes", def.strings("docTypes"));
                     List<TrustAnchor> anchors = new ArrayList<>();

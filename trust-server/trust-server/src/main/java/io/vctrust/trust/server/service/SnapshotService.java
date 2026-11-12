@@ -202,7 +202,10 @@ public class SnapshotService {
         if (a.provenance() != null) {
             Map<String, Object> p = new LinkedHashMap<>();
             p.put("sourceId", a.provenance().sourceId());
-            p.put("sourceUri", a.provenance().sourceUri());
+            // A source that loads its list from this host publishes no location (AdapterSupport.publishedLocation): absent, not null.
+            if (a.provenance().sourceUri() != null) {
+                p.put("sourceUri", a.provenance().sourceUri());
+            }
             m.put("provenance", p);
         }
         return m;
