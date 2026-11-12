@@ -1,6 +1,9 @@
 /** Error types surfaced by the client. */
 
-/** The service answered with an error (4xx / RFC 9457 problem). Not a reason to fall back. */
+/**
+ * The service answered with an error (an RFC 9457 problem): a 4xx, or a 502 saying that the party it asked on the
+ * caller's behalf failed (`upstream_unavailable`, `invalid_crl`, ...). The service works; it is not counted as down.
+ */
 export class TrustServiceError extends Error {
   constructor(message: string, public readonly status: number, public readonly code: string, public readonly problem?: Record<string, unknown>) {
     super(message);

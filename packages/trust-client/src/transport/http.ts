@@ -6,6 +6,26 @@ import { fetchWithTimeout } from '../did/resolver.js';
 /** The service's own responses (a snapshot with large trust lists and their CRLs) may be bigger than a party's. */
 const MAX_SERVICE_BODY_BYTES = 64 * 1024 * 1024;
 
+/**
+ * The codes of the service's {@code 502} problem documents: the party it asked on the caller's behalf (a CRL
+ * distribution point, a status list or context host, an issuer) did not answer, or answered with something it does
+ * not pass on. Such an answer comes from a service that works; the lookup goes to the standard mechanism, and the
+ * service is not counted as down for it.
+ */
+const UPSTREAM_FAILURES = new Set(['upstream_unavailable', 'invalid_crl', 'invalid_status_list', 'invalid_context', 'fetch_failed']);
+
+/** The problem document of a {@code 502} the service itself answered about its upstream; undefined for any other answer. */
+async function upstreamFailure(res: Response): Promise<Record<string, unknown> | undefined> {
+  if (res.status !== 502 || !(res.headers.get('Content-Type') ?? '').toLowerCase().startsWith('application/problem+json')) return undefined;
+  try {
+    const p = (await res.json()) as unknown;
+    return p && typeof p === 'object' && typeof (p as Record<string, unknown>).code === 'string'
+      && UPSTREAM_FAILURES.has((p as Record<string, unknown>).code as string) ? p as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface TransportOptions {
   baseUrl: string;
   apiKey?: string;
@@ -51,12 +71,16 @@ export class HttpTransport {
         lastError = e;
         continue;
       }
-      if (res.status >= 500 || res.status === 429) {
+      // A gateway's 502, the service's own 503 (not ready), any other 5xx and 429 are the service not answering:
+      // retried, and counted against the circuit. A 502 problem document about the service's upstream is an answer.
+      const upstream = await upstreamFailure(res);
+      if (!upstream && (res.status >= 500 || res.status === 429)) {
         lastError = new Error(`HTTP ${res.status}`);
         continue;
       }
       breaker.success();
       this.opts.onAvailability?.(true);
+      if (upstream) throw new TrustServiceError(String(upstream.detail ?? `HTTP ${res.status}`), res.status, upstream.code as string, upstream);
       if (res.status === 304) return { status: 304, body: undefined as T, headers: res.headers };
       const ct = res.headers.get('Content-Type') ?? '';
       if (init.binary && res.status < 400) return { status: res.status, body: new Uint8Array(await res.arrayBuffer()) as T, headers: res.headers };

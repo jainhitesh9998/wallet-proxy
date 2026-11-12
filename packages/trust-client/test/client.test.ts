@@ -617,6 +617,91 @@ describe('revocation', () => {
   });
 });
 
+describe("a relay's answer about its upstream is not an outage of the service", () => {
+  // As the service answers when the party it asked on the caller's behalf fails (ApiExceptionHandler).
+  const problem = (code: string, status = 502) => new Response(JSON.stringify({ type: `https://vctrust.io/problems/${code}`, title: code, status,
+    detail: 'The party asked did not answer', code }), { status, headers: { 'Content-Type': 'application/problem+json' } });
+  const CTX = 'https://issuer.example/contexts/';
+  const CRL_URL = 'http://crl.utopia.example/iaca.crl';
+  const ISSUER = 'https://issuer.example/tenant';
+  const DID = 'did:web:issuer.example';
+  const LIST = 'https://issuer.example/status/1';
+  // The parties themselves, asked by the standard mechanism.
+  const parties: Record<string, () => Response> = {
+    [CTX]: () => new Response(JSON.stringify({ '@context': {} }), { headers: { 'Content-Type': 'application/ld+json' } }),
+    [CRL_URL]: () => new Response(new Uint8Array(fixture('pki/iaca.crl')), { headers: { 'Content-Type': 'application/pkix-crl' } }),
+    'https://issuer.example/.well-known/openid-credential-issuer/tenant': () => json({ credential_issuer: ISSUER, credential_endpoint: `${ISSUER}/credential`,
+      credential_configurations_supported: {} }),
+    'https://issuer.example/.well-known/oauth-authorization-server/tenant': () => json({ issuer: ISSUER }),
+    'https://issuer.example/.well-known/did.json': () => json({ id: DID, verificationMethod: [] }),
+    [LIST]: () => new Response('not a list', { headers: { 'Content-Type': 'application/statuslist+jwt' } }),
+  };
+  /** {@code lookup} resolves to the source of what it found, or undefined where the result does not say. */
+  type Kind = { relay: string; code: string; party: string; lookup: (c: ReturnType<typeof client>) => Promise<string | null | undefined> };
+  const kinds: Record<string, Kind> = {
+    context: { relay: '/api/v1/proxy/context', code: 'invalid_context', party: `GET ${CTX}v1`, lookup: async (c) => (await c.context(`${CTX}v1`)).source },
+    crl: { relay: '/api/v1/proxy/crl', code: 'upstream_unavailable', party: `GET ${CRL_URL}`, lookup: async (c) => (await c.evaluate({ role: 'issuer',
+      subject: { x5c: [b64(pem('ds-revoked'))] }, context: mdl })).evidence?.x509?.revocation?.[0]?.source },
+    'status list': { relay: '/api/v1/proxy/status-list', code: 'invalid_status_list', party: `GET ${LIST}`, lookup: async (c) => {
+      await c.checkTokenStatus({ idx: 0, uri: LIST }, { signerX5c: [b64(pem('ds'))] });
+      return undefined; // the list here does not verify; what matters is where it was asked for
+    } },
+    did: { relay: '/api/v1/proxy/did/', code: 'upstream_unavailable', party: 'GET https://issuer.example/.well-known/did.json',
+      lookup: async (c) => (await c.resolveDid(DID)).didResolutionMetadata.source },
+    'issuer metadata': { relay: '/api/v1/proxy/issuer-metadata', code: 'fetch_failed', party: 'GET https://issuer.example/.well-known/openid-credential-issuer/tenant',
+      lookup: async (c) => (await c.getIssuerMetadata(ISSUER)).source },
+  };
+  const serve = (relay: () => Response) => fakeFetch({ ...snapshotRoute(), ...parties, [`${BASE}/api/v1/proxy/`]: relay });
+  const count = (calls: string[], prefix: string) => calls.filter((x) => x.startsWith(prefix)).length;
+  // Retries on, so that a retry would show.
+  const retrying = { http: { retries: 2, backoffMs: 1 } };
+
+  for (const [name, kind] of Object.entries(kinds)) {
+    it(`${name}: a 502 problem answer falls back at once, and the service stays online`, async () => {
+      const { fetch, calls } = serve(() => problem(kind.code));
+      const c = client(fetch, retrying);
+      const source = await kind.lookup(c);
+      if (source !== undefined) expect(source).toBe('fallback');
+      expect(count(calls, `GET ${BASE}${kind.relay}`)).toBe(1);
+      expect(count(calls, kind.party)).toBe(1);
+      expect((await c.status()).service).toBe('online');
+    });
+  }
+
+  it('five such answers in a row do not open the circuit: the snapshot is still refreshed', async () => {
+    const { fetch, calls } = serve(() => problem('upstream_unavailable'));
+    const c = client(fetch, retrying);
+    for (let i = 0; i < 5; i++) expect((await c.context(`${CTX}v${i}`)).source).toBe('fallback');
+    expect(count(calls, `GET ${BASE}/api/v1/proxy/context`)).toBe(5);
+    const snapshots = count(calls, `GET ${BASE}/api/v1/snapshot`);
+    await c.sync();
+    expect(count(calls, `GET ${BASE}/api/v1/snapshot`)).toBe(snapshots + 1);
+    expect((await c.status()).service).toBe('online');
+  });
+
+  it('a gateway 502, the service not ready, another code or a network error still count as the service not answering', async () => {
+    const cases: Array<[string, () => Response]> = [
+      ['a bare 502', () => new Response('<html>Bad Gateway</html>', { status: 502, headers: { 'Content-Type': 'text/html' } })],
+      ['a 502 problem with a code no relay answers with', () => problem('bad_gateway')],
+      ['a 502 with a code but not a problem document', () => json({ code: 'upstream_unavailable' }, 502)],
+      ['503 not_ready', () => problem('not_ready', 503)],
+      ['a network error', down],
+    ];
+    for (const [name, relay] of cases) {
+      const { fetch, calls } = serve(relay);
+      const c = client(fetch, { http: { retries: 1, backoffMs: 1 } });
+      // Each lookup still reaches the context's URL, after a retry, and is counted against the circuit.
+      for (let i = 0; i < 3; i++) expect((await c.context(`${CTX}v${i}`)).source, name).toBe('fallback');
+      expect(count(calls, `GET ${BASE}/api/v1/proxy/context`), name).toBe(6);
+      expect((await c.status()).service, name).toBe('offline');
+      // Three failures open the circuit: the next refresh does not go out.
+      const snapshots = count(calls, `GET ${BASE}/api/v1/snapshot`);
+      await expect(c.sync(), name).rejects.toThrow(/circuit is open/);
+      expect(count(calls, `GET ${BASE}/api/v1/snapshot`), name).toBe(snapshots);
+    }
+  });
+});
+
 describe('which URLs are fetched', () => {
   const dev = (routes: Record<string, (url: string) => Response> = {}) => {
     const f = fakeFetch(routes, down);
