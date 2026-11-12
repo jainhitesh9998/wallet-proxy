@@ -370,14 +370,13 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         /**
-         * Where this source says its content comes from: {@code publicUri} when set, else its location when that is an
-         * http(s) URL. A location on this host (a path, {@code file:}, {@code classpath:}) is not published.
+         * Where this source says its content comes from, by the rule every adapter shares
+         * ({@link AdapterSupport#publishedLocation}): {@code publicUri} when set, else its location when that is an
+         * http(s) URL, without any query. A location on this host (a path, {@code file:}, {@code classpath:}) is not
+         * published.
          */
         private String publishedLocation() {
-            if (config.publicUri() != null) {
-                return config.publicUri();
-            }
-            return ResourceLoader.isRemote(config.location()) ? config.location() : null;
+            return AdapterSupport.publishedLocation(def, config.location());
         }
 
         private ListInfo.SignatureStatus signature() {
