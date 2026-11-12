@@ -459,7 +459,7 @@ entities:                                # one or more blocks: every match of ea
     required: [validUntil]               # members a record must yield, or it cannot be read completely
     id: { template: "partner:{$.id}" }   # required
     roles: [CREDENTIAL_ISSUER]           # required: every record must yield a role
-    name: $.display.name                 # or display: [{ each, locale, name, description, logoUri }]
+    name: $.display.name                 # and/or display: [{ each, locale, name, description, logoUri }]
     identifiers:                         # items: type (required), value, and an each of their own if needed
       - { type: URL, value: $.credential_issuer }
       - { each: "$.dids[*]", type: DID, value: $ }
@@ -494,8 +494,11 @@ lookup:                                  # optional: ask about one party at a ti
 Every member of the registry format that makes sense for remote data can be mapped. `certificateLocation` cannot: a
 document from elsewhere never makes the service read a file. Nor can `framework`: every record of a source belongs to
 the source's framework, and a mapping that names `framework` is a configuration error. `each`, `allowEmpty` and
-`required` say how a block is read; `required` names members the block maps (another name is a configuration error). A
-block of entities (and a lookup's `entity`) must map `roles`, and a record that yields none fails the load: its roles
+`required` say how a block is read; `required` names members the block maps (another name is a configuration error).
+A record is handed to the registry format as that format reads it: without the members that yield nothing, and with
+its display entries rather than its `name` when both yield (the format takes one of them; the name stands when there
+are no display entries). A record the format refuses anyway is treated as one that cannot be read completely (below).
+A block of entities (and a lookup's `entity`) must map `roles`, and a record that yields none fails the load: its roles
 may be a member the upstream renamed or dropped. Where the upstream writes `"roles": []` for a party it states no role
 for (this service's own snapshot does, for an entry that only describes a party, or a withdrawn one), say so with
 `roles: { path: $.roles[*], allowEmpty: true }`: such a record is listed without a role, as the document states it. An

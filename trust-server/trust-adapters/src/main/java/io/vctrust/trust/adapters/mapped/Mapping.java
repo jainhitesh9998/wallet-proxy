@@ -527,6 +527,11 @@ final class Mapping {
                 }
             }
             Map<String, Object> out = new LinkedHashMap<>(r.values);
+            if (out.containsKey("display") && out.containsKey("name")) {
+                // The registry format takes the name or the display entries, not both (it would read one of them only).
+                // The display entries hold the name in each language; the name is what is shown when there are none.
+                out.remove("name");
+            }
             if (!entity) {
                 Map<String, Object> constraints = new LinkedHashMap<>();
                 for (String c : List.of("docTypes", "crlUrls", "crl")) {
@@ -614,11 +619,24 @@ final class Mapping {
             return attributes;
         }
 
+        /**
+         * The metadata policy: an object, whose members say nothing when they are {@code null} or {@code ""} (absent, as
+         * anywhere): they are not handed over, since the registry format refuses a member written without a value.
+         */
         private Object policy(Object record, Object root) {
             Value policy = (Value) fields.get("metadataPolicy");
             Object p = policy == null ? null : first(policy, "metadataPolicy", record, root);
             if (p != null && !(p instanceof Map<?, ?>)) {
                 throw new IllegalArgumentException("metadataPolicy is not an object");
+            }
+            if (p instanceof Map<?, ?> m && m.values().stream().anyMatch(Value::blank)) {
+                Map<Object, Object> stated = new LinkedHashMap<>();
+                m.forEach((k, v) -> {
+                    if (!Value.blank(v)) {
+                        stated.put(k, v);
+                    }
+                });
+                return stated;
             }
             return p;
         }

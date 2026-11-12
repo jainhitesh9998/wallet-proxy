@@ -1056,7 +1056,25 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 try {
                     entity = TrustedEntityParser.entity(entry, def.frameworkId(), provenance, NO_FILES);
                 } catch (Exception refused) {
-                    throw unreadable(block, label, message(refused));
+                    // Refused for what its members are together, not for one of them: what identifies the record, and
+                    // its status, are listed; the rest is left out, and the record is not in good standing (rule A).
+                    // Only when that is refused too does the load fail: nobody could be kept out by it.
+                    Map<String, Object> identifying = new LinkedHashMap<>();
+                    for (String member : List.of("id", "roles", "identifiers", "certificates", "status")) {
+                        if (entry.containsKey(member)) {
+                            identifying.put(member, entry.get(member));
+                        }
+                    }
+                    try {
+                        entity = TrustedEntityParser.entity(identifying, def.frameworkId(), provenance, NO_FILES);
+                    } catch (Exception again) {
+                        throw unreadable(block, label, message(refused));
+                    }
+                    for (String member : entry.keySet()) {
+                        if (!identifying.containsKey(member)) {
+                            unusable.putIfAbsent(member, member + ": left out: " + message(refused));
+                        }
+                    }
                 }
             }
             // Text that only describes the party and was too long to keep is left out, and said: the record is read.
