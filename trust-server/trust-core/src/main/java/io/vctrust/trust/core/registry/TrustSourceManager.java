@@ -47,8 +47,8 @@ import java.util.regex.Pattern;
  * <p>A source speaks for its own framework and for nothing else. Whatever it loads is placed in the framework it is
  * configured for; entities of the same id are merged only within a framework; an anchor is tied to an entity only
  * of its own framework. An entry whose id another framework already has is listed as {@code <id>@<framework>}, and
- * that name is its framework's: an entry of another framework written with it is not loaded, so it is always free
- * ({@link #fallbackNameOf}). A source of one framework can therefore add nothing to, and take nothing from, what a
+ * that name is its framework's, so it is always free ({@link #fallbackNameOf}): an entity of another framework written
+ * with it is listed under its own fallback name instead, and such an anchor is not loaded. A source of one framework can therefore add nothing to, and take nothing from, what a
  * client of another framework is told. An entry that is not loaded is named in a warning of its source's state. A
  * list that is older than the one already held is not loaded.
  */
@@ -160,9 +160,12 @@ public class TrustSourceManager implements AutoCloseable {
     /**
      * The framework whose fallback name {@code id} is, when that is not {@code framework}. An entry whose id an entry
      * of another framework already has is listed as {@code <id>@<its framework>}; that name belongs to the framework it
-     * names, so an entry of any other framework that is written with it is not loaded. Otherwise a source loaded
+     * names, so an entry of any other framework that is written with it does not get it. Otherwise a source loaded
      * earlier could hold the name, and the entry it is the fallback for (a withdrawn issuer, say) would not be loaded
-     * at all. The frameworks are those configured and those a source loads into.
+     * at all. Such an entity is listed under its own fallback name instead ({@code acme@other@national} for
+     * {@code acme@other} of framework {@code national}): left out, a revoked entry would let its party be trusted through
+     * the CA. Such an anchor is not loaded, and the admin API refuses either. The frameworks are those configured and
+     * those a source loads into.
      */
     public Optional<String> fallbackNameOf(String id, String framework) {
         if (id == null) {
@@ -260,26 +263,26 @@ public class TrustSourceManager implements AutoCloseable {
             }
             String framework = s.definition().frameworkId();
             for (TrustedEntity e : r.entities()) {
-                Optional<String> reserved = fallbackNameOf(e.id(), framework);
-                if (reserved.isPresent()) {
-                    refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add(reservedName("Entity", e.id(), reserved.get()));
-                    continue;
-                }
                 String id = placed.get(Arrays.asList(framework, e.id()));
                 if (id == null) {
                     id = e.id();
+                    Optional<String> reserved = fallbackNameOf(id, framework);
                     TrustedEntity other = entities.get(id);
-                    if (other != null && !Objects.equals(other.frameworkId(), framework)) {
-                        // The id is taken by an entity of another framework: the two are different parties.
+                    if (reserved.isPresent() || (other != null && !Objects.equals(other.frameworkId(), framework))) {
+                        // The id is another framework's name, or taken by an entity of another framework: the entity is
+                        // listed under the name of its own framework. It is not dropped: an entity is what restricts a
+                        // party (a revoked entry left out would let its certificate be trusted through the CA).
+                        String why = reserved.isPresent()
+                                ? "'" + e.id() + "' is the name an entry of framework '" + reserved.get() + "' is listed under when another framework has its id"
+                                : "framework '" + other.frameworkId() + "' already has an entity with that id";
                         id = e.id() + "@" + framework;
                         if (entities.containsKey(id)) {
                             // Only an entry of this framework can hold that name: no other framework may write it.
-                            refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is not loaded: framework '"
-                                    + other.frameworkId() + "' already has an entity with that id, and '" + id + "' is taken too");
+                            refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is not loaded: " + why
+                                    + ", and '" + id + "' is taken too");
                             continue;
                         }
-                        refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is listed as '" + id
-                                + "': framework '" + other.frameworkId() + "' already has an entity with that id");
+                        refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is listed as '" + id + "': " + why);
                     }
                     placed.put(Arrays.asList(framework, e.id()), id);
                 }
@@ -296,7 +299,7 @@ public class TrustSourceManager implements AutoCloseable {
             for (TrustAnchor a : r.anchors()) {
                 Optional<String> reserved = fallbackNameOf(a.id(), framework);
                 if (reserved.isPresent()) {
-                    refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add(reservedName("Anchor", a.id(), reserved.get()));
+                    refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add(reservedName(a.id(), reserved.get()));
                     continue;
                 }
                 String entityId = a.entityId();
@@ -358,8 +361,8 @@ public class TrustSourceManager implements AutoCloseable {
         return bounded;
     }
 
-    private static String reservedName(String kind, String id, String owner) {
-        return kind + " '" + id + "' is not loaded: '" + id + "' is the name an entry of framework '" + owner
+    private static String reservedName(String id, String owner) {
+        return "Anchor '" + id + "' is not loaded: '" + id + "' is the name an entry of framework '" + owner
                 + "' is listed under when another framework has its id, and only that framework may use it";
     }
 

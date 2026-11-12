@@ -227,10 +227,13 @@ status counts, and the merged entity is valid only where every entry is (the lat
 `validUntil` stated), so that an entry saying the registration ended is not outweighed by another that states no
 end; an id that an entity of another framework already has is listed as `<id>@<framework>`
 instead, and an anchor is tied only to an entity of its own framework. A name `<id>@<framework>` (the id of a
-configured framework, or of one a source loads into) belongs to that framework: an entity or anchor of another
-framework written with such an id is not loaded, and the admin API refuses it (`invalid_document`), so the name an
-entry falls back to is always free. An entry that is not loaded for any reason is named in a warning of its source's
-state (`GET /admin/v1/sources`). A source of one framework therefore adds nothing to, and takes nothing from, what
+configured framework, or of one a source loads into) belongs to that framework, so the name an entry falls back to is
+always free. An entity of another framework written with such an id does not get it: it is listed under the name it
+would fall back to, `<id>@<its framework>` (`acme@other` of framework `national` as `acme@other@national`), with
+everything it says, since a withdrawn entity left out would no longer restrict its party; only when that name is taken
+too is it not loaded. An anchor written with such an id is not loaded. The admin API refuses both
+(`invalid_document`). An entry that is not loaded for any reason, or is listed under another name, is named in a
+warning of its source's state (`GET /admin/v1/sources`). A source of one framework therefore adds nothing to, and takes nothing from, what
 the clients of another framework are told. Put sources that should not vouch for each other's entries into different
 frameworks.
 

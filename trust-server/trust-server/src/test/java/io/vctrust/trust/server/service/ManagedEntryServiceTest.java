@@ -176,15 +176,18 @@ class ManagedEntryServiceTest {
     }
 
     @Test
-    void anEntryStoredBeforeTheRuleIsNotLoaded() {
-        // Written to the database directly, or before this check existed: the registry refuses it all the same.
+    void anEntryStoredBeforeTheRuleDoesNotGetTheName() {
+        // Written to the database directly, or before this check existed: the registry does not give it the name all the
+        // same, and lists it under its own framework's instead.
         Map<String, Object> doc = entity("https://partner.example/b");
         doc.put("id", "victim@other");
         doc.put("framework", "partner");
         store.put(ManagedEntityStore.Kind.ENTITY, "victim@other", doc);
         managed.put(OPERATOR, "entities", "victim", entity("https://partner.example/a"));
         assertThat(victimDecision()).isEqualTo(Decision.NOT_TRUSTED);
+        assertThat(registry.snapshot().entities()).noneMatch(e -> "partner".equals(e.frameworkId()) && e.id().equals("victim@other"));
+        assertThat(registry.snapshot().entity("victim@other@partner")).get().satisfies(e -> assertThat(e.frameworkId()).isEqualTo("partner"));
         assertThat(sources.states()).filteredOn(s -> s.id().equals("managed")).singleElement()
-                .satisfies(s -> assertThat(s.warnings()).anyMatch(w -> w.startsWith("Entity 'victim@other' is not loaded")));
+                .satisfies(s -> assertThat(s.warnings()).anyMatch(w -> w.startsWith("Entity 'victim@other' is listed as 'victim@other@partner'")));
     }
 }

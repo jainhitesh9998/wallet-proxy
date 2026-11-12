@@ -109,10 +109,14 @@ class FallbackNamesTest {
                 assertThat(d.reasons()).as(order).extracting(r -> r.code()).contains("entity.status");
                 assertThat(registry.snapshot().entities()).as(order).filteredOn(e -> "other".equals(e.frameworkId()))
                         .singleElement().satisfies(e -> assertThat(e.status()).isEqualTo(EntityStatus.REVOKED));
-                // The partner's "victim@other" is not loaded, and its source says so.
-                assertThat(registry.snapshot().entities()).as(order).noneMatch(e -> "partner".equals(e.frameworkId())
-                        && e.identifiers().stream().anyMatch(i -> i.value().equals("https://partner.example/b")));
-                assertThat(warnings(manager, "partner")).as(order).anyMatch(w -> w.contains("'victim@other'") && w.contains("not loaded"));
+                // The partner's "victim@other" does not get that name: it is listed under its own framework's,
+                // "victim@other@partner", and its source says so.
+                assertThat(registry.snapshot().entities()).as(order).noneMatch(e -> "partner".equals(e.frameworkId()) && e.id().equals("victim@other"));
+                assertThat(registry.snapshot().entity("victim@other@partner")).as(order).get().satisfies(e -> {
+                    assertThat(e.frameworkId()).isEqualTo("partner");
+                    assertThat(e.identifiers()).extracting(i -> i.value()).containsExactly("https://partner.example/b");
+                });
+                assertThat(warnings(manager, "partner")).as(order).anyMatch(w -> w.startsWith("Entity 'victim@other' is listed as 'victim@other@partner'"));
                 assertThat(warnings(manager, "official")).as(order).noneMatch(w -> w.contains("not loaded"));
             }
         }
@@ -139,6 +143,69 @@ class FallbackNamesTest {
                 assertThat(warnings(manager, "partner")).as(order).anyMatch(w -> w.contains("'iaca@other'") && w.contains("not loaded"));
                 assertThat(warnings(manager, "official")).as(order).isEmpty();
             }
+        }
+    }
+
+    static final TestPki.Issued NATIONAL_CA = TestPki.rootCa("CN=National Issuer CA,C=UT");
+    static final TestPki.Issued ACME = TestPki.leaf("CN=Acme Issuer,C=UT", NATIONAL_CA, List.of(), null);
+    static final ClientProfile NATIONAL = new ClientProfile("national-wallet", "National", Set.of("national"), false, false, false);
+    static final List<TrustFramework> WITH_NATIONAL = List.of(new TrustFramework("other", "Other", null, null, null),
+            new TrustFramework("national", "National", null, null, null));
+
+    /** "acme@other" as framework "national" lists it: withdrawn, and bound to its certificate under national's CA. */
+    static TrustedEntity acme(String id) {
+        return TrustedEntity.builder(id).framework("national").role(EntityRole.CREDENTIAL_ISSUER)
+                .identifier(IdentifierType.X509_SUBJECT, Certificates.subjectName(ACME.certificate()))
+                .status(EntityStatus.REVOKED).build();
+    }
+
+    static TrustDecision decideAcme(TrustRegistry registry, TrustSourceManager manager) {
+        TrustEvaluator evaluator = new TrustEvaluator(registry, manager, new DidResolver(List.of()), new X509PathValidator(),
+                Clock.systemUTC(), Duration.ofHours(1));
+        return evaluator.evaluate(new TrustQuery(EntityRole.CREDENTIAL_ISSUER,
+                new TrustQuery.Subject(null, List.of(Certificates.toBase64(ACME.certificate())), null, null),
+                new TrustQuery.Context("oid4vci", "dc+sd-jwt", "org.example.diploma", null, null, List.of())), NATIONAL);
+    }
+
+    /**
+     * An entity of framework "national" written with an id that is framework "other"'s name ({@code acme@other}) is
+     * listed under the name it would fall back to, {@code acme@other@national}, with all it says. Left out, the revoked
+     * entry would no longer restrict its party, and its certificate would be trusted through national's CA.
+     */
+    @Test
+    void anEntityWrittenWithAnotherFrameworksNameIsListedUnderItsOwn() {
+        Fixed national = new Fixed("national-list", "national", listing(List.of(acme("acme@other")),
+                List.of(anchor("national-ca", NATIONAL_CA, "national"))));
+        var registry = new TrustRegistry();
+        try (var manager = new TrustSourceManager(registry, WITH_NATIONAL, List.of(national), Clock.systemUTC())) {
+            manager.start();
+            TrustDecision d = decideAcme(registry, manager);
+            assertThat(d.decision()).as(d.summary()).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(d.reasons()).extracting(r -> r.code()).contains("x509.valid", "entity.status");
+            assertThat(d.entity().id()).isEqualTo("acme@other@national");
+            assertThat(registry.snapshot().entity("acme@other")).isEmpty();
+            assertThat(registry.snapshot().entity("acme@other@national")).get().satisfies(e -> {
+                assertThat(e.frameworkId()).isEqualTo("national");
+                assertThat(e.status()).isEqualTo(EntityStatus.REVOKED);
+                assertThat(e.identifiers()).isEqualTo(acme("acme@other").identifiers());
+            });
+            assertThat(warnings(manager, "national-list")).containsExactly("Entity 'acme@other' is listed as 'acme@other@national': 'acme@other'"
+                    + " is the name an entry of framework 'other' is listed under when another framework has its id");
+        }
+    }
+
+    @Test
+    void anEntityWrittenWithAnotherFrameworksNameWhoseOwnNameIsTakenTooIsNotLoaded() {
+        // National's own "acme@other@national" comes first and holds the name.
+        Fixed national = new Fixed("national-list", "national", listing(List.of(issuer("acme@other@national", "national", "https://acme.example"),
+                acme("acme@other")), List.of()));
+        var registry = new TrustRegistry();
+        try (var manager = new TrustSourceManager(registry, WITH_NATIONAL, List.of(national), Clock.systemUTC())) {
+            manager.start();
+            assertThat(registry.snapshot().entities()).singleElement()
+                    .satisfies(e -> assertThat(e.status()).isEqualTo(EntityStatus.ACTIVE));
+            assertThat(warnings(manager, "national-list")).containsExactly("Entity 'acme@other' is not loaded: 'acme@other' is the name an entry"
+                    + " of framework 'other' is listed under when another framework has its id, and 'acme@other@national' is taken too");
         }
     }
 
