@@ -1,7 +1,8 @@
 /**
  * Local RFC 5280-style path validation for device-side trust decisions. Mirrors the server's
  * semantics: chains may include or omit the anchor, a pinned end-entity certificate is accepted directly,
- * profile checks per trust domain, the {@code docTypes} anchor constraint, and — when CRLs are supplied —
+ * profile checks per trust domain (and a trust mechanism's requirements on top), the {@code docTypes} anchor
+ * constraint, and — when CRLs are supplied —
  * revocation of every certificate below the anchor.
  *
  * What it does not implement it refuses rather than ignores: a certificate with name constraints or policy
@@ -11,6 +12,7 @@
 import { OID, parseCertificate, type Certificate } from './certificate.js';
 import { verifyX509Signature } from './signature.js';
 import { anchorCrlUrls, checkRevocation, type RevocationOptions } from './revocation.js';
+import { requirementIssues, type CertificateRequirements } from './requirements.js';
 import { base64Encode, bytesEqual } from '../util/bytes.js';
 import { rsaKeyProblem } from '../crypto/rsa.js';
 import type { CertificateRevocation, CertificateSummary, PathValidationResult, ValidationIssue } from '../types.js';
@@ -29,8 +31,16 @@ export interface LocalAnchor {
 
 export interface ValidateOptions {
   time?: Date;
-  /** trust domain; selects the certificate profile */
+  /** trust domain; selects the certificate profile unless {@link profileDomain} does */
   domain?: string;
+  /**
+   * The trust domain whose built-in certificate profile applies (default: {@link domain}). The evaluator passes the
+   * question's own domain, so that the built-in profile follows the question when a trust mechanism counts the anchors
+   * of another domain instead.
+   */
+  profileDomain?: string;
+  /** A trust mechanism's requirements on the chain, checked on top of the built-in profile (x509/requirements.ts). */
+  requirements?: CertificateRequirements;
   expectedDnsName?: string;
   docType?: string;
   /** check revocation against these CRLs (a directly pinned certificate is not checked: it is an anchor) */
@@ -100,7 +110,7 @@ function profileIssues(domain: string | undefined, path: Certificate[], anchor: 
 export function validateCertificateChain(chainIn: (Certificate | Uint8Array | string)[], anchors: LocalAnchor[],
                                          opts: ValidateOptions = {}): PathValidationResult & { anchorRef?: LocalAnchor } {
   const time = opts.time ?? new Date();
-  const profile = profileName(opts.domain);
+  const profile = profileName(opts.profileDomain ?? opts.domain);
   const base = { profile, validationTime: time.toISOString() };
   const chain = chainIn.map((c) => (typeof c === 'string' || c instanceof Uint8Array ? parseCertificate(c) : c));
   if (chain.length === 0) {
@@ -207,7 +217,9 @@ function checkPath(path: Certificate[], anchor: LocalAnchor, time: Date): Valida
 function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certificate[], opts: ValidateOptions, time: Date,
                 base: { profile: string; validationTime: string }, revocable: boolean): PathValidationResult & { anchorRef?: LocalAnchor } {
   const issues = [...pathIssues];
-  issues.push(...profileIssues(opts.domain, path, anchor.certificate, opts));
+  issues.push(...profileIssues(opts.profileDomain ?? opts.domain, path, anchor.certificate, opts));
+  // A mechanism's requirements come on top of the built-in profile, never in its place (CertificateProfiles.withRequirements).
+  if (opts.requirements) issues.push(...requirementIssues(opts.requirements, path, anchor.certificate));
   const docTypes = Array.isArray(anchor.constraints?.docTypes) ? (anchor.constraints!.docTypes as string[]) : [];
   if (docTypes.length > 0 && opts.docType && !docTypes.includes(opts.docType)) {
     issues.push({ code: 'x509.anchor_doctype', message: `Trust anchor is not authorized for doctype ${opts.docType}`, severity: 'ERROR' });

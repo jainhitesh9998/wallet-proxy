@@ -5,7 +5,11 @@
  */
 export { LocalEvaluator, validateChainOnDevice, identifierKey, httpsHost } from './evaluation/local.js';
 export type { LocalTrustData, CrlFetchResult, CrlFetcher } from './evaluation/local.js';
-export { SNAPSHOT_FORMAT, snapshotRef } from './snapshot/snapshot.js';
+export { SNAPSHOT_FORMAT, SNAPSHOT_FORMATS, snapshotRef } from './snapshot/snapshot.js';
+export { parseMechanisms, selectMechanism, MechanismError } from './evaluation/mechanisms.js';
+export type { MechanismRole, KeyKind } from './evaluation/mechanisms.js';
+export { requirementIssues, KEY_USAGE_BITS } from './x509/requirements.js';
+export type { CertificateRequirements, KeyUsageBit } from './x509/requirements.js';
 export type { SnapshotData, SnapshotPolicy, SnapshotContext } from './snapshot/snapshot.js';
 export { extractIssuerInfo, issuerTrustQuery, decodeIssuerSigned, parseCoseSign1, coseX5chain } from './credential/extract.js';
 export type { IssuerInfo, CoseSign1 } from './credential/extract.js';

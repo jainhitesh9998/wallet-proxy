@@ -1,8 +1,12 @@
 /**
  * Trust evaluation on the device, with the service's semantics (TrustEvaluator.java): the same rules over the same
  * data give the same decision. The data is the verified trust snapshot, or, when no snapshot is usable, the trust
- * pinned in the app. A decision can only be TRUSTED when the data vouches for the party; missing data yields
- * UNKNOWN, never trust.
+ * pinned in the app; the rules are those in force (evaluation/rules.ts), the operator's trust mechanisms among them. A
+ * decision can only be TRUSTED when the data vouches for the party; missing data yields UNKNOWN, never trust.
+ *
+ * The steps, in the order {@link LocalEvaluator.evaluate} takes them, are the service's, by the same names: begin (which
+ * also selects the governing mechanism, selectMechanism), claim, keyProof (with validateChain), acceptKey, findEntity,
+ * checkDid, checkStanding, checkResponseUri, matchAuthorities, decide.
  */
 import { parseCertificate, type Certificate } from '../x509/certificate.js';
 import { validateCertificateChain, type LocalAnchor, type ValidateOptions } from '../x509/validate.js';
@@ -13,6 +17,7 @@ import { bytesEqual } from '../util/bytes.js';
 import { findVerificationMethod, hasRelationship, didError, parseDid } from '../did/did.js';
 import { jwkThumbprint } from '../crypto/keys.js';
 import type { TrustRules } from './rules.js';
+import { selectMechanism, type KeyKind, type TrustMechanism } from './mechanisms.js';
 import type { DidEvidence, DidResolutionResult, EntityView, Evidence, Identifier, PathValidationResult, Reason, SnapshotRef, TrustDecision,
   TrustFramework, TrustQuery, TrustedAuthorityMatch, TrustedAuthorityQuery } from '../types.js';
 
@@ -24,7 +29,10 @@ export interface LocalTrustData {
   frameworks: TrustFramework[];
   /** 'snapshot' when a verified snapshot backs the data; 'pinned' when only the trust bundled with the app does */
   source: 'snapshot' | 'pinned';
-  /** The rules in force (evaluation/rules.ts): also with pinned trust, which has no client profile of its own. Absent: none. */
+  /**
+   * The rules in force (evaluation/rules.ts), the trust mechanisms among them: also with pinned trust, which has no client
+   * profile of its own. Absent: none.
+   */
   policy?: Partial<TrustRules>;
   snapshot?: SnapshotRef | null;
   stale?: boolean;
@@ -159,6 +167,8 @@ interface Evaluation {
   type: string | undefined;
   types: string[];
   strict: boolean;
+  /** the operator's mechanism that governs the question; undefined when none does: it is then decided by the built-in rules alone */
+  mechanism: TrustMechanism | undefined;
   reasons: Reason[];
 }
 const hasDidKey = (ev: Evaluation) => !!ev.query.subject.kid?.startsWith('did:');
@@ -218,13 +228,15 @@ export class LocalEvaluator {
     const ev = this.begin(q, data);
     const claim = this.claim(ev);
     const key = await this.keyProof(ev, claim);
+    this.acceptKey(ev, key);
     const found = await this.findEntity(ev, claim, key);
     const entity = found.entity;
     const did = await this.checkDid(ev, key);
     const authorization = this.checkStanding(ev, key, entity);
     this.checkResponseUri(ev, claim, entity);
     const authorities = this.matchAuthorities(ev, key, entity);
-    const evidence = { x509: key.x509, did, authorization, trustedAuthorities: authorities, matchedIdentifiers: found.matched };
+    const evidence: Evidence = { x509: key.x509, did, authorization, trustedAuthorities: authorities, matchedIdentifiers: found.matched,
+      ...(ev.mechanism ? { mechanism: ev.mechanism.id } : {}) };
     return this.decide(ev, key, entity, evidence);
   }
 
@@ -236,7 +248,15 @@ export class LocalEvaluator {
     // Every type the credential asserts must be authorized (a W3C VC may carry several).
     const types = [...new Set([type, ...(query.context?.credentialTypes ?? [])].filter((t): t is string => typeof t === 'string' && t.trim() !== ''))];
     return { query, data, now, role: query.role, wantRole: roleName(query.role), format, type, types,
-      strict: data.policy?.strictAuthorization === true, reasons: [] };
+      strict: data.policy?.strictAuthorization === true, mechanism: this.selectMechanism(data, query.role, format, types), reasons: [] };
+  }
+
+  /**
+   * The operator's mechanism that governs the question: the first of those in force whose {@code for} matches its role,
+   * its format and any of the types it asserts. None: the question is decided exactly as without mechanisms.
+   */
+  private selectMechanism(data: LocalTrustData, role: TrustQuery['role'], format: string | undefined, types: string[]): TrustMechanism | undefined {
+    return selectMechanism(data.policy?.mechanisms ?? [], role, format, types);
   }
 
   private claim(ev: Evaluation): Claim {
@@ -344,10 +364,17 @@ export class LocalEvaluator {
     if (claim.expectedHash !== undefined && claim.expectedHash !== leaf.sha256) {
       reasons.push(error('client_id.x509_hash_mismatch', 'x509_hash client_id does not match the SHA-256 hash of the leaf certificate'));
     }
-    const domain = domainFor(ev.role, ev.format);
+    // The question's own domain, unless the governing mechanism names the domain whose anchors count instead.
+    const questionDomain = domainFor(ev.role, ev.format);
+    const rule = ev.mechanism?.x509;
+    const domain = rule?.domain ?? questionDomain;
     const anchors = ev.data.anchors.filter((a) => a.domain === domain);
-    const r = await validateChainOnDevice(chain, anchors, { time: ev.now, domain, expectedDnsName: claim.expectedDns, docType: ev.format === 'mso_mdoc' ? ev.type : undefined },
-      ev.data, this.fetchCrls);
+    // The built-in profile follows the question (profileDomain), also when its anchors are another domain's: a mechanism
+    // adds requirements on top of it and never takes one away.
+    const revocationRequired = ev.data.policy?.requireRevocationStatus === true || rule?.revocation === 'required';
+    const r = await validateChainOnDevice(chain, anchors, { time: ev.now, domain, profileDomain: questionDomain, requirements: rule?.profile,
+      expectedDnsName: claim.expectedDns, docType: ev.format === 'mso_mdoc' ? ev.type : undefined },
+    { crls: ev.data.crls, policy: { requireRevocationStatus: revocationRequired } }, this.fetchCrls);
     const { anchorRef, ...x509 } = r;
     if (r.valid) {
       if (leaf.subjectKeyIdentifier) proven.push({ type: 'X509_SKI', value: leaf.subjectKeyIdentifier });
@@ -367,6 +394,29 @@ export class LocalEvaluator {
       reasons.push(error('client_id.san_dns_mismatch', 'Leaf certificate has no SAN dNSName equal to the x509_san_dns client_id'));
     }
     return { x509, anchor: r.valid ? anchorRef : undefined };
+  }
+
+  /**
+   * The proofs of key the governing mechanism accepts: a key presented another way (an x5c chain, a DID key, a bare JWK)
+   * is refused, and so is a DID key of a method it does not list. A question without key material is a registry lookup,
+   * and nothing here refuses it.
+   */
+  private acceptKey(ev: Evaluation, key: KeyProof): void {
+    const m = ev.mechanism;
+    if (!m) return;
+    const presented: Array<[KeyKind, boolean]> = [['x5c', (ev.query.subject.x5c?.length ?? 0) > 0], ['did', hasDidKey(ev)], ['jwk', hasJwk(ev)]];
+    for (const [kind, present] of presented) {
+      if (present && m.keys && !m.keys.includes(kind)) {
+        ev.reasons.push(error('mechanism.key_not_accepted', `Trust mechanism '${m.id}' does not accept a key presented as ${kind}; it accepts ${m.keys.join(', ')}`));
+      }
+    }
+    // key.did is the DID of a DID key only when it parsed; one that did not is refused as did.invalid already.
+    if (m.did && hasDidKey(ev) && key.did !== undefined) {
+      const { method } = parseDid(key.did);
+      if (!m.did.methods.includes(method)) {
+        ev.reasons.push(error('mechanism.did_method_not_accepted', `Trust mechanism '${m.id}' does not accept a key of DID method '${method}'; it accepts ${m.did.methods.join(', ')}`));
+      }
+    }
   }
 
   private provesClientId(clientId: ClientId, chain: Certificate[], x509: PathValidationResult | null, keyDid: string | undefined): boolean {

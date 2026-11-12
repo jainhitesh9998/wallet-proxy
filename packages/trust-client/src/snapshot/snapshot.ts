@@ -1,6 +1,6 @@
 /**
  * The signed trust snapshot ({@code typ: trust-snapshot+jwt}): the frameworks, entities, trust anchors, evaluation
- * policy, DID documents, JSON-LD contexts and anchor CRLs visible to this client. It is what trust decisions are
+ * policy, the operator's trust mechanisms, DID documents, JSON-LD contexts and anchor CRLs visible to this client. It is what trust decisions are
  * made from on this device.
  *
  * Integrity: verified against service keys pinned by JWK thumbprint (or trust-on-first-use, when enabled), bound
@@ -16,10 +16,19 @@ import type { HeldCrl } from '../x509/revocation.js';
 import type { CacheStore } from '../cache/store.js';
 import type { HttpTransport } from '../transport/http.js';
 import { TrustIntegrityError } from '../errors.js';
+import { parseMechanisms, type TrustMechanism } from '../evaluation/mechanisms.js';
 import type { DidDocument, EntityView, SnapshotRef, TrustFramework } from '../types.js';
 
-/** The claim layout this client reads; a snapshot in another layout is refused rather than half understood. */
-export const SNAPSHOT_FORMAT = 4;
+/**
+ * The claim layouts this client reads: 4, and 5, which adds the operator's trust mechanisms ({@code mechanisms}). A
+ * snapshot in another layout is refused rather than half understood; a client that reads only 4 refuses 5, so that no
+ * client decides without the mechanisms a service states.
+ */
+export const SNAPSHOT_FORMATS: readonly number[] = [4, 5];
+/** The newest claim layout this client reads. */
+export const SNAPSHOT_FORMAT = 5;
+/** The layout without trust mechanisms, which a service with none issues. */
+const FORMAT_WITHOUT_MECHANISMS = 4;
 /** A snapshot dated further ahead than this is refused: accepted, it would outrank every later, correctly dated one. */
 const MAX_CLOCK_SKEW_MS = 5 * 60_000;
 
@@ -55,6 +64,8 @@ export interface SnapshotData {
   issuedAt: Date;
   expiresAt: Date;
   policy: SnapshotPolicy;
+  /** The operator's trust mechanisms, in the order they are tried (evaluation/mechanisms.ts); empty in a format 4 snapshot. */
+  mechanisms: readonly TrustMechanism[];
   frameworks: TrustFramework[];
   entities: EntityView[];
   anchors: LocalAnchor[];
@@ -72,10 +83,10 @@ export interface SnapshotData {
 }
 
 /**
- * What of a snapshot outlives its data: the rules it states (its policy), and which snapshot stated them. See
- * evaluation/rules.ts; a further kind of rule a snapshot carries is added here and there.
+ * What of a snapshot outlives its data: the rules it states (its policy and its trust mechanisms), and which snapshot
+ * stated them. See evaluation/rules.ts; a further kind of rule a snapshot carries is added here and there.
  */
-export type SnapshotRules = Pick<SnapshotData, 'id' | 'issuedAt' | 'policy'>;
+export type SnapshotRules = Pick<SnapshotData, 'id' | 'issuedAt' | 'policy' | 'mechanisms'>;
 
 export function snapshotRef(s: SnapshotData): SnapshotRef {
   return { id: s.id, issuedAt: s.issuedAt.toISOString(), expiresAt: s.expiresAt.toISOString(), stale: s.stale };
@@ -87,6 +98,8 @@ export interface SnapshotInfo extends SnapshotRef {
   didDocuments: number;
   contexts: number;
   crls: number;
+  /** how many trust mechanisms it states (status().rules lists them) */
+  mechanisms: number;
   strictAuthorization: boolean;
   requireRevocationStatus: boolean;
   requireSignedIssuerMetadata: boolean;
@@ -94,7 +107,7 @@ export interface SnapshotInfo extends SnapshotRef {
 
 export function snapshotInfo(s: SnapshotData): SnapshotInfo {
   return { ...snapshotRef(s), entities: s.entities.length, anchors: s.anchors.length, didDocuments: Object.keys(s.didDocuments).length,
-    contexts: Object.keys(s.contexts).length, crls: s.crls.length, strictAuthorization: s.policy.strictAuthorization,
+    contexts: Object.keys(s.contexts).length, crls: s.crls.length, mechanisms: s.mechanisms.length, strictAuthorization: s.policy.strictAuthorization,
     requireRevocationStatus: s.policy.requireRevocationStatus, requireSignedIssuerMetadata: s.policy.requireSignedIssuerMetadata };
 }
 
@@ -153,7 +166,7 @@ export class SnapshotManager {
   async lastRules(): Promise<SnapshotRules | null> {
     await this.load();
     const p = this.parsed;
-    return p ? { id: p.id, issuedAt: p.issuedAt, policy: p.policy } : null;
+    return p ? { id: p.id, issuedAt: p.issuedAt, policy: p.policy, mechanisms: p.mechanisms } : null;
   }
 
   private async load(): Promise<void> {
@@ -216,6 +229,25 @@ export class SnapshotManager {
     }
   }
 
+  /**
+   * The operator's trust mechanisms, read strictly: a member or a value this client does not know means it cannot apply
+   * the operator's rules as the service does, and the snapshot is refused. A format 4 snapshot states none, and one that
+   * carries the claim anyway is refused too: a client that reads only format 4 would ignore it.
+   */
+  private mechanisms(p: Record<string, unknown>): readonly TrustMechanism[] {
+    if (p.format === FORMAT_WITHOUT_MECHANISMS) {
+      if (Object.prototype.hasOwnProperty.call(p, 'mechanisms')) {
+        throw new TrustIntegrityError('A format 4 snapshot carries no trust mechanisms, and this one does: a client that reads only format 4 would ignore them');
+      }
+      return [];
+    }
+    try {
+      return parseMechanisms(p.mechanisms);
+    } catch (e) {
+      throw new TrustIntegrityError(`This client cannot apply the snapshot's trust mechanisms (${(e as Error).message}): update the client`);
+    }
+  }
+
   private async verify(jwt: string, etag: string | undefined, offline = false): Promise<SnapshotData> {
     const jws = decodeJws<Record<string, unknown>>(jwt);
     if (jws.header.typ !== 'trust-snapshot+jwt') throw new TrustIntegrityError(`Unexpected snapshot typ ${String(jws.header.typ)}`);
@@ -224,9 +256,10 @@ export class SnapshotManager {
     if (!keys.some((k) => verifyJws(jws, k))) throw new TrustIntegrityError('Snapshot signature is invalid');
     const p = jws.payload;
     this.checkAudience(p.aud);
-    if (p.format !== SNAPSHOT_FORMAT) {
-      throw new TrustIntegrityError(`Snapshot format ${String(p.format)} is not the format ${SNAPSHOT_FORMAT} this client reads: update the client or the service`);
+    if (!SNAPSHOT_FORMATS.includes(p.format as number)) {
+      throw new TrustIntegrityError(`Snapshot format ${String(p.format)} is not a format this client reads (${SNAPSHOT_FORMATS.join(', ')}): update the client or the service`);
     }
+    const mechanisms = this.mechanisms(p);
     const [iat, exp] = [Number(p.iat) * 1000, Number(p.exp) * 1000];
     if (!Number.isFinite(iat) || !Number.isFinite(exp) || exp <= iat) throw new TrustIntegrityError('Snapshot has no valid iat and exp');
     if (iat > this.now() + MAX_CLOCK_SKEW_MS) throw new TrustIntegrityError('Snapshot is dated in the future: check the clock of this device');
@@ -251,6 +284,7 @@ export class SnapshotManager {
       issuedAt: new Date(iat), expiresAt: new Date(exp),
       policy: { frameworks: policy.frameworks ?? [], strictAuthorization: policy.strictAuthorization === true,
         requireRevocationStatus: policy.requireRevocationStatus === true, requireSignedIssuerMetadata: policy.requireSignedIssuerMetadata === true },
+      mechanisms,
       frameworks: (p.frameworks as TrustFramework[]) ?? [], entities: (p.entities as EntityView[]) ?? [], anchors,
       didDocuments: (p.didDocuments as Record<string, DidDocument>) ?? {},
       contexts: (p.contexts as Record<string, SnapshotContext>) ?? {}, crls, stale: false,

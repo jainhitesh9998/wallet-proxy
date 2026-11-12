@@ -137,6 +137,8 @@ export interface Evidence {
   trustedAuthorities?: TrustedAuthorityMatch[];
   matchedIdentifiers?: string[];
   clientId?: Record<string, unknown> | null;
+  /** The id of the operator's trust mechanism that governed the question; absent when none did. */
+  mechanism?: string;
 }
 
 export interface TrustDecision {

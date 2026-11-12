@@ -13,8 +13,8 @@
  * held to the digest the snapshot carries (JSON-LD contexts).
  *
  * Without a usable snapshot the client decides from the trust pinned in the app, and says so in every decision; it
- * never answers TRUSTED without verified data. The rules do not lapse with the data: the app's own minimum and the
- * client profile of the last snapshot that verified stay in force (evaluation/rules.ts).
+ * never answers TRUSTED without verified data. The rules do not lapse with the data: the app's own minimum, and the
+ * client profile and trust mechanisms of the last snapshot that verified, stay in force (evaluation/rules.ts).
  */
 import { CircuitBreaker } from './transport/circuit.js';
 import { HttpTransport } from './transport/http.js';
@@ -23,6 +23,7 @@ import { SnapshotManager, snapshotInfo, snapshotRef, type ServiceKeyPolicy, type
 import { SnapshotRefresher } from './snapshot/refresh.js';
 import { LocalEvaluator, type LocalTrustData, identifierKey, validateChainOnDevice } from './evaluation/local.js';
 import { minimumRules, RulesInForce, type MinimumRules, type TrustRules } from './evaluation/rules.js';
+import { parseMechanisms, type TrustMechanism } from './evaluation/mechanisms.js';
 import type { LookupContext } from './lookups/context.js';
 import { CrlLookup } from './lookups/crl.js';
 import { DidLookup } from './lookups/did.js';
@@ -39,6 +40,7 @@ import type { DidResolutionResult, EntityFilter, EntityView, IssuerMetadataResul
 
 export type { SnapshotInfo } from './snapshot/snapshot.js';
 export type { MinimumRules, TrustRules } from './evaluation/rules.js';
+export type { TrustMechanism } from './evaluation/mechanisms.js';
 export type { ContextDocument } from './lookups/json-ld.js';
 export type { FetchedStatusList, StatusCheckOptions } from './lookups/status-list.js';
 
@@ -102,6 +104,13 @@ export interface TrustClientConfig {
    * same storage). A key that is not one of these is an error.
    */
   policy?: MinimumRules;
+  /**
+   * The app's own trust mechanisms, in the shape of the snapshot claim {@code mechanisms} (camelCase, the order they are
+   * tried in), read as strictly: a member or a value this client does not know is an error. They are in force only while
+   * no snapshot has ever verified (with the same storage): once the service has spoken, its list is the list, also when
+   * it is empty. Unlike the flags of {@link policy}, an ordered list does not combine with the service's.
+   */
+  mechanisms?: TrustMechanism[];
   /** Default 'proxy' with a service, 'direct' without. One value for every kind, or one per kind. */
   lookups?: LookupVia | LookupPolicy;
   /**
@@ -145,7 +154,8 @@ export interface TrustStatus {
   degraded: boolean;
   /**
    * The rules decisions are made under now: the app's minimum, made stricter by the client profile of the last
-   * snapshot that verified (also when that snapshot is no longer usable). Always set by {@link TrustClient.status};
+   * snapshot that verified (also when that snapshot is no longer usable), and the trust mechanisms in force (that
+   * snapshot's, or the app's own while none has verified). Always set by {@link TrustClient.status};
    * optional so that a TrustStatus an app writes itself (a placeholder before the first call) still type-checks.
    */
   rules?: TrustRules;
@@ -175,6 +185,7 @@ export class TrustClient {
     const insecureHosts = config.http?.insecureHosts ?? [];
     this.now = config.clock ? () => config.clock!().getTime() : Date.now;
     const minimum = minimumRules(config.policy);
+    const appMechanisms = config.mechanisms === undefined ? [] : parseMechanisms(config.mechanisms);
     const service = config.service;
     if (service) {
       // Nothing the service signs is accepted without knowing for whom and by which key: a missing value here would
@@ -202,7 +213,7 @@ export class TrustClient {
     }) : null;
     this.snapshots = new SnapshotManager(this.transport, store, service?.keys ?? {}, service?.clientId,
       config.snapshot?.graceMs ?? 7 * 24 * 3600_000, this.now);
-    this.rules = new RulesInForce(minimum, () => this.snapshots.lastRules());
+    this.rules = new RulesInForce(minimum, () => this.snapshots.lastRules(), appMechanisms);
     this.refresher = new SnapshotRefresher(this.snapshots, {
       service: !!this.transport, refreshMs: config.snapshot?.refreshMs ?? 3600_000, retryMs: config.snapshot?.retryMs ?? 30_000,
       now: this.now, logger: config.logger, onChange: (reason) => this.notify(reason),

@@ -78,7 +78,7 @@ describe("the app's own minimum", () => {
       expect(severity(strict, 'local.pinned')).toBe('WARNING');
     }
     const c = client({ policy: { requireRevocationStatus: true } });
-    expect((await c.status()).rules).toEqual({ requireRevocationStatus: true, strictAuthorization: false, requireSignedIssuerMetadata: false });
+    expect((await c.status()).rules).toEqual({ requireRevocationStatus: true, strictAuthorization: false, requireSignedIssuerMetadata: false, mechanisms: [] });
   });
 
   it('is not relaxed by a lenient snapshot, in use or no longer usable', async () => {
@@ -142,7 +142,7 @@ describe("the service's last word is remembered", () => {
     const c = client();
     const d = await c.evaluate(ds);
     expect([d.decision, d.source]).toEqual(['NOT_TRUSTED', 'snapshot']);
-    expect((await c.status()).rules).toEqual({ requireRevocationStatus: true, strictAuthorization: false, requireSignedIssuerMetadata: false });
+    expect((await c.status()).rules).toEqual({ requireRevocationStatus: true, strictAuthorization: false, requireSignedIssuerMetadata: false, mechanisms: [] });
   });
 
   it('a lenient snapshot held, then past its grace: lenient without the option, strict with it', async () => {
@@ -221,7 +221,7 @@ describe('only verified data states rules', () => {
       await w.storage.set('snapshot', JSON.stringify({ ...stored, jwt: tamper(stored.jwt, snapshot) }));
       lapse();
       const c = client();
-      expect((await c.status()).rules, name).toEqual({ requireRevocationStatus: false, strictAuthorization: false, requireSignedIssuerMetadata: false });
+      expect((await c.status()).rules, name).toEqual({ requireRevocationStatus: false, strictAuthorization: false, requireSignedIssuerMetadata: false, mechanisms: [] });
       const d = await c.evaluate(ds);
       expect([d.decision, d.source], name).toEqual(['TRUSTED', 'pinned']);
       expect(severity(d, 'x509.revocation_unknown'), name).toBe('WARNING');

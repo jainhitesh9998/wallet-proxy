@@ -7,7 +7,7 @@
  */
 export { TrustClient, createTrustClient } from './client.js';
 export type { TrustClientConfig, PinnedAnchor, Logger, LookupPolicy, LookupVia, SnapshotInfo, TrustStatus, ContextDocument,
-  StatusCheckOptions, MinimumRules, TrustRules } from './client.js';
+  StatusCheckOptions, MinimumRules, TrustRules, TrustMechanism } from './client.js';
 export * from './types.js';
 export { TrustServiceError, TrustServiceUnavailableError, TrustIntegrityError } from './errors.js';
 export { MemoryCacheStore, KeyValueCacheStore } from './cache/store.js';
