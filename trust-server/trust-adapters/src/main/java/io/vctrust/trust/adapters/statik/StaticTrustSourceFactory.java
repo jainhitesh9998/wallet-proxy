@@ -41,7 +41,6 @@ public final class StaticTrustSourceFactory implements TrustSourceFactory {
             }
 
             @Override
-            @SuppressWarnings("unchecked")
             public SourceLoadResult load() throws TrustSourceException {
                 String location = def.requireString("location");
                 try {
@@ -54,7 +53,8 @@ public final class StaticTrustSourceFactory implements TrustSourceFactory {
                     // party be trusted through the CA, and an anchor would drop out. The last good content stays.
                     List<TrustedEntity> entities = new ArrayList<>();
                     List<TrustAnchor> anchors = new ArrayList<>();
-                    List<Object> listed = (List<Object>) doc.getOrDefault("entities", List.of());
+                    TrustedEntityParser.Lists lists = TrustedEntityParser.registry(doc);
+                    List<Object> listed = lists.entities();
                     for (int i = 0; i < listed.size(); i++) {
                         try {
                             entities.add(TrustedEntityParser.entity(entry(listed.get(i)), def.frameworkId(), prov, named));
@@ -62,7 +62,7 @@ public final class StaticTrustSourceFactory implements TrustSourceFactory {
                             throw unreadable(TrustedEntityParser.name("entity", "entities", i, listed.get(i)), e);
                         }
                     }
-                    listed = (List<Object>) doc.getOrDefault("anchors", List.of());
+                    listed = lists.anchors();
                     for (int i = 0; i < listed.size(); i++) {
                         try {
                             anchors.addAll(TrustedEntityParser.anchors(entry(listed.get(i)), def.frameworkId(), prov, named));

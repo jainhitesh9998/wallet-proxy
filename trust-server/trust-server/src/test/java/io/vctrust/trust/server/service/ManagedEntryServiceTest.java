@@ -237,6 +237,27 @@ class ManagedEntryServiceTest {
     }
 
     @Test
+    void anEntryWithAMemberTheFormatDoesNotHaveIsRefusedAndOneStoredBeforeFailsTheLoad() {
+        Map<String, Object> misspelt = revokedAcme();
+        misspelt.remove("status");
+        misspelt.put("staus", "REVOKED");
+        assertThatThrownBy(() -> managed.put(OPERATOR, "entities", "acme", misspelt))
+                .isInstanceOfSatisfying(ServiceException.class, e -> {
+                    assertThat(e.code()).isEqualTo("invalid_document");
+                    assertThat(e.getMessage()).startsWith("unknown member 'staus'; an entity has id, framework, roles");
+                });
+        assertThat(managed.list(OPERATOR, "entities")).isEmpty();
+
+        // Stored around the admin API, or before the rule: the managed source does not load it as an active entry.
+        misspelt.put("id", "acme");
+        misspelt.put("framework", "partner");
+        store.put(ManagedEntityStore.Kind.ENTITY, "acme", misspelt);
+        sources.refresh("managed");
+        assertThat(managedState().lastError()).contains("managed entity 'acme' cannot be read: unknown member 'staus'");
+        assertThat(registry.snapshot().entity("acme")).isEmpty();
+    }
+
+    @Test
     void anEntryStoredBeforeTheRuleDoesNotGetTheName() {
         // Written to the database directly, or before this check existed: the registry does not give it the name all the
         // same, and lists it under its own framework's instead.

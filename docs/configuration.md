@@ -276,10 +276,60 @@ anchors:
       crl: "<base64 DER>"                 # or a CRL pushed by the operator; verified against the anchor
 ```
 
+A registry holds `entities` and `anchors`, each a list, and nothing else. An entity entry has these members, and no
+others:
+
+| Member | Value |
+| --- | --- |
+| `id` | Text; required |
+| `framework` | Text: the framework of the entry's source (see below) |
+| `roles` | A list of role names, or one name: `CREDENTIAL_ISSUER`, `VERIFIER`, `WALLET_PROVIDER`, `AUTHORIZATION_SERVER`, `ACCREDITATION_AUTHORITY`, `STATUS_LIST_PROVIDER`, `OTHER` (in any case). No roles: the entry authorizes nothing, but it can still withdraw a party |
+| `name` | Text: the display name in English. Not together with `display` |
+| `display` | A list of `{locale, name, description, logoUri}`, each member text and optional |
+| `identifiers` | A list. Each item is text (a DID, an `http(s)` URL, or else a client identifier) or `{type, value}`, both text; the types are `DID`, `URL`, `CLIENT_ID`, `DNS`, `X509_SUBJECT`, `X509_SKI`, `X509_SHA256`, `JWK_THUMBPRINT`, `FEDERATION_ENTITY`, `OTHER` |
+| `certificates` | A list of certificates, each PEM (one or more `CERTIFICATE` blocks) or base64 DER |
+| `certificate` | One certificate, as text |
+| `certificateLocation`, `certificateJsonField` | Text: where more certificates are: a PEM bundle or DER, or with `certificateJsonField` the member of a JSON document that holds one |
+| `authorizations` | A list of `{format, type, constraints}`: `format` and `type` text (absent: any), `constraints` an object |
+| `contexts` | A list. Each item is a URL, or `{url, sha256}`, both text |
+| `status` | `ACTIVE` (the default), `SUSPENDED`, `REVOKED`, `EXPIRED` or `UNKNOWN`, in any case |
+| `validFrom`, `validUntil` | A date, as text: `2027-12-31` (midnight UTC) or `2027-12-31T00:00:00Z` |
+| `metadata`, `metadataPolicy` | An object whose members, named by entity type (`openid_credential_issuer`, `oauth_authorization_server`, ...), are objects |
+| `attributes` | An object |
+
+An anchor entry has these:
+
+| Member | Value |
+| --- | --- |
+| `id` | Text. Without it the anchor is named `<domain>:<SHA-256 of the certificate>`; an entry with several certificates makes one anchor of each, named `<id>-0`, `<id>-1`, ... |
+| `framework` | Text, as for an entity |
+| `domain` | Text; required |
+| `entity` | Text: the id of the entity of the same framework that a chain to this anchor is |
+| `certificate`, `certificates`, `certificateLocation`, `certificateJsonField` | As for an entity; at least one certificate is required |
+| `status` | As for an entity; an anchor that is not `ACTIVE` vouches for nothing |
+| `constraints` | An object. What the service reads from it must have its type: `docTypes` a list of doctypes, `crlUrls` a URL or a list of URLs, `crl` a CRL as text (PEM or base64 DER) |
+
+`metadata`, `metadataPolicy`, `attributes`, an anchor's `constraints` and an authorization's `constraints` are
+free-form: their members are not checked, beyond the three of `constraints` above and that each has a value.
+
 Entries belong to the framework of their source; a `framework` key is accepted only when it names that framework,
 and an entry naming another one cannot be read. `certificateLocation` may name a `classpath:` or `file:`
 location only in a registry that is itself a local file; in a registry fetched over the network and in entries sent
 to the admin API it must be an `https:` URL.
+
+**What cannot be read.** The format is read strictly, so that nothing is read as absent because of how it is
+written: an entity written with `staus: REVOKED` would otherwise be active, and an anchor with
+`docTypes: org.iso.18013.5.1.mDL` (no brackets) valid for every doctype. An entry cannot be read when:
+
+- it has a member that is not in the tables above, or one of its identifiers, display entries, authorizations or
+  contexts has a member other than theirs;
+- a member has another type than the tables give: `roles: [7]`, an identifier that is a number, a `status` that is a
+  list, a date that is a number, `certificates` that is one certificate rather than a list of them;
+- a member is written without a value (`status:` with nothing after it);
+- a role, status or identifier type is not one of the names above, or a date is not a date;
+- a certificate is not one, or the text of one holds anything else in PEM armour (a private key, a damaged block);
+- it has `certificateJsonField` without `certificateLocation`, or both `name` and `display`;
+- it names another framework, has no `id` (an entity) or no `domain` or certificate (an anchor), or is not an object.
 
 **An entry that cannot be read fails the load.** A `static` registry with one entity or anchor that cannot be read is
 not loaded at all: the source keeps what it loaded last, its state (`GET /admin/v1/sources`) has the error, and a
@@ -287,8 +337,10 @@ required source that has never loaded keeps the service not ready. The error nam
 place when it has none (`anchors[2]`), and says what is wrong with it:
 
 ```text
-Cannot load static registry file:/etc/trust/registry.yaml: entity 'acme' cannot be read: Unknown role 'ISSUER'; one of CREDENTIAL_ISSUER, VERIFIER, WALLET_PROVIDER, AUTHORIZATION_SERVER, ACCREDITATION_AUTHORITY, STATUS_LIST_PROVIDER, OTHER
+Cannot load static registry docs/examples/trust-methods/registry.yaml: entity 'utopia-dmv' cannot be read: unknown member 'staus'; an entity has id, framework, roles, name, display, identifiers, certificates, certificate, certificateLocation, certificateJsonField, authorizations, contexts, status, validFrom, validUntil, metadata, metadataPolicy, attributes
 ```
+
+A registry with a member other than `entities` and `anchors` (`entites:`) is not loaded either.
 
 The admin API refuses such an entry (`invalid_document`), so a `managed` source meets one only when it was stored
 before a rule existed; it then fails to load in the same way, and the entry can still be replaced or deleted through
