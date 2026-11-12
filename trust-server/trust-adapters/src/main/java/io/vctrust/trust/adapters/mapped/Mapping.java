@@ -458,7 +458,7 @@ final class Mapping {
         List<Object> records(Object root) {
             List<Object> out = new ArrayList<>();
             for (Object o : each.select(root, root)) {
-                if (o != null) {
+                if (!Value.blank(o)) {
                     out.add(o);
                 }
             }
@@ -675,8 +675,9 @@ final class Mapping {
         }
 
         /**
-         * A date as an ISO instant: an ISO date-time or date, or seconds since the epoch (a whole number, or digits,
-         * of at most twelve digits). Anything else is not a date: a time in milliseconds is not one in seconds.
+         * A date as an ISO instant: an ISO date-time with its offset or an ISO date, or seconds since the epoch (a JSON
+         * number, whole, of at most twelve digits). Anything else is not a date: a time in milliseconds is not one in
+         * seconds, and a string of digits is not one at all ({@link Mapping#instant}).
          */
         private String instant(String member, Object record, Object root) {
             Value v = (Value) fields.get(member);
@@ -824,7 +825,7 @@ final class Mapping {
             if (v instanceof Value.Constant) {
                 return false;
             }
-            return !(v instanceof Value.Translated t) || t.path().select(current, root).stream().anyMatch(java.util.Objects::nonNull);
+            return !(v instanceof Value.Translated t) || t.path().select(current, root).stream().anyMatch(o -> !Value.blank(o));
         }
 
         /** Nested items: one per match of the item's {@code each}, or one; {@code needs} are the members an item must have. */
@@ -854,7 +855,7 @@ final class Mapping {
             bounded(matches, member);   // before any is mapped: each costs the evaluation of the item's members
             List<Map<String, Object>> out = new ArrayList<>();
             for (Object match : matches) {
-                if (match == null) {
+                if (Value.blank(match)) {
                     continue;
                 }
                 Map<String, Object> o = new LinkedHashMap<>();
@@ -1217,9 +1218,16 @@ final class Mapping {
         return Instant.ofEpochSecond(d.longValue());
     }
 
+    /** An ISO date-time whose offset is written without a colon ({@code +0100}), as many writers of JSON write it. */
+    private static final java.time.format.DateTimeFormatter COMPACT_OFFSET = new java.time.format.DateTimeFormatterBuilder()
+            .append(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME).appendOffset("+HHMM", "Z").toFormatter()
+            .withResolverStyle(java.time.format.ResolverStyle.STRICT).withChronology(java.time.chrono.IsoChronology.INSTANCE);
+
     /**
-     * An ISO date-time or date, or seconds since the epoch: a string of one to twelve digits, or a whole number in that
-     * range. Null for anything else, which is not a date.
+     * An ISO date-time with its offset ({@code Z}, {@code +01:00} or {@code +0100}) or an ISO date, or seconds since the
+     * epoch as a JSON number: a whole number of at most twelve digits. Null for anything else, which is not a date: a
+     * string of digits is not ({@code "20991231"} would be read as a second of 1970, and {@code "2099"} too), nor is a
+     * date-time without its offset, whose instant depends on where it was written.
      */
     static Instant instant(Object v) {
         try {
@@ -1230,13 +1238,14 @@ final class Mapping {
                 return null;
             }
             String t = s.trim();
-            if (t.matches("[0-9]{1,12}")) {
-                return Instant.ofEpochSecond(Long.parseLong(t));
-            }
             if (t.length() == 10) {
                 return LocalDate.parse(t).atStartOfDay().toInstant(ZoneOffset.UTC);
             }
-            return java.time.OffsetDateTime.parse(t).toInstant();
+            try {
+                return java.time.OffsetDateTime.parse(t).toInstant();
+            } catch (DateTimeParseException e) {
+                return java.time.OffsetDateTime.parse(t, COMPACT_OFFSET).toInstant();
+            }
         } catch (RuntimeException e) {
             return null;
         }

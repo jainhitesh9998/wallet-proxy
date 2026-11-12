@@ -108,7 +108,10 @@ class MappedSourceValidationTest {
                 new Row("active for the mDL, an item without type, asked about another doctype", members("credentials",
                         List.of(Map.of("format", "mso_mdoc", "type", MDL), Map.of("format", "mso_mdoc"))), PID, EntityStatus.SUSPENDED,
                         "authorizations: an item yields no type"),
-                new Row("valid_until empty", members("valid_until", ""), MDL, EntityStatus.SUSPENDED, "validUntil is not a date: ''"),
+                // valid_until: "" was a row here; the third round (item 8) reads an empty string as absent, like null
+                // (MappedSourceEdgesTest.item8_anEmptyString...). A string of digits is no date since then.
+                new Row("valid_until written as digits", members("valid_until", "20991231"), MDL, EntityStatus.SUSPENDED,
+                        "validUntil is not a date: '20991231'"),
                 new Row("a date written with a space", members("valid_until", "2025-01-01 00:00:00"), MDL, EntityStatus.SUSPENDED,
                         "validUntil is not a date: '2025-01-01 00:00:00'"));
         for (Row row : rows) {

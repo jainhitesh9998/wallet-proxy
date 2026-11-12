@@ -663,4 +663,90 @@ class MappedSourceEdgesTest {
         assertThat(source(ctx, props("mapping", m)).load().warnings()).singleElement().asString()
                 .contains("is skipped: crl: a value of 1048577 characters, more than 1048576");
     }
+
+    @Test
+    void item8_anEmptyStringIsAbsentLikeNullForEveryMember() {
+        // valid_until: "" suspended the issuer; certificates: ["", "<PEM>"] failed the load.
+        Map<String, Map<String, Object>> honest = new LinkedHashMap<>();
+        honest.put("valid_until: \"\"", members("roles", List.of("CREDENTIAL_ISSUER"), "valid_until", ""));
+        honest.put("certificates: [\"\", <PEM>]", members("roles", List.of("CREDENTIAL_ISSUER"), "certificates", List.of("", MappedTesting.pem("ds"))));
+        honest.put("name: \"\"", members("roles", List.of("CREDENTIAL_ISSUER"), "name", ""));
+        honest.forEach((what, dmv) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, withRoles(1, dmv));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", boundMapping())))) {
+                assertThat(state(manager, "partner").warnings()).as(what).isEmpty();
+                var e = registry.snapshot().entity("partner:dmv").orElseThrow();
+                assertThat(e.status()).as(what).isEqualTo(EntityStatus.ACTIVE);
+                assertThat(e.certificates()).as(what).hasSize(1);
+                assertThat(decide(registry, MDL)).as(what).isEqualTo(Decision.TRUSTED);
+            }
+        });
+        // What identifies a record: an empty id or role is none, and the load fails as for a missing one.
+        Map<String, Object> m = boundMapping();
+        block(m).put("roles", "$.roles[*]");
+        TestContext ctx = ctx();
+        serveJson(ctx, withRoles(1, members("roles", List.of(""))));
+        assertThat(loadError(source(ctx, props("mapping", m)))).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be "
+                + "read: it yields no role");
+        serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "")));
+        assertThat(loadError(source(ctx, props("mapping", m)))).startsWith("mapping.entities[0]: record 1 cannot be read: it yields no id");
+        // A restricting list of empty strings is a list with no item: there and empty.
+        serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "credentials", List.of(""))));
+        var r = loadQuietly(source(ctx, props("mapping", m)));
+        assertThat(r.entities()).filteredOn(e -> e.id().equals("partner:dmv")).singleElement()
+                .satisfies(e -> assertThat(e.status()).isEqualTo(EntityStatus.SUSPENDED));
+    }
+
+    static io.vctrust.trust.core.spi.SourceLoadResult loadQuietly(io.vctrust.trust.core.spi.TrustSource s) {
+        try {
+            return s.load();
+        } catch (TrustSourceException e) {
+            throw new AssertionError(e.getMessage());
+        }
+    }
+
+    @Test
+    void item8_aDateIsAnIsoDateTimeWithItsOffsetOrADateOrAJsonNumberOfSeconds() {
+        Map<String, Object> m = boundMapping();
+        block(m).put("validFrom", "$.valid_from");
+        // A string of digits is not a date: "2099" was a second of 1970, and an issuer valid only from 2099 was trusted.
+        Map<Object, String> notDates = new LinkedHashMap<>();
+        notDates.put("2099", "validFrom is not a date: '2099'");
+        notDates.put("20991231", "validFrom is not a date: '20991231'");
+        notDates.put("2099-12-31T00:00:00", "validFrom is not a date: '2099-12-31T00:00:00'");   // no offset: where?
+        notDates.forEach((validFrom, warning) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "valid_from", validFrom)));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+                assertThat(decide(registry, MDL)).as(String.valueOf(validFrom)).isEqualTo(Decision.NOT_TRUSTED);
+                var e = registry.snapshot().entity("partner:dmv").orElseThrow();
+                assertThat(e.status()).isEqualTo(EntityStatus.SUSPENDED);
+                assertThat(e.validFrom()).isNull();
+                assertThat(state(manager, "partner").warnings()).singleElement().asString().endsWith(warning);
+            }
+        });
+        // An offset without a colon is an offset; a JSON number is seconds since the epoch.
+        Map<Object, java.time.Instant> dates = new LinkedHashMap<>();
+        dates.put("2020-06-01T12:00:00+0100", java.time.Instant.parse("2020-06-01T11:00:00Z"));
+        dates.put("2020-06-01T12:00:00.5-0130", java.time.Instant.parse("2020-06-01T13:30:00.5Z"));
+        dates.put("2020-06-01T12:00:00+01:00", java.time.Instant.parse("2020-06-01T11:00:00Z"));
+        dates.put("2020-06-01", java.time.Instant.parse("2020-06-01T00:00:00Z"));
+        dates.put(1_591_012_800L, java.time.Instant.parse("2020-06-01T12:00:00Z"));
+        dates.forEach((validFrom, at) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "valid_from", validFrom)));
+            var r = loadQuietly(source(ctx, props("mapping", m)));
+            assertThat(r.warnings()).as(String.valueOf(validFrom)).isEmpty();
+            assertThat(r.entities().getFirst().validFrom()).as(String.valueOf(validFrom)).isEqualTo(at);
+        });
+        // The same for a list fact: the load fails.
+        TestContext ctx = ctx();
+        Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        d.put("issued", String.valueOf(NOW.minus(Duration.ofDays(1)).getEpochSecond()));
+        serveJson(ctx, d);
+        assertThat(loadError(source(ctx, props()))).contains("mapping.list.issuedAt: the document has no date there");
+    }
 }

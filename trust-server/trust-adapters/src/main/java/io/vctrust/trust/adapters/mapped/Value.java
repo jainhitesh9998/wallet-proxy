@@ -263,12 +263,20 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         return null;
     }
 
-    /** The nodes that are not null, of at most {@link #MAX_VALUES} selected. */
+    /**
+     * Whether a node says nothing: null, or an empty string. An empty string is absent like null, for every member: a
+     * {@code valid_until: ""} is no date that cannot be read, and {@code ["", "<PEM>"]} one certificate.
+     */
+    static boolean blank(Object v) {
+        return v == null || "".equals(v);
+    }
+
+    /** The nodes that are not {@link #blank}, of at most {@link #MAX_VALUES} selected. */
     private static List<Object> present(List<Object> values) {
         bounded(values);
         List<Object> out = new ArrayList<>(Math.min(values.size(), 16));
         for (Object v : values) {
-            if (v != null) {
+            if (!blank(v)) {
                 out.add(v);
             }
         }
@@ -283,11 +291,11 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         return selected;
     }
 
-    /** The first node that is not null, or null, of at most {@link #MAX_VALUES} selected. */
+    /** The first node that is not {@link #blank}, or null, of at most {@link #MAX_VALUES} selected. */
     private static Object firstPresent(List<Object> values) {
         bounded(values);
         for (Object v : values) {
-            if (v != null) {
+            if (!blank(v)) {
                 return v;
             }
         }
@@ -297,7 +305,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
     record Constant(Object value) implements Value {
         @Override
         public List<Object> all(Object current, Object root) {
-            return List.of(value);
+            return blank(value) ? List.of() : List.of(value);
         }
 
         @Override
@@ -334,12 +342,12 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         public List<Object> all(Object current, Object root) {
             List<Object> found = present(path.select(current, root));
             if (found.isEmpty()) {
-                return fallback == null ? List.of() : List.of(fallback);
+                return blank(fallback) ? List.of() : List.of(fallback);
             }
             List<Object> out = new ArrayList<>(found.size());
             for (Object v : found) {
                 Object translated = translate(v);
-                if (translated != null) {
+                if (!blank(translated)) {
                     out.add(translated);
                 }
             }
@@ -351,15 +359,15 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         public Object first(Object current, Object root) {
             boolean found = false;
             for (Object v : bounded(path.select(current, root))) {
-                if (v != null) {
+                if (!blank(v)) {
                     found = true;
                     Object translated = translate(v);
-                    if (translated != null) {
+                    if (!blank(translated)) {
                         return translated;
                     }
                 }
             }
-            return found ? null : fallback;
+            return found || blank(fallback) ? null : fallback;
         }
 
         /**
@@ -371,7 +379,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
                 return null;
             }
             for (Object v : bounded(path.select(current, root))) {
-                if (v != null && translate(v) == null) {
+                if (!blank(v) && blank(translate(v))) {
                     return v;
                 }
             }
@@ -410,12 +418,12 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             JsonPath.Restricted r = path.restricted(current, root);
             List<Object> found = present(r.nodes());
             if (found.isEmpty()) {
-                return new Restricting(fallback == null ? List.of() : List.of(fallback), r.there(), r.lost());
+                return new Restricting(blank(fallback) ? List.of() : List.of(fallback), r.there(), r.lost());
             }
             List<Object> out = new ArrayList<>(found.size());
             for (Object v : found) {
                 Object translated = translate(v);
-                if (translated == null) {
+                if (blank(translated)) {
                     throw new IllegalArgumentException("the path " + path.text() + " finds " + Mapping.quote(v) + ", which its translation "
                             + "does not know, and it has no default: a list that restricts is not narrowed by what cannot be read");
                 }
@@ -492,7 +500,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             for (Object part : parts) {
                 if (part instanceof JsonPath p) {
                     Object found = firstPresent(p.select(current, root));
-                    if (found == null) {
+                    if (blank(found)) {
                         return List.of();
                     }
                     String t = Value.text(found);

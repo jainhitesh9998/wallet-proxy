@@ -161,7 +161,8 @@ final class JsonPath {
             boolean list = s instanceof Wildcard || s instanceof Filter;
             List<Object> next = new ArrayList<>();
             for (Object n : nodes) {
-                if (n == null) {
+                if (Value.blank(n)) {
+                    // Nothing there (an empty string is absent like null): nothing to look into.
                     continue;
                 }
                 if (!s.accepts(n)) {
@@ -174,7 +175,7 @@ final class JsonPath {
                     for (Object c : children) {
                         if (f.condition().test(c)) {
                             next.add(c);
-                        } else if (c != null) {
+                        } else if (!Value.blank(c)) {
                             lost = true;
                         }
                     }
@@ -186,7 +187,7 @@ final class JsonPath {
                 } else if (afterList && next.size() == before) {
                     lacking = lacking != null ? lacking : "the path " + text + " finds an item without " + s.written()
                             + "; a list that restricts is not read past an item it cannot read";
-                } else if (afterList && next.getLast() == null) {
+                } else if (afterList && Value.blank(next.getLast())) {
                     lost = true;
                 }
             }
