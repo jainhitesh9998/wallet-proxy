@@ -587,6 +587,21 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             return List.of(out.toString());
         }
 
+        /**
+         * The paths of the template that find nothing in a list that holds items ({@link JsonPath#meetsItems}): an index
+         * that selects {@code null}, or nothing, from a list with items, or a filter that keeps none of them. The
+         * template then yields nothing; for a member that says whom a record is about that is not "none stated".
+         */
+        List<JsonPath> emptied(Object current, Object root) {
+            List<JsonPath> out = new ArrayList<>();
+            for (Object part : parts) {
+                if (part instanceof JsonPath p && blank(firstPresent(p.select(current, root))) && p.meetsItems(current, root)) {
+                    out.add(p);
+                }
+            }
+            return out;
+        }
+
         @Override
         public List<Object> constants() {
             return List.of();

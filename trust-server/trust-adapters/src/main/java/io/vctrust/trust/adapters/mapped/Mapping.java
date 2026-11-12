@@ -862,6 +862,7 @@ final class Mapping {
             boolean noneStated = false;
             String emptied = null;
             for (Value v : values(fields.get("roles"))) {
+                templateYields(v, "roles", record, root);
                 JsonPath.Restricted listed = strictly(v, "roles", record, root);
                 if (v.allowEmpty()) {
                     Value.Restricting found;
@@ -958,11 +959,33 @@ final class Mapping {
         }
 
         /**
+         * A template of a member that says whom a record is about yields nothing when a path in it finds nothing. When
+         * that path finds a list that holds items ({@code {$.certificates[0]}} over {@code [null, "<DS>"]}), the
+         * template is held to what a path of the member is held to ({@link #yieldsNothing}): read as "none stated", the
+         * revoked party was listed without what binds it, and the chain to its CA decided alone.
+         */
+        private static void templateYields(Value v, String member, Object record, Object root) {
+            if (!(v instanceof Value.Template t)) {
+                return;
+            }
+            List<JsonPath> emptied;
+            try {
+                emptied = t.emptied(record, root);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(member + ": " + e.getMessage(), e);
+            }
+            if (!emptied.isEmpty()) {
+                throw yieldsNothing(member, emptied.getFirst().text());
+            }
+        }
+
+        /**
          * The certificates, each form read strictly ({@link #strictly}); a form whose list holds items must yield one of
-         * them ({@link #yieldsNothing}).
+         * them ({@link #yieldsNothing}), a path in a template too ({@link #templateYields}).
          */
         private List<String> certificates(Object record, Object root) {
             for (Value v : values(fields.get("certificates"))) {
+                templateYields(v, "certificates", record, root);
                 JsonPath.Restricted listed = strictly(v, "certificates", record, root);
                 if (listed != null && listed.filled() && all(v, "certificates", record, root).isEmpty()) {
                     throw yieldsNothing("certificates", pathOf(v).text());
@@ -1201,6 +1224,9 @@ final class Mapping {
                     if (rule == Items.IDENTIFYING && value == null && pathOf(e.getValue()) != null
                             && pathOf(e.getValue()).meetsItems(match, root)) {
                         throw yieldsNothing(member + "." + k, pathOf(e.getValue()).text());
+                    }
+                    if (rule == Items.IDENTIFYING && value == null) {
+                        templateYields(e.getValue(), member + "." + k, match, root);
                     }
                     if (rule == Items.STRICT && !o.containsKey(k)) {
                         throw new IllegalArgumentException(member + ": an item yields no " + k

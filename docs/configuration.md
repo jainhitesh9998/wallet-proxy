@@ -581,7 +581,10 @@ instant depends on where it was written). A member cannot be read either when:
   path finds a list that is there and holds items, but yields nothing from them: a filter keeps none of them
   (`$.certificates[?@.use == 'sig'].pem` over `[{"usage": "sig", ...}]`, over `"use": "SIG"` or over `"use": "enc"`),
   they are `null` or `""` (`$.certificates[*]` over `[null]`), or an index selects nothing or `null`
-  (`$.certificates[1]` over one certificate, `$.certificates[0]` over `[null, ...]`). Only a list that is there and
+  (`$.certificates[1]` over one certificate, `$.certificates[0]` over `[null, ...]`). The same holds for each path
+  inside a `template` of such a member (`{template: "{$.certificates[0]}"}`, or an identifier's value
+  `{template: "{$.hashes[0]}"}`, over `[null, ...]`): a template yields nothing when one of its paths finds nothing,
+  and that is no "none stated" when the path found a list with items. Only a list that is there and
   empty (`[]`, `{}`) states none. A filter on such a member is therefore a statement about every record: a record
   none of whose items pass it fails the load;
 - it is `roles`, translated, and the document holds a role the translation does not know (and no `default`); or

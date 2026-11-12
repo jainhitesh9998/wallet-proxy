@@ -160,4 +160,35 @@ class MappedSourceFollowUpsTest {
         assertThat(held.status()).isEqualTo(EntityStatus.REVOKED);
         assertThat(held.roles()).containsExactly(EntityRole.CREDENTIAL_ISSUER);
     }
+
+    // 6: a path inside a template of a member that says whom a record is about ------------------------------------------
+
+    @Test
+    void item6_aTemplateOfAnIdentifyingMemberThatReadsAListWithItemsMustYield() {
+        String hash = io.vctrust.trust.core.x509.Certificates.sha256Thumbprint(io.vctrust.trust.core.x509.Certificates.fromBase64(der("ds")));
+        Map<String, Object> certificates = Map.of("certificates", List.of(Map.of("template", "{$.certificates[0]}")));
+        Map<String, Object> byHash = Map.of("identifiers", List.of(Map.of("type", "X509_SHA256", "value", Map.of("template", "{$.hashes[0]}"))));
+        // Listed revoked without what binds it, and no warning: the DS chain decided alone, TRUSTED.
+        var c = MappedSourceProbesTest.revokedDmv(certificates, MappedSourceValidationTest.members("certificates",
+                java.util.Arrays.asList(null, der("ds"))));
+        assertThat(c.getValue()).isNotEqualTo(Decision.TRUSTED);
+        assertThat(c.getKey()).startsWith(MappedSourceRoundFiveTest.unreadable("certificates", "$.certificates[0]"));
+        var h = MappedSourceProbesTest.revokedDmv(byHash, MappedSourceValidationTest.members("certificates", null, "hashes",
+                java.util.Arrays.asList(null, hash)));
+        assertThat(h.getValue()).isNotEqualTo(Decision.TRUSTED);
+        assertThat(h.getKey()).startsWith(MappedSourceRoundFiveTest.unreadable("identifiers.value", "$.hashes[0]"));
+        // In a template of the roles, beside a role that is stated: not read as a role left out.
+        var r = MappedSourceProbesTest.revokedDmv(Map.of("roles", List.of(Map.of("template", "{$.roles[0]}"), "CREDENTIAL_ISSUER")),
+                MappedSourceValidationTest.members("roles", java.util.Arrays.asList(null, "VERIFIER")));
+        assertThat(r.getKey()).startsWith(MappedSourceRoundFiveTest.unreadable("roles", "$.roles[0]"));
+        // What the templates find is read; a list there and empty, or a member that is not there, states none.
+        assertThat(MappedSourceProbesTest.revokedDmv(certificates, MappedSourceValidationTest.members("certificates", List.of(der("ds")))))
+                .isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        assertThat(MappedSourceProbesTest.revokedDmv(byHash, MappedSourceValidationTest.members("certificates", null, "hashes", List.of(hash))))
+                .isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        assertThat(MappedSourceProbesTest.revokedDmv(certificates, MappedSourceValidationTest.members("certificates", List.of())))
+                .isEqualTo(Map.entry("loaded", Decision.TRUSTED));
+        assertThat(MappedSourceProbesTest.revokedDmv(byHash, MappedSourceValidationTest.members("certificates", null)))
+                .isEqualTo(Map.entry("loaded", Decision.TRUSTED));
+    }
 }
