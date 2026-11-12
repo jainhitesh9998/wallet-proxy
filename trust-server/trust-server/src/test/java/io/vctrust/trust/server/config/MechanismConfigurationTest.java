@@ -124,4 +124,48 @@ class MechanismConfigurationTest {
         assertThatThrownBy(() -> app.run(args)).rootCause().hasMessage(
                 "Trust mechanism trust.mechanisms[0] ('national-id'): x509 is given, but keys does not accept x5c: it would never apply");
     }
+
+    /**
+     * Mechanisms written as a map by id bind to no list at all: without a check the service would start with none, and
+     * apply none of them. Every property under trust.* that binds to nothing stops the service instead.
+     */
+    @Test
+    void mechanismsWrittenAsAMapStopTheService() throws IOException {
+        assertThat(startWith("""
+                trust:
+                  mechanisms:
+                    national-id:
+                      for: { role: issuer }
+                      keys: [x5c]
+                """)).hasMessageContaining("trust.mechanisms.national-id.for.role").hasMessageContaining("left unbound");
+    }
+
+    @Test
+    void aMisspeltPropertyUnderTrustStopsTheService() throws IOException {
+        assertThat(startWith("""
+                trust:
+                  mechanism:
+                    - id: national-id
+                      for: { role: issuer }
+                """)).hasMessageContaining("trust.mechanism[0].id").hasMessageContaining("left unbound");
+    }
+
+    /** The innermost cause of the failure to start with this configuration file. */
+    static Throwable startWith(String yaml) throws IOException {
+        Path dataDir = Files.createTempDirectory("trust-strict-config");
+        Path config = dataDir.resolve("application.yml");
+        Files.writeString(config, yaml);
+        String[] args = {
+                "--server.port=0",
+                "--spring.datasource.url=jdbc:h2:mem:trust-strict-config;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
+                "--trust.service.signing-key-file=" + dataDir.resolve("key.jwk"),
+                "--spring.config.additional-location=" + config.toUri()};
+        Throwable thrown = org.assertj.core.api.Assertions.catchThrowable(() -> new SpringApplicationBuilder(TrustServerApplication.class).run(args).close());
+        assertThat(thrown).as("the service started with %s", yaml).isNotNull();
+        Throwable root = thrown;
+        while (root.getCause() != null) {
+            root = root.getCause();
+        }
+        return root;
+    }
 }
