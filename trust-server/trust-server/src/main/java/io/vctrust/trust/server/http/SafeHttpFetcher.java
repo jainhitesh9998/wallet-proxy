@@ -47,8 +47,8 @@ import java.util.stream.Collectors;
 /**
  * Outbound HTTP for everything the service fetches on behalf of clients. Defends against SSRF: only https
  * (http for explicitly allowed development hosts, and for CRLs through {@link #allowingPlainHttp()}), no private /
- * loopback / link-local / CGNAT targets unless allowed, redirects re-validated hop by hop, response size and total
- * time capped.
+ * loopback / link-local / CGNAT targets unless allowed, redirects re-validated hop by hop (a request's headers other
+ * than {@code Accept} do not follow a redirect to another origin), response size and total time capped.
  * <p>
  * The caps end the fetch. A response that is too large, too slow, or a redirect, is not read to its end: the
  * connection is dropped (closing an unread response would read the rest of it first, for as long as the other side
@@ -128,14 +128,23 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
         String method = request.method();
         Duration timeout = request.timeout() != null ? request.timeout() : cfg.getReadTimeout();
         long deadline = System.nanoTime() + cfg.getTotalTimeout().toNanos();
+        // Request headers may carry a credential for the origin asked (a trust source's Authorization header). Once a
+        // redirect has led to another origin, only Accept goes on, also on a later hop back: that hop's URL was chosen
+        // by the other origin. Browsers do the same with Authorization (Fetch, "HTTP-redirect fetch").
+        boolean leftOrigin = false;
         for (int hop = 0; hop <= cfg.getMaxRedirects(); hop++) {
             check(uri, plainHttp);
             long left = deadline - System.nanoTime();
             if (left <= 0) {
                 throw new IOException("Fetching " + request.uri() + " took longer than " + cfg.getTotalTimeout());
             }
+            leftOrigin = leftOrigin || !sameOrigin(uri, request.uri());
             HttpUriRequestBase req = "POST".equals(method) ? new HttpPost(uri) : new HttpGet(uri);
-            request.headers().forEach(req::setHeader);
+            for (Map.Entry<String, String> h : request.headers().entrySet()) {
+                if (!leftOrigin || "Accept".equalsIgnoreCase(h.getKey())) {
+                    req.setHeader(h.getKey(), h.getValue());
+                }
+            }
             if ("POST".equals(method) && request.body() != null) {
                 req.setEntity(new ByteArrayEntity(request.body(), null));
             }
@@ -235,6 +244,21 @@ public class SafeHttpFetcher implements HttpFetcher, Closeable {
         if ("http".equals(scheme) && !httpHosts.contains(host) && uri.getPort() != -1 && uri.getPort() != 80 && !privateAllowed(host)) {
             throw new BlockedRequestException("Plain http is fetched only on port 80 (got " + uri + ")");
         }
+    }
+
+    /** RFC 6454 origin: scheme, host and port (the scheme's default port when none is written). */
+    static boolean sameOrigin(URI a, URI b) {
+        String scheme = a.getScheme() == null ? "" : a.getScheme().toLowerCase(Locale.ROOT);
+        return scheme.equals(b.getScheme() == null ? "" : b.getScheme().toLowerCase(Locale.ROOT))
+                && a.getHost() != null && b.getHost() != null && a.getHost().equalsIgnoreCase(b.getHost())
+                && port(a) == port(b);
+    }
+
+    private static int port(URI u) {
+        if (u.getPort() != -1) {
+            return u.getPort();
+        }
+        return "https".equalsIgnoreCase(u.getScheme()) ? 443 : "http".equalsIgnoreCase(u.getScheme()) ? 80 : -1;
     }
 
     private boolean privateAllowed(String host) {

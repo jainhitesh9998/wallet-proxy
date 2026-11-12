@@ -79,6 +79,24 @@ class SafeHttpFetcherTest {
             hits.incrementAndGet();
             endless(ex, 200);
         });
+        // What arrived: the headers a test sent, as "name=value" lines (absent ones as "name=").
+        server.createContext("/echo-headers", ex -> {
+            hits.incrementAndGet();
+            StringBuilder sb = new StringBuilder();
+            for (String name : List.of("Authorization", "X-Api-Key", "Accept")) {
+                String v = ex.getRequestHeaders().getFirst(name);
+                sb.append(name).append('=').append(v == null ? "" : v).append('\n');
+            }
+            byte[] b = sb.toString().getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, b.length);
+            ex.getResponseBody().write(b);
+            ex.close();
+        });
+        server.createContext("/to-same-origin", ex -> redirect(ex, "http://public.test:" + port + "/echo-headers"));
+        server.createContext("/to-other-origin", ex -> redirect(ex, "http://other.test:" + port + "/echo-headers"));
+        // Away to another origin, which sends the request back to the first one.
+        server.createContext("/away-and-back", ex -> redirect(ex, "http://other.test:" + port + "/back"));
+        server.createContext("/back", ex -> redirect(ex, "http://public.test:" + port + "/echo-headers"));
         server.createContext("/endless-redirect", ex -> {
             hits.incrementAndGet();
             ex.getResponseHeaders().add("Location", "http://public.test:" + port + "/ok");
@@ -90,6 +108,13 @@ class SafeHttpFetcherTest {
             return t;
         }));
         server.start();
+    }
+
+    static void redirect(com.sun.net.httpserver.HttpExchange ex, String location) throws IOException {
+        hits.incrementAndGet();
+        ex.getResponseHeaders().add("Location", location);
+        ex.sendResponseHeaders(302, -1);
+        ex.close();
     }
 
     static void endless(com.sun.net.httpserver.HttpExchange ex, int status) throws IOException {
@@ -160,6 +185,34 @@ class SafeHttpFetcherTest {
                     .hasMessageContaining("internal.test");
         }
         assertThat(hits).hasValue(1); // the redirect only; /ok was never reached
+    }
+
+    @Test
+    void onlyAcceptFollowsARedirectToAnotherOrigin() throws IOException {
+        TrustProperties.Http cfg = config(List.of("public.test", "other.test"));
+        cfg.setHttpAllowedHosts(List.of("public.test", "other.test"));
+        Map<String, String> headers = Map.of("Authorization", "Bearer secret-token", "X-Api-Key", "secret-key",
+                "Accept", "application/json");
+        try (SafeHttpFetcher fetcher = new SafeHttpFetcher(cfg, LOOPBACK_DNS)) {
+            // Asked directly, and redirected within the origin: every header arrives.
+            String all = "Authorization=Bearer secret-token\nX-Api-Key=secret-key\nAccept=application/json\n";
+            assertThat(fetcher.execute(new HttpFetcher.Request("GET", url("public.test", "/echo-headers"), headers, null, null))
+                    .bodyAsString()).isEqualTo(all);
+            assertThat(fetcher.execute(new HttpFetcher.Request("GET", url("public.test", "/to-same-origin"), headers, null, null))
+                    .bodyAsString()).isEqualTo(all);
+            // Redirected to another host: only Accept goes on.
+            String acceptOnly = "Authorization=\nX-Api-Key=\nAccept=application/json\n";
+            assertThat(fetcher.execute(new HttpFetcher.Request("GET", url("public.test", "/to-other-origin"), headers, null, null))
+                    .bodyAsString()).isEqualTo(acceptOnly);
+            // Sent back to the first origin by the other one: the credentials stay dropped.
+            assertThat(fetcher.execute(new HttpFetcher.Request("GET", url("public.test", "/away-and-back"), headers, null, null))
+                    .bodyAsString()).isEqualTo(acceptOnly);
+        }
+        // Another port, or another scheme, is another origin.
+        assertThat(SafeHttpFetcher.sameOrigin(URI.create("https://a.test/x"), URI.create("https://A.test:443/y?z"))).isTrue();
+        assertThat(SafeHttpFetcher.sameOrigin(URI.create("https://a.test/x"), URI.create("https://a.test:8443/x"))).isFalse();
+        assertThat(SafeHttpFetcher.sameOrigin(URI.create("https://a.test/x"), URI.create("http://a.test/x"))).isFalse();
+        assertThat(SafeHttpFetcher.sameOrigin(URI.create("https://a.test/x"), URI.create("https://b.a.test/x"))).isFalse();
     }
 
     @Test
