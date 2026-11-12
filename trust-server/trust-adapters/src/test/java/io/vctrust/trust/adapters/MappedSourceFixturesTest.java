@@ -187,8 +187,8 @@ class MappedSourceFixturesTest {
     // strict). A mapped list that is there and empty means "authorized for nothing" (second round of fixes, H), so the
     // entities with none are read by a block of their own that maps no authorizations. The filter's comparison holds
     // when the list has no first item: a missing node equals only another missing node (RFC 9535 2.3.5.2.2). The
-    // snapshot's typ, audience and issuer tell it from any other document of the upstream key, so either block may
-    // find no entity.
+    // pinned typ and audience tell a snapshot for this service from any other document of the upstream key, so either
+    // block may find no entity.
     static final String SNAPSHOT_MAPPING = """
             list:
               issuer: $.iss
