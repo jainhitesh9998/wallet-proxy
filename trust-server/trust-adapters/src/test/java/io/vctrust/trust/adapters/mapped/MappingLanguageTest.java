@@ -276,11 +276,12 @@ class MappingLanguageTest {
     @Test
     void theTextOfASourcesConfigurationHoldsNoHeaderValue() throws Exception {
         var def = new io.vctrust.trust.core.spi.SourceDefinition("partner", "mapped", "partner", null, true, Map.of(
-                "location", "https://registry.partner.example/v1/issuers",
+                "location", "https://registry.partner.example/v1/issuers?key=s3cret-query",
                 "headers", Map.of("Authorization", "Bearer s3cret-token"),
                 "mapping", Map.of("entities", List.of(Map.of("each", "$.issuers[*]", "id", "$.id")))));
         String text = MappedSourceFactory.read(def, location -> new byte[0]).toString();
-        assertThat(text).contains("headers=[Authorization]").doesNotContain("s3cret");
+        assertThat(text).contains("headers=[Authorization]").contains("location=https://registry.partner.example/v1/issuers,")
+                .doesNotContain("s3cret");
     }
 
     @Test

@@ -15,8 +15,12 @@ import io.vctrust.trust.core.registry.SourceState;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.core.spi.HttpFetcher;
+import io.vctrust.trust.adapters.mapped.MappedSourceFactory;
 import io.vctrust.trust.core.spi.ListInfo;
 import io.vctrust.trust.core.spi.OnDemandResolver;
+import io.vctrust.trust.core.spi.ResourceLoader;
+import io.vctrust.trust.core.spi.SourceContext;
+import io.vctrust.trust.core.spi.SourceDefinition;
 import io.vctrust.trust.core.spi.SourceLoadResult;
 import io.vctrust.trust.core.spi.TrustSource;
 import io.vctrust.trust.core.spi.TrustSourceException;
@@ -24,6 +28,7 @@ import io.vctrust.trust.core.testing.TestPki;
 import io.vctrust.trust.core.x509.Certificates;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -406,6 +411,77 @@ class MappedSourceRulesTest {
         ctx.put("file:/etc/trust/partner.json", Json.write(doc("a")));
         assertThat(loadError(source(ctx, props("location", "file:/etc/trust/partner.json", "headers", Map.of("Authorization", TOKEN)))))
                 .contains("headers are sent to the origin of an https location");
+    }
+
+    /** A context whose outbound client fails, as a real one does, with a message that names the whole URL. */
+    static SourceContext failingFor(TestContext ctx, String url) {
+        return new SourceContext() {
+            @Override
+            public HttpFetcher http() {
+                return request -> {
+                    if (request.uri().toString().equals(url)) {
+                        throw new IOException("Refusing to fetch " + request.uri() + ": the host resolves to a private address");
+                    }
+                    return ctx.http.execute(request);
+                };
+            }
+
+            @Override
+            public ResourceLoader resources() {
+                return ctx.resources();
+            }
+
+            @Override
+            public Clock clock() {
+                return ctx.clock();
+            }
+        };
+    }
+
+    @Test
+    void rule4_theQueryOfALocationPageOrLookupUrlAppearsInNoMessageAndNoState() throws Exception {
+        // A query is where a credential for fetching a list is often put; it goes no further than the request.
+        String location = LOCATION + "?token=s3cret-query";
+        TestContext ctx = ctx();
+        ctx.http.respond(location, 401, "application/json", utf8("{}"));
+        TrustSource s = source(ctx, props("location", location));
+        try (TrustSourceManager m = manager(new TrustRegistry(), s)) {
+            SourceState st = state(m, "partner");
+            assertThat(st.lastError()).contains("401").contains(LOCATION).doesNotContain("s3cret");
+            assertThat(st.toString()).doesNotContain("s3cret");
+        }
+        assertThat(loadError(new MappedSourceFactory().create(new SourceDefinition("partner", "mapped", "partner", null, true,
+                props("location", location)), failingFor(ctx, location)))).contains("Refusing to fetch " + LOCATION + ":").doesNotContain("s3cret");
+
+        // A page URL: the document's own next link, and where it leads.
+        Map<String, Object> paged = mapping();
+        paged.put("pages", Map.of("next", "$.next"));
+        Map<String, Object> page1 = doc("a");
+        page1.put("next", LOCATION + "?cursor=s3cret-cursor");
+        serveJson(ctx, page1);
+        ctx.http.respond(LOCATION + "?cursor=s3cret-cursor", 500, "text/plain", utf8("down"));
+        assertThat(loadError(source(ctx, props("mapping", paged)))).contains("500").doesNotContain("s3cret");
+        page1.put("next", "https://elsewhere.example/v1/issuers?sig=s3cret-sig");
+        serveJson(ctx, page1);
+        assertThat(loadError(source(ctx, props("mapping", paged)))).contains("is not on the origin of location").doesNotContain("s3cret");
+        page1.put("next", "https://registry.partner.example:99999/v1?sig=s3cret-sig");
+        serveJson(ctx, page1);
+        assertThat(loadError(source(ctx, props("mapping", paged)))).doesNotContain("s3cret");
+
+        // A lookup URL.
+        Map<String, Object> lookup = lookupOnly();
+        Map<String, Object> l = new LinkedHashMap<>((Map<String, Object>) ((Map<String, Object>) lookup.get("mapping")).get("lookup"));
+        l.put("url", "https://registry.partner.example/v1/issuers?id={identifier}&key=s3cret-lookup");
+        lookup.put("mapping", Map.of("lookup", l));
+        String asked = "https://registry.partner.example/v1/issuers?id=did%3Aexample%3Ab&key=s3cret-lookup";
+        ctx.http.respond(asked, 500, "text/plain", utf8("down"));
+        assertThatThrownBy(() -> ((OnDemandResolver) source(ctx, lookup)).resolve(Identifier.did("did:example:b")))
+                .hasMessageContaining("HTTP 500").satisfies(e -> assertThat(e.getMessage()).doesNotContain("s3cret"));
+        assertThatThrownBy(() -> ((OnDemandResolver) new MappedSourceFactory().create(
+                new SourceDefinition("partner", "mapped", "partner", null, true, lookup), failingFor(ctx, asked)))
+                .resolve(Identifier.did("did:example:b")))
+                .hasMessageContaining("Refusing to fetch https://registry.partner.example/v1/issuers:")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("s3cret").doesNotContain("did%3Aexample"));
     }
 
     // Rule 5 ----------------------------------------------------------------------------------------------------

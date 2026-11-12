@@ -36,6 +36,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -89,12 +90,43 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     record Config(String location, URI origin, String publicUri, Map<String, String> headers, boolean jws, PinnedKeys keys,
                   boolean allowUnverified, boolean allowExpired, int maxEntities, int maxAnchors, Mapping mapping) {
 
-        /** Header names only: their values are credentials, and a record's own text would carry them into any log line. */
+        /**
+         * Header names only, and the location without its query: header values are credentials, a query often holds
+         * one, and a record's own text would carry them into any log line.
+         */
         @Override
         public String toString() {
-            return "Config[location=" + location + ", headers=" + new TreeSet<>(headers.keySet()) + ", format=" + (jws ? "jws" : "json")
-                    + ", pinnedKeys=" + keys.configured() + ", allowUnverified=" + allowUnverified + ", allowExpired=" + allowExpired + "]";
+            return "Config[location=" + withoutQueries(location) + ", headers=" + new TreeSet<>(headers.keySet()) + ", format="
+                    + (jws ? "jws" : "json") + ", pinnedKeys=" + keys.configured() + ", allowUnverified=" + allowUnverified
+                    + ", allowExpired=" + allowExpired + "]";
         }
+    }
+
+    /** A web URL up to its query (group 1), and its query and fragment (group 2). Possessive: linear in the text. */
+    private static final Pattern QUERY = Pattern.compile("(?i)(\\bhttps?://[^\\s?#'\"<>]*+)([?#][^\\s'\"<>]*+)");
+
+    /**
+     * Text with every web URL in it cut before its query and fragment. The query of {@code location}, of a page URL
+     * or of a lookup URL is where a credential is often put (an API key, a signed link); the outbound client names
+     * whole URLs in its errors, so no message, warning, state or log line of this source names a URL with its query.
+     * Punctuation right after a URL ("... from https://host/list?key=x: refused") is the sentence's, and stays.
+     */
+    static String withoutQueries(String text) {
+        if (text == null) {
+            return null;
+        }
+        Matcher m = QUERY.matcher(text);
+        StringBuilder out = new StringBuilder(text.length());
+        while (m.find()) {
+            String query = m.group(2);
+            int end = query.length();
+            while (end > 1 && ".,:;)".indexOf(query.charAt(end - 1)) >= 0) {
+                end--;
+            }
+            m.appendReplacement(out, Matcher.quoteReplacement(m.group(1) + query.substring(end)));
+        }
+        m.appendTail(out);
+        return out.toString();
     }
 
     static Config read(SourceDefinition def, ResourceLoader resources) throws IOException {
@@ -281,7 +313,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             try {
                 c = read(def, ctx.resources());
             } catch (IOException | RuntimeException e) {
-                error = "Source '" + def.id() + "' (mapped): " + e.getMessage();
+                error = withoutQueries("Source '" + def.id() + "' (mapped): " + e.getMessage());
             }
             this.config = c;
             this.configError = error;
@@ -293,8 +325,25 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             return def;
         }
 
+        /**
+         * The failure of a load or a lookup as this source reports it: without the query of any URL it names
+         * ({@link #withoutQueries}), and without the exception it came from, whose message may name one.
+         */
+        private static TrustSourceException reported(TrustSourceException e) {
+            String message = withoutQueries(e.getMessage());
+            return message != null && message.equals(e.getMessage()) ? e : new TrustSourceException(message);
+        }
+
         @Override
         public SourceLoadResult load() throws TrustSourceException {
+            try {
+                return loadList();
+            } catch (TrustSourceException e) {
+                throw reported(e);
+            }
+        }
+
+        private SourceLoadResult loadList() throws TrustSourceException {
             if (configError != null) {
                 throw new TrustSourceException(configError);
             }
@@ -506,13 +555,15 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 return null;
             }
             URI next;
+            // The next page is named without its query (a cursor, a signature), as every URL this source names.
+            String shown = Mapping.quote(text.trim().split("[?#]", 2)[0]);
             try {
                 next = page.uri().resolve(new URI(text.trim()));
             } catch (java.net.URISyntaxException | IllegalArgumentException e) {
-                throw new TrustSourceException("The next page " + Mapping.quote(text) + " is not a URL");
+                throw new TrustSourceException("The next page " + shown + " is not a URL");
             }
             if (!sameOrigin(next, config.origin())) {
-                throw new TrustSourceException("The next page " + Mapping.quote(text) + " is not on the origin of location");
+                throw new TrustSourceException("The next page " + shown + " is not on the origin of location");
             }
             if (!visited.add(next.toString())) {
                 throw new TrustSourceException("The pages link back to a page already read");
@@ -812,8 +863,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             private final List<String> kept = new ArrayList<>();
             private int more;
 
-            void add(String w) {
+            void add(String warning) {
                 if (kept.size() < MAX_WARNINGS) {
+                    String w = withoutQueries(warning);
                     kept.add(w.length() <= 300 ? w : w.substring(0, 300) + "…");
                 } else {
                     more++;
@@ -851,8 +903,19 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (cached.isPresent()) {
                 return cached.get();
             }
-            Mapping.Lookup l = config.mapping().lookup;
             Instant now = ctx.clock().instant();
+            Optional<TrustedEntity> found;
+            try {
+                found = ask(identifier, now);
+            } catch (TrustSourceException e) {
+                throw reported(e);
+            }
+            answers.put(identifier.key(), found, now.plus(found.isPresent() ? ON_DEMAND_TTL : ON_DEMAND_NEGATIVE_TTL));
+            return found;
+        }
+
+        private Optional<TrustedEntity> ask(Identifier identifier, Instant now) throws TrustSourceException {
+            Mapping.Lookup l = config.mapping().lookup;
             // Percent-encoding with %20 for a space: the identifier cannot add a path segment, a query or a fragment.
             URI uri = URI.create(l.url().replace("{identifier}",
                     URLEncoder.encode(identifier.value(), StandardCharsets.UTF_8).replace("+", "%20")));
@@ -889,7 +952,6 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             } catch (IllegalArgumentException e) {
                 throw new TrustSourceException("The answer cannot be read: " + e.getMessage(), e);
             }
-            answers.put(identifier.key(), found, now.plus(found.isPresent() ? ON_DEMAND_TTL : ON_DEMAND_NEGATIVE_TTL));
             return found;
         }
 
