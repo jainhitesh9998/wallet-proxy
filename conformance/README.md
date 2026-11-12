@@ -60,7 +60,10 @@ signer for each member that breaks only that member (`nid-no-ku`, `nid-other-eku
 `nid-no-dp`, and `nid-sub-signer` under the intermediate `nid-sub-ca`), a signer without the mDL extended key usage
 (`nid-no-mdl-eku`), and a CA certificate presented as a signer under the RSA root (`ca-signer`). `generate-pins.sh`
 adds `nid-pinned`, a signer under `nid-ca` that an entity of those vectors pins, so that pinning it changes no other
-case.
+case. `generate-reissued.sh` adds a CA with two certificates of the same name and key (`reissued-ca`, which names a
+CRL distribution point, and `reissued-ca-2`), a Document Signer under it (`reissued-ds`) and two CRLs of the CA
+(`reissued-ca-old.crl` revokes nothing, `reissued-ca.crl` revokes the signer): `ReissuedCaCrlsTest` and
+`reissued-ca.test.ts` hold the service and the device to matching a CRL by its issuer's name and key.
 The private keys are here because they are test keys; they protect nothing. Two certificates are real, for name
 handling: `real-eudi-pid-ca.pem` and `real-waltid-pid-provider.pem` (see `real-world/`).
 

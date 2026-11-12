@@ -140,12 +140,22 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
         return heldFor(issuer, framework -> true);
     }
 
-    /** The CRLs held for {@code issuer} that an anchor of a framework {@code frameworks} accepts uses. */
+    /**
+     * The CRLs held for {@code issuer} that an anchor of a framework {@code frameworks} accepts uses. A CRL is the
+     * issuer's, not one certificate's: it is held for the anchor certificate it was configured with, and counts for
+     * every certificate of the same issuer (the same subject name and key), as on the device, which matches a CRL by
+     * its issuer's name and signature. A CA reissued with the same name and key has two certificates; a chain validates
+     * to whichever an anchor lists first, and the CRLs configured for the other must count all the same.
+     */
     @Override
     public List<Crl> heldFor(X509Certificate issuer, Predicate<String> frameworks) {
-        String thumb = Certificates.sha256Thumbprint(issuer);
-        return anchorCrls.values().stream().filter(a -> a.issuer().equals(thumb) && a.crl() != null
+        return anchorCrls.values().stream().filter(a -> a.crl() != null && sameIssuer(a.issuerCertificate(), issuer)
                 && a.anchors().stream().anyMatch(anchor -> frameworks.test(anchor.frameworkId()))).map(AnchorCrl::crl).toList();
+    }
+
+    private static boolean sameIssuer(X509Certificate a, X509Certificate b) {
+        return a.getSubjectX500Principal().equals(b.getSubjectX500Principal())
+                && Arrays.equals(a.getPublicKey().getEncoded(), b.getPublicKey().getEncoded());
     }
 
     @Override
