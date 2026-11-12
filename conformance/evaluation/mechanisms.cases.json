@@ -1,0 +1,1177 @@
+{
+  "description": "Cases for the two trust evaluators under an operator's trust mechanisms (TrustMechanisms.java, evaluation/mechanisms.ts). The registry is that of cases.json with one more anchor, of a trust domain of the operator's naming; 'mechanisms' is trust.mechanisms as an operator writes it. References to conformance/pki as in cases.json. A case with 'sameAsFirstPair' asks a question of cases.json and must be decided as it is there (the mechanism aside). mechanisms.vectors.json is generated from this file by the service: see conformance/README.md.",
+  "registry": {
+    "anchors": {
+      "vec-iaca": {
+        "domain": "mdoc-iaca",
+        "entity": "vec-dmv",
+        "certificate": "pem:iaca",
+        "constraints": {
+          "docTypes": [
+            "org.iso.18013.5.1.mDL"
+          ],
+          "crl": "crl:iaca"
+        }
+      },
+      "vec-rp-ca": {
+        "domain": "verifier-access",
+        "certificate": "pem:rp-ca"
+      },
+      "vec-rsa-root": {
+        "domain": "credential-issuer",
+        "entity": "vec-rsa",
+        "certificate": "pem:rsa-root"
+      },
+      "vec-shared-ca": {
+        "domain": "credential-issuer",
+        "certificate": "pem:rp-ca"
+      },
+      "vec-other-mdoc-ca": {
+        "domain": "mdoc-iaca",
+        "certificate": "pem:rp-ca"
+      },
+      "vec-eudi-pid-ca": {
+        "domain": "credential-issuer",
+        "certificate": "pem:real-eudi-pid-ca"
+      },
+      "vec-national-id-ca": {
+        "domain": "national-id",
+        "certificate": "pem:nid-ca",
+        "constraints": {
+          "crl": "crl:nid-ca"
+        }
+      }
+    },
+    "entities": {
+      "vec-dmv": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Vector DMV",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://dmv.vectors.example"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-verifier": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Vector verifier",
+        "identifiers": [
+          {
+            "type": "DNS",
+            "value": "verifier.example"
+          }
+        ]
+      },
+      "vec-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Revoked issuer",
+        "status": "REVOKED",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://revoked.vectors.example"
+          }
+        ]
+      },
+      "vec-expired": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Expired issuer",
+        "validUntil": "2020-01-01T00:00:00Z",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://expired.vectors.example"
+          }
+        ]
+      },
+      "vec-open": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "No authorizations",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://open.vectors.example"
+          }
+        ]
+      },
+      "vec-did": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "DID issuer",
+        "identifiers": [
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        ],
+        "authorizations": [
+          {
+            "format": "ldp_vc",
+            "type": "UniversityDegreeCredential"
+          }
+        ]
+      },
+      "vec-rsa": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "RSA issuer",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://rsa.vectors.example"
+          }
+        ]
+      },
+      "vec-pinned": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Pinned certificate",
+        "certificates": [
+          "pem:selfsigned-issuer"
+        ]
+      },
+      "vec-redirect": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Redirect verifier",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://rp.vectors.example/cb"
+          }
+        ]
+      },
+      "vec-suspended": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Suspended verifier",
+        "status": "SUSPENDED",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://fed.example/rp"
+          }
+        ]
+      },
+      "vec-wallet-only": {
+        "roles": [
+          "WALLET_PROVIDER"
+        ],
+        "name": "Not an issuer",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://wallet.vectors.example"
+          }
+        ]
+      },
+      "vec-by-subject": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by certificate subject",
+        "identifiers": [
+          {
+            "type": "X509_SUBJECT",
+            "value": "subject:rp"
+          }
+        ]
+      },
+      "vec-by-ski": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by subject key identifier",
+        "identifiers": [
+          {
+            "type": "X509_SKI",
+            "value": "aki:rp-uri"
+          }
+        ]
+      },
+      "vec-by-hash-client-id": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Registered by its x509_hash client_id",
+        "identifiers": [
+          {
+            "type": "CLIENT_ID",
+            "value": "x509_hash:sha256:selfsigned-verifier"
+          }
+        ]
+      },
+      "vec-by-did-client-id": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Registered by its DID client_id",
+        "identifiers": [
+          {
+            "type": "CLIENT_ID",
+            "value": "decentralized_identifier:did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9"
+          }
+        ]
+      },
+      "vec-by-long-subject": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by a subject name with an organizationIdentifier",
+        "identifiers": [
+          {
+            "type": "X509_SUBJECT",
+            "value": "subject:real-waltid-pid-provider"
+          }
+        ]
+      },
+      "vec-a-by-uri": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by a URI name, authorized for one type",
+        "identifiers": [
+          {
+            "type": "URL",
+            "value": "https://fed.example/rp"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "dc+sd-jwt",
+            "type": "urn:vectors:one"
+          }
+        ]
+      },
+      "vec-by-bmp-subject": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by a subject whose common name is a BMPString",
+        "identifiers": [
+          {
+            "type": "X509_SUBJECT",
+            "value": "subject:odd-bmp"
+          }
+        ]
+      },
+      "vec-rsa-names": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Known by key identifier and by subject",
+        "identifiers": [
+          {
+            "type": "X509_SKI",
+            "value": "aki:rsa-leaf"
+          },
+          {
+            "type": "X509_SUBJECT",
+            "value": "subject:rsa-leaf"
+          }
+        ]
+      }
+    }
+  },
+  "mechanisms": [
+    {
+      "id": "national-id",
+      "for": {
+        "role": "issuer",
+        "formats": [
+          "mso_mdoc"
+        ],
+        "types": [
+          "org.example.id.*"
+        ]
+      },
+      "keys": [
+        "x5c"
+      ],
+      "x509": {
+        "domain": "national-id",
+        "profile": {
+          "leaf": {
+            "ca": false,
+            "key-usage": [
+              "digitalSignature"
+            ],
+            "extended-key-usage": [
+              "1.3.6.1.4.1.99999.1.1"
+            ],
+            "same-country-as-anchor": true,
+            "max-validity-days": 7100,
+            "crl-distribution-point": true
+          },
+          "max-intermediates": 0
+        },
+        "revocation": "required"
+      }
+    },
+    {
+      "id": "mdl",
+      "for": {
+        "role": "issuer",
+        "formats": [
+          "mso_mdoc"
+        ],
+        "types": [
+          "org.iso.18013.5.1.mDL"
+        ]
+      },
+      "keys": [
+        "x5c"
+      ],
+      "x509": {
+        "domain": "national-id"
+      }
+    },
+    {
+      "id": "diplomas",
+      "for": {
+        "role": "issuer",
+        "formats": [
+          "vc+sd-jwt"
+        ],
+        "types": [
+          "https://diploma.example/*"
+        ]
+      },
+      "x509": {
+        "revocation": "required"
+      }
+    },
+    {
+      "id": "restricted",
+      "for": {
+        "role": "issuer",
+        "formats": [
+          "ldp_vc"
+        ],
+        "types": [
+          "RestrictedCredential"
+        ]
+      },
+      "keys": [
+        "did"
+      ],
+      "did": {
+        "methods": [
+          "web"
+        ]
+      }
+    },
+    {
+      "id": "university",
+      "for": {
+        "role": "issuer",
+        "formats": [
+          "ldp_vc"
+        ],
+        "types": [
+          "UniversityDegreeCredential"
+        ]
+      },
+      "keys": [
+        "did"
+      ],
+      "did": {
+        "methods": [
+          "key"
+        ]
+      }
+    },
+    {
+      "id": "w3c-ldp",
+      "for": {
+        "role": "issuer",
+        "formats": [
+          "ldp_vc"
+        ]
+      },
+      "keys": [
+        "did"
+      ],
+      "did": {
+        "methods": [
+          "web"
+        ]
+      }
+    },
+    {
+      "id": "jwt-vc",
+      "for": {
+        "role": "issuer",
+        "formats": [
+          "jwt_vc_json"
+        ]
+      },
+      "keys": [
+        "x5c"
+      ],
+      "x509": {
+        "profile": {
+          "leaf": {
+            "ca": false
+          },
+          "max-intermediates": 1
+        }
+      }
+    },
+    {
+      "id": "verifiers",
+      "for": {
+        "role": "verifier"
+      },
+      "keys": [
+        "x5c"
+      ],
+      "x509": {
+        "profile": {
+          "leaf": {
+            "ca": false,
+            "key-usage": [
+              "digitalSignature"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "cases": [
+    {
+      "name": "national ID signer, governed into the national-id domain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-signer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "document signer of the default domain, for a type governed into the national-id domain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "national ID signer, for a type no mechanism governs: the default domain does not list its CA",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-signer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "eu.europa.ec.eudi.pid.1"
+        }
+      }
+    },
+    {
+      "name": "mDL governed into the national-id domain, signer with the mDL purpose",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-signer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "mDL governed into the national-id domain, signer without the mDL purpose",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-no-mdl-eku"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "mDL governed into the national-id domain, document signer of the default domain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "profile: signing certificate without key usage",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-no-ku"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "profile: signing certificate without the extended key usage asked for",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-other-eku"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "profile: signing certificate of another country than its anchor",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-foreign"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "profile: signing certificate valid for longer than allowed",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-long"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "profile: signing certificate without a CRL distribution point",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-no-dp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "profile: a CA between the signing certificate and the anchor where none is allowed",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-sub-signer",
+            "pki:nid-sub-ca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "profile: a CA certificate as the signing certificate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ca-signer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "jwt_vc_json"
+        }
+      }
+    },
+    {
+      "name": "profile: one CA between the signing certificate and the anchor, where one is allowed",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf",
+            "pki:chain-ca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "jwt_vc_json"
+        }
+      }
+    },
+    {
+      "name": "profile: the same chain with the anchor appended",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf",
+            "pki:chain-ca",
+            "pki:rsa-root"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "jwt_vc_json"
+        }
+      }
+    },
+    {
+      "name": "revocation required: a signer whose status is unknown",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "https://diploma.example/bachelor"
+        }
+      }
+    },
+    {
+      "name": "revocation required: the same, with the legacy format name",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "vc+sd-jwt",
+          "credentialType": "https://diploma.example/bachelor"
+        }
+      }
+    },
+    {
+      "name": "the same signer for a question no mechanism governs",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      },
+      "sameAsFirstPair": "RSA chain under an anchor registered to its issuer"
+    },
+    {
+      "name": "keys: an x5c chain where only DID keys are accepted",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rsa-leaf"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential"
+        }
+      }
+    },
+    {
+      "name": "keys: a DID key where only x5c chains are accepted",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "keys: a bare JWK where only x5c chains are accepted",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0",
+            "y": "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE"
+          }
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "jwt_vc_json"
+        }
+      }
+    },
+    {
+      "name": "keys: an identifier alone is a registry lookup",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc"
+        }
+      }
+    },
+    {
+      "name": "DID method not accepted",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc"
+        }
+      }
+    },
+    {
+      "name": "DID method accepted, by the first of two mechanisms that match",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential"
+        }
+      },
+      "sameAsFirstPair": "DID issuer, key in the document, authorized type"
+    },
+    {
+      "name": "types: a near miss of an exact type is another mechanism's",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential2"
+        }
+      }
+    },
+    {
+      "name": "types: another type under the prefix",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-signer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.passport"
+        }
+      }
+    },
+    {
+      "name": "types: a near miss of the prefix",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-signer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.identity"
+        }
+      }
+    },
+    {
+      "name": "types: any of the types asserted, the restricted one listed first",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "RestrictedCredential",
+          "credentialTypes": [
+            "RestrictedCredential",
+            "UniversityDegreeCredential"
+          ]
+        }
+      }
+    },
+    {
+      "name": "types: any of the types asserted, the restricted one listed last",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential",
+          "credentialTypes": [
+            "UniversityDegreeCredential",
+            "RestrictedCredential"
+          ]
+        }
+      }
+    },
+    {
+      "name": "types: none asserted, where every mechanism of the format names types",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-signer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc"
+        }
+      }
+    },
+    {
+      "name": "types: none asserted, governed by a mechanism without types",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf",
+            "pki:chain-ca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "jwt_vc_json"
+        }
+      }
+    },
+    {
+      "name": "governed verifier, DNS name its certificate carries",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      },
+      "sameAsFirstPair": "x509_san_dns verifier, registered by its DNS name"
+    },
+    {
+      "name": "governed verifier, DNS name its certificate does not carry",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:other.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://other.example/post"
+        }
+      },
+      "sameAsFirstPair": "x509_san_dns naming a host the certificate does not carry"
+    },
+    {
+      "name": "governed verifier, response_uri on another host",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://evil.example/post"
+        }
+      },
+      "sameAsFirstPair": "x509_san_dns, response_uri on another host (registered verifier)"
+    },
+    {
+      "name": "governed verifier signing with a DID key",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "decentralized_identifier:did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+          "kid": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH#z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "governed verifier, identifier alone",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "redirect_uri:https://rp.vectors.example/cb"
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      },
+      "sameAsFirstPair": "redirect_uri verifier, registered"
+    },
+    {
+      "name": "as in the first pair: document signer, doctype outside the anchor's constraint",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "eu.europa.ec.eudi.pid.1"
+        }
+      },
+      "sameAsFirstPair": "document signer, doctype outside the anchor's constraint"
+    },
+    {
+      "name": "as in the first pair: mdoc of unknown doctype signed by that certificate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc"
+        }
+      },
+      "sameAsFirstPair": "mdoc of unknown doctype signed by that certificate"
+    },
+    {
+      "name": "as in the first pair: document signer chain in the wrong trust domain (SD-JWT VC)",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "urn:eudi:pid:1"
+        }
+      },
+      "sameAsFirstPair": "document signer chain in the wrong trust domain (SD-JWT VC)"
+    },
+    {
+      "name": "as in the first pair: chain with an intermediate under the RSA root",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:chain-leaf",
+            "pki:chain-ca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      },
+      "sameAsFirstPair": "chain with an intermediate under the RSA root"
+    },
+    {
+      "name": "as in the first pair: key bound to two registered issuers: the one authorized for the type asked is meant, whatever the listing order",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-uri"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "urn:vectors:one"
+        }
+      },
+      "sameAsFirstPair": "key bound to two registered issuers: the one authorized for the type asked is meant, whatever the listing order"
+    },
+    {
+      "name": "as in the first pair: pinned self-signed certificate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:selfsigned-issuer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      },
+      "sameAsFirstPair": "pinned self-signed certificate"
+    },
+    {
+      "name": "as in the first pair: revoked issuer",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://revoked.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      },
+      "sameAsFirstPair": "revoked issuer"
+    },
+    {
+      "name": "as in the first pair: unknown issuer",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://nobody.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      },
+      "sameAsFirstPair": "unknown issuer"
+    },
+    {
+      "name": "governed issuer URL alone: a registry lookup, as in the first pair",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "https://dmv.vectors.example"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      },
+      "sameAsFirstPair": "issuer URL, authorized format and type"
+    }
+  ]
+}

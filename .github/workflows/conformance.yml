@@ -43,7 +43,7 @@ jobs:
           cache: npm
       # The service regenerates the vectors from the cases and fails when the checked-in file differs.
       - name: The service decides as the vectors say
-        run: mvn --batch-mode --no-transfer-progress test -Dtest=EvaluationVectorsTest,NameRenderingTest -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$RUNNER_TEMP/build.log"
+        run: mvn --batch-mode --no-transfer-progress test -Dtest=EvaluationVectorsTest,MechanismVectorsTest,NameRenderingTest -Dsurefire.failIfNoSpecifiedTests=false 2>&1 | tee "$RUNNER_TEMP/build.log"
         shell: bash
         working-directory: trust-server
       - name: Report what failed
