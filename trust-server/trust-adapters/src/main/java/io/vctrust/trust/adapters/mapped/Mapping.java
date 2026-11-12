@@ -694,13 +694,13 @@ final class Mapping {
          * Certificates as text, held to what the text says it holds. A text with an armor line in it ({@code -----}) is
          * PEM: the body of each {@code CERTIFICATE} block is exactly one certificate, and outside the blocks a line that
          * holds {@code -----} cannot be read (a damaged armor line: a BEGIN written with four dashes or in lower case, a
-         * block that never ends, a block with another label), and neither can a run of base64 lines that decodes to DER
-         * ({@link #bareDer}: a certificate without its armor). Any other line outside the blocks is text that explains
-         * them, as tools write it ({@code subject=} and {@code issuer=} lines, "Bag Attributes", a byte-order mark), and
-         * is passed over: refused, it failed the load of an honest list. Any other text is a base64 value: exactly one
-         * certificate, and nothing after it. Two certificates one after the other in one block or one base64 value, a
-         * certificate followed by other bytes, or a damaged block next to a good one would otherwise be read as the
-         * first or passed over, and the certificate it was (the party's signing key, say) bound to nobody.
+         * block that never ends, a block with another label), and neither can base64 lines that decode to a certificate
+         * ({@link #bareDer(CharSequence, List)}: one without its armor). Any other line outside the blocks is text that
+         * explains them, as tools write it ({@code subject=} and {@code issuer=} lines, "Bag Attributes", a byte-order
+         * mark, a label), and is passed over: refused, it failed the load of an honest list. Any other text is a base64
+         * value: exactly one certificate, and nothing after it. Two certificates one after the other in one block or one
+         * base64 value, a certificate followed by other bytes, or a damaged block next to a good one would otherwise be
+         * read as the first or passed over, and the certificate it was (the party's signing key, say) bound to nobody.
          */
         private static <T> T pem(T certificates, String member) {
             for (Object c : certificates instanceof List<?> l ? l : java.util.Collections.singletonList(certificates)) {
@@ -733,9 +733,15 @@ final class Mapping {
                     throw new IllegalArgumentException(member + ": a PEM text has a line with ----- outside its certificate blocks (a "
                             + "damaged BEGIN or END line, or a block of something else); every block must be a certificate");
                 }
-                if (!bareDer(outside).isEmpty()) {
+                List<byte[]> bare = new ArrayList<>();
+                boolean triedAll = bareDer(outside, bare);
+                if (!bare.isEmpty()) {
                     throw new IllegalArgumentException(member + ": a PEM text has lines of base64 outside its certificate blocks that "
                             + "decode to DER (a certificate written without its BEGIN and END lines); every certificate must be in a block");
+                }
+                if (!triedAll) {
+                    throw new IllegalArgumentException(member + ": a PEM text has lines of base64 outside its certificate blocks that "
+                            + "could start a certificate at more lines than can be tried; every certificate must be in a block");
                 }
             }
             return certificates;
@@ -744,35 +750,115 @@ final class Mapping {
         /** A line of base64 characters only, of either alphabet, padded or not. */
         private static final java.util.regex.Pattern BASE64_LINE = java.util.regex.Pattern.compile("[A-Za-z0-9+/_=-]+");
 
+        /** How many times the characters of its run the ranges tried that hold no certificate may read together. */
+        private static final int TRIED = 4;
+
         /**
-         * What the text outside the blocks of a PEM text holds as DER: each run of lines that consist only of base64
-         * characters and decode to DER (a SEQUENCE: its first byte 0x30). Such a run is a certificate written beside the
-         * blocks without its armor; passed over as text that explains them, it was bound to nobody (a revoked party whose
-         * text is one good block and a second certificate as bare base64 lines was bound to the first only). Lines with
-         * anything else in them ({@code subject=}, "Bag Attributes", a word) break a run and stay explanatory text.
+         * The certificates that the text outside the blocks of a PEM text holds without their armor, added to
+         * {@code into}. In a run of lines that consist only of base64 characters (blank lines, and where a block was, do
+         * not end it), a certificate is the bytes decoded from one line of the run to the same or a later line, when they
+         * parse as one X.509 certificate. Passed over as text that explains the blocks, such a certificate was bound to
+         * nobody (a revoked party whose text is one good block and a second certificate as bare base64 lines was bound to
+         * the first only), and it is found whatever base64 line stands beside it: a word ({@code A}), a {@code subject=}
+         * line without spaces. A run in which no range is a certificate is text that explains the blocks, a label of
+         * capitals in it too ({@code MASTER} decodes to 0x30, as DER does, and was read as DER). Lines with anything else
+         * in them ({@code subject=} with spaces, "Bag Attributes") end a run.
+         *
+         * <p>Each line is tried once, as the start of the range that its first bytes state: a DER SEQUENCE states its
+         * length, and so the line it ends at; one that would end inside a line, past the run or that states no length
+         * is no certificate. The lines of a certificate found are not tried again. The ranges tried that hold none may
+         * read {@link #TRIED} times the run's characters together, and no more: lines that each start a long range would
+         * otherwise cost the square of the text (up to {@link Mapping#MAX_CERTIFICATE_TEXT} characters).
+         *
+         * @return whether every range was tried; false when the rest was not, a certificate among it or not
          */
-        static List<byte[]> bareDer(CharSequence outside) {
-            List<byte[]> out = new ArrayList<>();
-            StringBuilder run = new StringBuilder();
-            for (String line : (outside + "\n").split("\r\n|\r|\n", -1)) {
+        static boolean bareDer(CharSequence outside, List<byte[]> into) {
+            List<String> run = new ArrayList<>();
+            for (String line : outside.toString().split("\r\n|\r|\n", -1)) {
                 String l = line.strip();
-                if (!l.isEmpty() && BASE64_LINE.matcher(l).matches()) {
-                    run.append(l);
+                if (l.isEmpty() || BASE64_LINE.matcher(l).matches()) {
+                    // A blank line does not part the lines of a certificate: two runs, neither one by itself.
+                    if (!l.isEmpty()) {
+                        run.add(l);
+                    }
                     continue;
                 }
-                if (!run.isEmpty()) {
-                    try {
-                        byte[] der = io.vctrust.trust.core.util.Base64Url.decodeLenient(run.toString());
-                        if (der.length > 0 && der[0] == 0x30) {
-                            out.add(der);
-                        }
-                    } catch (RuntimeException e) {
-                        // not base64 as a whole: text that explains the blocks
+                if (!bareDer(run, into)) {
+                    return false;
+                }
+                run.clear();
+            }
+            return bareDer(run, into);
+        }
+
+        /** The certificates in one run of base64 lines ({@link #bareDer(CharSequence, List)}). */
+        private static boolean bareDer(List<String> run, List<byte[]> into) {
+            // The run as the lenient decoder reads it, '=' dropped and one alphabet; line i starts at character start[i].
+            StringBuilder text = new StringBuilder();
+            int[] start = new int[run.size() + 1];
+            for (int i = 0; i < run.size(); i++) {
+                start[i] = text.length();
+                for (char c : run.get(i).toCharArray()) {
+                    if (c != '=') {
+                        text.append(c == '+' ? '-' : c == '/' ? '_' : c);
                     }
-                    run.setLength(0);
                 }
             }
-            return out;
+            start[run.size()] = text.length();
+            long budget = (long) TRIED * text.length();
+            for (int i = 0; i < run.size(); i++) {
+                long bytes = sequenceLength(text, start[i]);
+                long end = bytes < 0 || start[i] == start[i + 1] ? -1 : start[i] + (4 * bytes + 2) / 3;   // unpadded base64
+                int next = end < 0 || end > text.length() ? -1 : java.util.Arrays.binarySearch(start, i + 1, start.length, (int) end);
+                if (next < 0) {
+                    continue;
+                }
+                // As long as the SEQUENCE it starts, and no longer: the parser reads all of it, as one certificate or none.
+                byte[] der = java.util.Base64.getUrlDecoder().decode(text.substring(start[i], (int) end));
+                boolean certificate;
+                try {
+                    io.vctrust.trust.core.x509.Certificates.fromDer(der);
+                    certificate = true;
+                } catch (RuntimeException e) {
+                    certificate = false;
+                }
+                if (certificate) {
+                    into.add(der);
+                    i = next - 1;   // its lines are not tried again
+                } else if ((budget -= end - start[i]) < 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * The length in bytes, header included, of the DER SEQUENCE that the base64 characters of {@code text} from
+         * {@code from} start, or -1 when they start none (another tag, an indefinite length, which DER has not).
+         */
+        private static long sequenceLength(CharSequence text, int from) {
+            int n = Math.min(8, text.length() - from);   // 8 characters: 6 bytes, a tag and at most 4 bytes of length
+            n -= n % 4 == 1 ? 1 : 0;
+            if (n < 3) {
+                return -1;
+            }
+            byte[] h = java.util.Base64.getUrlDecoder().decode(text.subSequence(from, from + n).toString());
+            if (h[0] != 0x30) {
+                return -1;
+            }
+            int first = h[1] & 0xff;
+            if (first < 0x80) {
+                return 2 + first;
+            }
+            int count = first & 0x7f;
+            if (count == 0 || count > 4 || h.length < 2 + count) {
+                return -1;
+            }
+            long length = 0;
+            for (int k = 0; k < count; k++) {
+                length = length << 8 | h[2 + k] & 0xff;
+            }
+            return 2 + count + length;
         }
 
         /** A certificate in base64 (or base64url) DER: one, with nothing after it. */
@@ -1327,9 +1413,10 @@ final class Mapping {
 
     /**
      * Every certificate a certificate text holds, read leniently, for comparing a record that cannot be read with the
-     * records that can: the body of each PEM block, and each run of base64 lines beside the blocks that decodes to DER
-     * ({@link Block#bareDer}), or the whole text as base64 when it has no armor, each read as DER certificates one after
-     * another for as long as they are certificates. A record skipped because its block holds two certificates
+     * records that can: the body of each PEM block, and each certificate written beside the blocks as bare base64 lines
+     * ({@link Block#bareDer(CharSequence, List)}, the same that make the text unreadable as a value), or the whole text
+     * as base64 when it has no armor, each read as DER certificates one after another for as long as they are
+     * certificates. A record skipped because its block holds two certificates
      * ({@code [IACA‖other]}), or a certificate followed by other bytes, is about each certificate it holds: read as
      * none, a withdrawn row of a CA that another row lists active left the CA trusted through that row.
      */
@@ -1353,7 +1440,8 @@ final class Mapping {
                 at = block.end();
             }
             outside.append(text, at, text.length());
-            ders.addAll(Block.bareDer(outside));
+            // What could be tried: a text with more ranges than that could not be read as a value either.
+            Block.bareDer(outside, ders);
         } else {
             try {
                 ders.add(io.vctrust.trust.core.util.Base64Url.decodeLenient(text.replaceAll("\\s", "")));

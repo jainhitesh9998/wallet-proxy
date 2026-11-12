@@ -90,6 +90,96 @@ class MappedSourceFollowUpsTest {
         }
     }
 
+    @Test
+    void item3_aBareCertificateCannotBeReadWhateverBase64LineStandsBesideIt() {
+        Map<String, String> hidden = new LinkedHashMap<>();
+        hidden.put("a block, the DS in lines of 64, then a line 'A'", block(derOf("ds-nl")) + bare("ds") + "A\n");
+        hidden.put("a block, the DS in lines of 64, then a line 'Hello'", block(derOf("ds-nl")) + bare("ds") + "Hello\n");
+        hidden.put("a block, a subject= line without spaces, then the DS in lines of 64", block(derOf("ds-nl"))
+                + "subject=/C=UT/CN=Utopia-DS\n" + bare("ds"));
+        hidden.forEach((what, text) -> {
+            // Read as one with the line beside it, the run was no base64, or did not start with 0x30: passed over, the
+            // revoked issuer was bound to ds-nl only, and the DS chain was trusted through the shared IACA.
+            var r = revokedWith(text);
+            assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(what).startsWith(BARE);
+        });
+        // A withdrawn CA row written so is about the IACA, which row-1 lists active: the load fails, naming both. It was
+        // read as ds-nl, an anchor of its own beside row-1, and the IACA was trusted.
+        var tied = rows(block(derOf("ds-nl")) + bare("iaca") + "OK\n");
+        try (TrustSourceManager m = tied.getValue()) {
+            assertThat(state(m, "partner").lastError()).isEqualTo(sameCertificate("mdoc-iaca"));
+            assertThat(MappedSourceValidationTest.decide(tied.getKey(), MDL)).isNotEqualTo(Decision.TRUSTED);
+        }
+    }
+
+    @Test
+    void item3_aLabelOfCapitalsThatDecodesTo0x30IsTextThatExplainsTheBlock() {
+        for (String label : List.of("MASTER", "MAIN", "MOBILE", "MINISTRY", "MDL", "Master")) {
+            // Its first byte 0x30, the label was read as a certificate without its armor: the honest list failed to load.
+            assertThat(revokedWith(label + "\n" + MappedTesting.pem("ds"))).as(label).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+            var active = MappedSourceRoundFiveTest.withIaca(label + "\n" + MappedTesting.pem("iaca"));
+            try (TrustSourceManager m = active.getValue()) {
+                assertThat(state(m, "partner").warnings()).as(label).isEmpty();
+                assertThat(active.getKey().snapshot().allAnchors()).as(label).extracting(a -> a.id())
+                        .containsExactly("utopia-iaca", "rp-access-ca");
+                assertThat(MappedSourceValidationTest.decide(active.getKey(), MDL)).as(label).isEqualTo(Decision.TRUSTED);
+            }
+        }
+    }
+
+    @Test
+    void item3_textThatExplainsTheBlocksIsReadAndABareCertificateAloneOrAcrossABlankLineIsNot() {
+        String ds = MappedTesting.pem("ds");
+        Map<String, String> honest = new LinkedHashMap<>();
+        honest.put("subject= and issuer= lines with spaces", "subject=C = UT, O = Utopia DMV, CN = Utopia DS\n"
+                + "issuer=C = UT, O = Utopia DMV, CN = Utopia IACA\n" + ds);
+        honest.put("Bag Attributes", "Bag Attributes\n    localKeyID: 01 00 00 00 \n    friendlyName: utopia-ds\n" + ds);
+        honest.put("a byte-order mark", "\uFEFF" + ds);
+        honest.put("CRLF line ends", ds.replace("\n", "\r\n") + "valid until 2046\r\n");
+        honest.put("two good blocks", MappedTesting.pem("ds-nl") + ds);
+        honest.forEach((what, text) -> assertThat(revokedWith(text)).as(what).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED)));
+        String lines = bare("ds");
+        int half = lines.indexOf('\n', lines.length() / 2) + 1;
+        Map<String, String> hidden = new LinkedHashMap<>();
+        hidden.put("the DS as one long line", block(derOf("ds-nl")) + der("ds") + "\n");
+        hidden.put("the DS in lines of 64", block(derOf("ds-nl")) + lines);
+        hidden.put("the DS in lines of 64, CRLF", (block(derOf("ds-nl")) + lines).replace("\n", "\r\n"));
+        hidden.put("the DS in lines of 64 after another certificate so", block(derOf("ds-nl")) + bare("rp-ca") + lines);
+        // Two runs of lines, neither a certificate by itself: the blank line does not part them.
+        hidden.put("the DS in lines of 64, a blank line halfway", block(derOf("ds-nl")) + lines.substring(0, half) + "\n"
+                + lines.substring(half));
+        hidden.forEach((what, text) -> {
+            var r = revokedWith(text);
+            assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(what).startsWith(BARE);
+        });
+    }
+
+    static final String UNTRIED = "mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: a PEM text has lines of "
+            + "base64 outside its certificate blocks that could start a certificate at more lines than can be tried";
+
+    /** Lines of 64 characters, each the header of a SEQUENCE of 768 bytes (16 such lines) and zeros, {@code count} times. */
+    static String headers(int count) {
+        byte[] line = new byte[48];
+        line[0] = 0x30;
+        line[1] = (byte) 0x82;
+        line[2] = 0x02;
+        line[3] = (byte) 0xfc;
+        return (Base64.getEncoder().encodeToString(line) + "\n").repeat(count);
+    }
+
+    @Test
+    void item3_linesThatStartMoreRangesThanCanBeTriedCannotBeRead() {
+        // Each line starts a range of 16 lines to try as a certificate: written so, the most a certificate text may hold
+        // would cost the square of its length. Up to four times the run's characters are tried; beyond, it is refused.
+        var r = revokedWith(block(derOf("ds-nl")) + headers(64));
+        assertThat(r.getValue()).isNotEqualTo(Decision.TRUSTED);
+        assertThat(r.getKey()).startsWith(UNTRIED);
+        // A few such ranges are tried, and hold no certificate: text that explains the block.
+        assertThat(revokedWith(block(derOf("ds")) + headers(17))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+    }
+
     // 4: a CA row skipped for its certificate text still says which certificates it is about ---------------------------
 
     static String sameCertificate(String in) {
