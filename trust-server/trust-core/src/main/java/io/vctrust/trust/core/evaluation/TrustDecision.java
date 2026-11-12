@@ -25,10 +25,14 @@ public record TrustDecision(Decision decision, String summary, List<Reason> reas
         return decision == Decision.TRUSTED;
     }
 
-    /** Evidence collected while evaluating. Absent parts were not applicable. */
+    /**
+     * Evidence collected while evaluating. Absent parts were not applicable.
+     *
+     * @param mechanism the id of the operator's trust mechanism that governed the question; null when none did
+     */
     public record Evidence(PathValidationResult x509, DidEvidence did, AuthorizationEvidence authorization,
                            List<TrustedAuthorityMatch> trustedAuthorities, List<String> matchedIdentifiers,
-                           Map<String, Object> clientId) {
+                           Map<String, Object> clientId, String mechanism) {
         public Evidence {
             trustedAuthorities = trustedAuthorities == null ? List.of() : List.copyOf(trustedAuthorities);
             matchedIdentifiers = matchedIdentifiers == null ? List.of() : List.copyOf(matchedIdentifiers);

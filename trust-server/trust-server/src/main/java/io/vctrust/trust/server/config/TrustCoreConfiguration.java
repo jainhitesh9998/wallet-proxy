@@ -219,7 +219,8 @@ public class TrustCoreConfiguration {
 
     @Bean
     TrustEvaluator trustEvaluator(TrustRegistry registry, TrustSourceManager manager, DidService didService,
-                                  X509PathValidator validator, Clock clock, TrustProperties props, RevocationChecker revocation) {
+                                  X509PathValidator validator, Clock clock, TrustProperties props, RevocationChecker revocation,
+                                  TrustMechanisms mechanisms) {
         // The evaluator resolves DIDs through the cached service.
         DidResolver cached = new DidResolver(List.of()) {
             @Override
@@ -227,8 +228,9 @@ public class TrustCoreConfiguration {
                 return didService.resolve(did);
             }
         };
+        // The same mechanisms the snapshots carry: the service's own decisions are the clients' decisions.
         return new TrustEvaluator(registry, manager, cached, validator, clock, props.getService().getDecisionTtl(),
-                props.getRevocation().isEnabled() ? revocation : null);
+                props.getRevocation().isEnabled() ? revocation : null, mechanisms);
     }
 
     /**

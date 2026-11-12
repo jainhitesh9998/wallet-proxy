@@ -17,6 +17,8 @@ import io.vctrust.trust.core.model.TrustDomain;
 import io.vctrust.trust.core.model.TrustFramework;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.policy.ClientProfile;
+import io.vctrust.trust.core.policy.TrustMechanism;
+import io.vctrust.trust.core.policy.TrustMechanisms;
 import io.vctrust.trust.core.registry.RegistrySnapshot;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
@@ -46,16 +48,23 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Evaluates {@link TrustQuery}s against the registry under a {@link ClientProfile}.
+ * Evaluates {@link TrustQuery}s against the registry under a {@link ClientProfile} and the operator's
+ * {@link TrustMechanisms}.
  *
  * <p>Evaluation is evidence-driven: each piece of supplied subject material (identifier, client_id prefix,
  * certificate chain, DID key reference, JWK) is checked independently, and the decision combines them:
  * <ul>
  *   <li>any contradicting evidence (invalid chain, revoked entity, unauthorized credential type, key not in
- *       the DID document, x509_hash mismatch) → {@link Decision#NOT_TRUSTED};</li>
+ *       the DID document, x509_hash mismatch, a key the governing mechanism does not accept) →
+ *       {@link Decision#NOT_TRUSTED};</li>
  *   <li>otherwise a registry entity or a validated trust anchor → {@link Decision#TRUSTED};</li>
  *   <li>otherwise → {@link Decision#UNKNOWN}.</li>
  * </ul>
+ *
+ * <p>The steps, in the order {@link #evaluate} takes them, are those of the client library's {@code LocalEvaluator},
+ * by the same names: {@code begin} (which also selects the governing mechanism, {@code selectMechanism}), {@code claim},
+ * {@code keyProof} (with {@code validateChain}), {@code acceptKey}, {@code findEntity}, {@code checkDid},
+ * {@code checkStanding}, {@code checkResponseUri}, {@code matchAuthorities}, {@code decide}.
  */
 public class TrustEvaluator {
 
@@ -66,6 +75,7 @@ public class TrustEvaluator {
     private final Clock clock;
     private final Duration decisionTtl;
     private final RevocationChecker revocation;
+    private final TrustMechanisms mechanisms;
 
     public TrustEvaluator(TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
                           X509PathValidator pathValidator, Clock clock, Duration decisionTtl) {
@@ -75,6 +85,16 @@ public class TrustEvaluator {
     /** @param revocation certificate revocation checking for chains (null: not checked) */
     public TrustEvaluator(TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
                           X509PathValidator pathValidator, Clock clock, Duration decisionTtl, RevocationChecker revocation) {
+        this(registry, sources, didResolver, pathValidator, clock, decisionTtl, revocation, TrustMechanisms.NONE);
+    }
+
+    /**
+     * @param revocation certificate revocation checking for chains (null: not checked)
+     * @param mechanisms the operator's trust mechanisms, the same the snapshot carries to clients
+     */
+    public TrustEvaluator(TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
+                          X509PathValidator pathValidator, Clock clock, Duration decisionTtl, RevocationChecker revocation,
+                          TrustMechanisms mechanisms) {
         this.registry = registry;
         this.sources = sources;
         this.didResolver = didResolver;
@@ -82,6 +102,7 @@ public class TrustEvaluator {
         this.clock = clock;
         this.decisionTtl = decisionTtl;
         this.revocation = revocation;
+        this.mechanisms = mechanisms == null ? TrustMechanisms.NONE : mechanisms;
     }
 
     /** Parsed OpenID4VP client identifier (OID4VP 1.0 §5.9.3). */
@@ -105,6 +126,7 @@ public class TrustEvaluator {
         Evaluation ev = begin(query, profile);
         Claim claim = claim(ev);
         KeyProof key = keyProof(ev, claim);
+        acceptKey(ev, key);
         Found found = findEntity(ev, claim, key);
         TrustedEntity entity = found.entity();
         DidEvidence did = checkDid(ev, key);
@@ -112,13 +134,16 @@ public class TrustEvaluator {
         checkResponseUri(ev, claim, entity);
         List<TrustedAuthorityMatch> authorities = matchAuthorities(ev, key, entity);
         Evidence evidence = new Evidence(key.x509(), did, authorization, authorities, found.matched(),
-                clientIdEvidence(claim, key, entity));
+                clientIdEvidence(claim, key, entity), ev.mechanism() == null ? null : ev.mechanism().id());
         return decide(ev, key, entity, evidence);
     }
 
-    /** One evaluation: the query as the steps read it, and the reasons they give. */
+    /**
+     * One evaluation: the query as the steps read it, the reasons they give, and the operator's mechanism that governs
+     * it (null when none does: the question is then decided by the built-in rules alone).
+     */
     private record Evaluation(TrustQuery query, ClientProfile profile, RegistrySnapshot snap, Instant now, EntityRole role,
-                              String format, String type, Set<String> types, List<Reason> reasons) {
+                              String format, String type, Set<String> types, TrustMechanism mechanism, List<Reason> reasons) {
         TrustQuery.Subject subject() {
             return query.subject();
         }
@@ -184,7 +209,16 @@ public class TrustEvaluator {
             types.add(type);
         }
         query.context().credentialTypes().stream().filter(t -> t != null && !t.isBlank()).forEach(types::add);
-        return new Evaluation(query, profile, snap, now, query.role(), format, type, types, new ArrayList<>());
+        return new Evaluation(query, profile, snap, now, query.role(), format, type, types,
+                selectMechanism(query.role(), format, types), new ArrayList<>());
+    }
+
+    /**
+     * The operator's mechanism that governs the question: the first whose {@code for} matches its role, its format and
+     * any of the types it asserts. None: the question is decided exactly as without mechanisms.
+     */
+    private TrustMechanism selectMechanism(EntityRole role, String format, Set<String> types) {
+        return mechanisms.select(role, format, types);
     }
 
     /** Identifiers from the identifier string (incl. OpenID4VP client_id prefixes). */
@@ -327,14 +361,21 @@ public class TrustEvaluator {
             reasons.add(Reason.error("client_id.x509_hash_mismatch",
                     "x509_hash client_id does not match the SHA-256 hash of the leaf certificate"));
         }
-        TrustDomain domain = domainFor(ev.role(), ev.format());
+        // The question's own domain, unless the governing mechanism names the domain whose anchors count instead.
+        TrustDomain questionDomain = domainFor(ev.role(), ev.format());
+        TrustMechanism.X509 rule = ev.mechanism() == null ? null : ev.mechanism().x509();
+        TrustDomain domain = rule != null && rule.domain() != null ? TrustDomain.of(rule.domain()) : questionDomain;
         List<TrustAnchor> anchors = ev.snap().anchors(domain).stream()
                 .filter(a -> ev.profile().accepts(a.frameworkId())).toList();
-        CertificateProfile certProfile = CertificateProfiles.forDomain(domain);
+        // The built-in profile follows the question, also when its anchors are another domain's: a mechanism adds
+        // requirements on top of it and never takes one away.
+        CertificateProfile certProfile = CertificateProfiles.withRequirements(CertificateProfiles.forDomain(questionDomain),
+                rule == null ? null : rule.profile());
+        boolean revocationRequired = ev.profile().requireRevocationStatus() || (rule != null && rule.revocationRequired());
         String docType = CredentialFormats.MSO_MDOC.equals(ev.format()) ? ev.type() : null;
         PathValidationResult x509 = pathValidator.validate(chain, anchors, new X509PathValidator.Options(ev.now(), certProfile,
                 new CertificateProfile.ProfileContext(claim.expectedDns(), docType), null)
-                .withRevocation(revocation, ev.profile().requireRevocationStatus()));
+                .withRevocation(revocation, revocationRequired));
         if (x509.valid()) {
             // The leaf's names are authenticated once the chain validates; use them to find the registered entity.
             Certificates.subjectKeyIdentifier(leaf).ifPresent(s -> proven.add(Identifier.of(IdentifierType.X509_SKI, s)));
@@ -372,6 +413,36 @@ public class TrustEvaluator {
             case STATUS_LIST_PROVIDER -> TrustDomain.STATUS_LIST;
             default -> TrustDomain.forCredentialFormat(format);
         };
+    }
+
+    /**
+     * The proofs of key the governing mechanism accepts: a key presented another way (an {@code x5c} chain, a DID key,
+     * a bare JWK) is refused, and so is a DID key of a method it does not list. A question without key material is a
+     * registry lookup, and nothing here refuses it.
+     */
+    private static void acceptKey(Evaluation ev, KeyProof key) {
+        TrustMechanism m = ev.mechanism();
+        if (m == null) {
+            return;
+        }
+        Map<String, Boolean> presented = new LinkedHashMap<>();
+        presented.put("x5c", !ev.subject().x5c().isEmpty());
+        presented.put("did", ev.hasDidKey());
+        presented.put("jwk", ev.hasJwk());
+        presented.forEach((kind, present) -> {
+            if (present && !m.accepts(kind)) {
+                ev.reasons().add(Reason.error("mechanism.key_not_accepted", "Trust mechanism '" + m.id() + "' does not accept a key presented as "
+                        + kind + "; it accepts " + String.join(", ", m.keys())));
+            }
+        });
+        // key.did() is the DID of a DID key only when it parsed; one that did not is refused as did.invalid already.
+        if (m.did() != null && ev.hasDidKey() && key.did() != null) {
+            String method = Did.parse(key.did()).method();
+            if (!m.did().methods().contains(method)) {
+                ev.reasons().add(Reason.error("mechanism.did_method_not_accepted", "Trust mechanism '" + m.id() + "' does not accept a key of DID method '"
+                        + method + "'; it accepts " + String.join(", ", m.did().methods())));
+            }
+        }
     }
 
     private static boolean provesClientId(ClientId cid, List<X509Certificate> chain, PathValidationResult x509, String keyDid) {
