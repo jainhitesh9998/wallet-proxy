@@ -1,8 +1,10 @@
 package io.vctrust.trust.adapters.mapped;
 
+import java.lang.ref.WeakReference;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -63,11 +65,44 @@ final class JsonPath {
      * holds something there, not what the mapping expects, and reading it as absent would leave out what it says (a
      * list of doctypes written as one string would constrain nothing).
      *
+     * <p>A path from the root selects the same nodes for every record of a document: it is evaluated once per document
+     * (a page), not once per record, and the same unmodifiable list is handed to each record. A list member
+     * {@code ^.contexts[*]} would otherwise cost the number of records times the size of the root's list.
+     *
      * @throws IllegalArgumentException naming the path, what it found and what the segment needs
      */
     List<Object> select(Object current, Object root) {
+        if (!fromRoot) {
+            return evaluate(current);
+        }
+        Memo m = memo;
+        if (m == null || m.root().get() != root) {
+            try {
+                m = new Memo(new WeakReference<>(root), Collections.unmodifiableList(evaluate(root)), null);
+            } catch (IllegalArgumentException e) {
+                m = new Memo(new WeakReference<>(root), null, e.getMessage());
+            }
+            memo = m;
+        }
+        if (m.error() != null) {
+            throw new IllegalArgumentException(m.error());
+        }
+        return m.nodes();
+    }
+
+    /**
+     * What a path from the root selected in the document it was last evaluated on (or why it could not), with that
+     * document held weakly. Immutable, and published through a volatile field: a source's load and the lookups that
+     * clients start may evaluate the same path at once, and at worst each evaluates it itself.
+     */
+    private record Memo(WeakReference<Object> root, List<Object> nodes, String error) {
+    }
+
+    private volatile Memo memo;
+
+    private List<Object> evaluate(Object start) {
         List<Object> nodes = new ArrayList<>(1);
-        nodes.add(fromRoot ? root : current);
+        nodes.add(start);
         for (Segment s : segments) {
             List<Object> next = new ArrayList<>();
             for (Object n : nodes) {

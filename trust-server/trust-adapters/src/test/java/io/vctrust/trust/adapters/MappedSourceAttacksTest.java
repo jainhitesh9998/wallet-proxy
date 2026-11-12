@@ -463,4 +463,43 @@ class MappedSourceAttacksTest {
         assertThat(loadError(source(ctx, props("mapping", entities("required", List.of("validUntil"))))))
                 .contains("mapping.entities[0].required: names validUntil, which the block does not map");
     }
+
+    // F5: a root path in a list member cost records times root size ------------------------------------------------
+
+    static Map<String, Object> withContexts(int records, int contexts) {
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        List<Object> issuers = new java.util.ArrayList<>();
+        for (int i = 0; i < records; i++) {
+            issuers.add(Map.of("id", "p" + i, "credential_issuer", "https://p.example", "state", "active"));
+        }
+        List<Object> urls = new java.util.ArrayList<>();
+        for (int i = 0; i < contexts; i++) {
+            urls.add("https://contexts.example/" + i);
+        }
+        d.put("issuers", issuers);
+        d.put("contexts", urls);
+        return d;
+    }
+
+    @Test
+    void f5_aMemberYieldsAtMostAThousandValuesForOneRecord() throws Exception {
+        // 200 records that each take the document's 2,000 contexts: 400,000 entries in the registry before.
+        TestContext ctx = ctx();
+        serveJson(ctx, withContexts(200, 2_000));
+        Map<String, Object> m = entities("contexts", "^.contexts[*]");
+        assertThat(loadError(source(ctx, props("mapping", m)))).contains("none of the 200 records at $.issuers[*] could be mapped; "
+                + "record 1 is skipped: contexts: yields more than 1000 values for one record");
+        serveJson(ctx, withContexts(200, 1_000));
+        assertThat(source(ctx, props("mapping", m)).load().entities()).hasSize(200)
+                .allSatisfy(e -> assertThat((List<?>) e.attributes().get(io.vctrust.trust.core.metadata.Oid4vciMetadataMapper.CONTEXTS))
+                        .hasSize(1_000));
+        // Several forms of one member count together, and so do the items of a nested each.
+        m = entities("certificates", List.of("$.a[*]", "$.b[*]"), "identifiers", List.of(Map.of("each", "^.contexts[*]", "type", "URL", "value", "$")));
+        var r = load(m, List.of(Map.of("a", java.util.Collections.nCopies(600, MappedTesting.der("ds")), "b",
+                java.util.Collections.nCopies(600, MappedTesting.der("ds")))));
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 1 is skipped: certificates: yields more than 1000 values for one record");
+        TestContext many = ctx();
+        serveJson(many, withContexts(3, 1_001));
+        assertThat(loadError(source(many, props("mapping", m)))).contains("identifiers: yields more than 1000 values for one record");
+    }
 }

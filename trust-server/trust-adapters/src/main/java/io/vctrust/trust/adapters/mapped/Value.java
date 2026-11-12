@@ -24,13 +24,25 @@ import java.util.TreeSet;
  */
 sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value.Template {
 
-    /** Every value this form yields for a record, nulls left out: one for a constant, every match of a path. */
+    /** The most values a member yields for one record: a path from the root could otherwise give each record all of them. */
+    int MAX_VALUES = 1_000;
+
+    /**
+     * Every value this form yields for a record, nulls left out: one for a constant, every match of a path.
+     *
+     * @throws IllegalArgumentException when that is more than {@link #MAX_VALUES}, or a path finds the wrong kind of node
+     */
     List<Object> all(Object current, Object root);
 
-    /** The first value, or null when the form yields nothing. */
+    /** The first value, or null when the form yields nothing. Never more work than finding that one. */
     default Object first(Object current, Object root) {
         List<Object> all = all(current, root);
         return all.isEmpty() ? null : all.getFirst();
+    }
+
+    /** What a member that yields more than {@link #MAX_VALUES} for one record says (and the record is skipped). */
+    static IllegalArgumentException tooMany() {
+        return new IllegalArgumentException("yields more than " + MAX_VALUES + " values for one record");
     }
 
     /** The constants this form can yield whatever the document says, so they can be checked when the configuration is read. */
@@ -145,14 +157,28 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         return null;
     }
 
+    /** The nodes that are not null, at most {@link #MAX_VALUES} of them. */
     private static List<Object> present(List<Object> values) {
-        List<Object> out = new ArrayList<>(values.size());
+        List<Object> out = new ArrayList<>(Math.min(values.size(), 16));
         for (Object v : values) {
             if (v != null) {
+                if (out.size() == MAX_VALUES) {
+                    throw tooMany();
+                }
                 out.add(v);
             }
         }
         return out;
+    }
+
+    /** The first node that is not null, or null. */
+    private static Object firstPresent(List<Object> values) {
+        for (Object v : values) {
+            if (v != null) {
+                return v;
+            }
+        }
+        return null;
     }
 
     record Constant(Object value) implements Value {
@@ -174,6 +200,11 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         }
 
         @Override
+        public Object first(Object current, Object root) {
+            return firstPresent(path.select(current, root));
+        }
+
+        @Override
         public List<Object> constants() {
             return List.of();
         }
@@ -188,15 +219,35 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             }
             List<Object> out = new ArrayList<>(found.size());
             for (Object v : found) {
-                String key = text(v);
-                Object translated = key == null ? null : table.get(key);
+                Object translated = translate(v);
                 if (translated != null) {
                     out.add(translated);
-                } else if (fallback != null) {
-                    out.add(fallback);
                 }
             }
             return out;
+        }
+
+        /** As {@code all(...).getFirst()}: the first value that translates (or the default), without the rest. */
+        @Override
+        public Object first(Object current, Object root) {
+            boolean found = false;
+            for (Object v : path.select(current, root)) {
+                if (v != null) {
+                    found = true;
+                    Object translated = translate(v);
+                    if (translated != null) {
+                        return translated;
+                    }
+                }
+            }
+            return found ? null : fallback;
+        }
+
+        /** The value's translation, else the default (null without one). */
+        private Object translate(Object v) {
+            String key = text(v);
+            Object translated = key == null ? null : table.get(key);
+            return translated != null ? translated : fallback;
         }
 
         @Override
@@ -275,14 +326,13 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             StringBuilder out = new StringBuilder();
             for (Object part : parts) {
                 if (part instanceof JsonPath p) {
-                    List<Object> found = present(p.select(current, root));
-                    if (found.isEmpty()) {
+                    Object found = firstPresent(p.select(current, root));
+                    if (found == null) {
                         return List.of();
                     }
-                    String t = Value.text(found.getFirst());
+                    String t = Value.text(found);
                     if (t == null) {
-                        throw new IllegalArgumentException("the path " + p.text() + " finds " + JsonPath.kind(found.getFirst())
-                                + " where text belongs");
+                        throw new IllegalArgumentException("the path " + p.text() + " finds " + JsonPath.kind(found) + " where text belongs");
                     }
                     out.append(t);
                 } else {

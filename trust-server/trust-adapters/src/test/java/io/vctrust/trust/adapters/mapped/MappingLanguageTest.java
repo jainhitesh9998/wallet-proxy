@@ -106,6 +106,38 @@ class MappingLanguageTest {
         assertThat(JsonPath.parse("$.rows[*][?@.v == 7].v").select(doc, doc)).hasSize(300);
     }
 
+    @Test
+    void aPathFromTheRootIsEvaluatedOncePerDocumentNotOncePerRecord() {
+        // A document whose root counts how often its member "contexts" is looked into.
+        java.util.concurrent.atomic.AtomicInteger lookups = new java.util.concurrent.atomic.AtomicInteger();
+        Map<String, Object> root = new java.util.LinkedHashMap<>() {
+            @Override
+            public boolean containsKey(Object key) {
+                if ("contexts".equals(key)) {
+                    lookups.incrementAndGet();
+                }
+                return super.containsKey(key);
+            }
+        };
+        List<Object> issuers = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            issuers.add(Map.of("id", "p" + i));
+        }
+        root.put("issuers", issuers);
+        root.put("contexts", List.of("https://contexts.example/a", "https://contexts.example/b"));
+        Mapping m = Mapping.parse(Map.of("entities", List.of(Map.of("each", "$.issuers[*]", "id", "$.id",
+                "contexts", "^.contexts[*]", "attributes", Map.of("first", "^.contexts[0]")))));
+        Mapping.Block block = m.entities.getFirst();
+        for (Object record : block.records(root)) {
+            assertThat(block.map(record, root)).containsEntry("contexts", List.of("https://contexts.example/a", "https://contexts.example/b"));
+        }
+        assertThat(lookups).hasValue(2);   // once for each of the two paths, for the whole document
+        // Another document is another evaluation.
+        Map<String, Object> other = new java.util.LinkedHashMap<>(root);
+        other.put("contexts", List.of("https://contexts.example/c"));
+        assertThat(block.map(issuers.getFirst(), other)).containsEntry("contexts", List.of("https://contexts.example/c"));
+    }
+
     static Object first(Object form, Object record) {
         return Value.parse(form, "test").first(record, DOC);
     }

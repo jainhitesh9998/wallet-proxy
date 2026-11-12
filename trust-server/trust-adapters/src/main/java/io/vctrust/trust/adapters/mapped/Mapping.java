@@ -411,8 +411,16 @@ final class Mapping {
                 for (Object o : all(v, member, record, root)) {
                     out.add(scalar(o, member));
                 }
+                bounded(out, member);
             }
             return out;
+        }
+
+        /** A member yields at most {@link Value#MAX_VALUES} values for one record, all its forms and items together. */
+        private static void bounded(List<?> values, String member) {
+            if (values.size() > Value.MAX_VALUES) {
+                throw new IllegalArgumentException(member + ": " + Value.tooMany().getMessage());
+            }
         }
 
         /**
@@ -447,6 +455,7 @@ final class Mapping {
             List<Map<String, Object>> out = new ArrayList<>();
             for (Item item : items) {
                 List<Object> matches = item.each == null ? List.of(record) : select(item.each, member, record, root);
+                bounded(matches, member);   // before any is mapped: each costs the evaluation of the item's members
                 for (Object match : matches) {
                     if (match == null) {
                         continue;
@@ -464,6 +473,7 @@ final class Mapping {
                         out.add(o);
                     }
                 }
+                bounded(out, member);
             }
             return out;
         }
@@ -480,6 +490,7 @@ final class Mapping {
                 } else {
                     out.addAll(objects(List.of((Item) e), "contexts", record, root, Set.of("url"), false));
                 }
+                bounded(out, "contexts");
             }
             return out;
         }
