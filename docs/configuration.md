@@ -239,6 +239,14 @@ warning of its source's state (`GET /admin/v1/sources`). A source of one framewo
 the clients of another framework are told. Put sources that should not vouch for each other's entries into different
 frameworks.
 
+Anchors are not merged. Records of one anchor id in one framework (from two sources, from one list twice, or an anchor
+whose fallback name `<id>@<framework>` its framework already uses) that say the same, apart from where and when they
+were retrieved, load as one. When they differ in anything else (status, constraints, certificate, entity, domain),
+neither is loaded, and the state of each source concerned has a warning that names them all: which record counted
+would otherwise depend on the order of the sources, and the one left out could be the CA's withdrawal or constraint.
+A chain to that CA is then decided as one to a CA that is not listed (`x509.no_anchor`), unless an anchor of another id
+lists the same certificate.
+
 ### Registry format
 
 Used by `static` sources and, per entry, by the admin API.

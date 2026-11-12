@@ -50,8 +50,10 @@ import java.util.regex.Pattern;
  * of its own framework. An entry whose id another framework already has is listed as {@code <id>@<framework>}, and
  * that name is its framework's, so it is always free ({@link #fallbackNameOf}): an entity of another framework written
  * with it is listed under its own fallback name instead, and such an anchor is not loaded. A source of one framework can therefore add nothing to, and take nothing from, what a
- * client of another framework is told. An entry that is not loaded is named in a warning of its source's state. A
- * list that is older than the one already held is not loaded.
+ * client of another framework is told. Two records of one anchor id in one framework that differ (in anything but
+ * where and when they were retrieved) are neither loaded: which one counted would depend on the order of the sources.
+ * An entry that is not loaded is named in a warning of its source's state. A list that is older than the one already
+ * held is not loaded.
  */
 public class TrustSourceManager implements AutoCloseable {
 
@@ -294,7 +296,9 @@ public class TrustSourceManager implements AutoCloseable {
                 entities.merge(id, inFramework(e, id, framework), RegistrySnapshot::merge);
             }
         }
-        Map<String, TrustAnchor> anchors = new LinkedHashMap<>();
+        // The anchor records placed under each id, with the source of each. An id holds the records of one framework: a
+        // record of another framework whose id is taken is placed under <id>@<its framework>.
+        Map<String, List<Placed>> placedAnchors = new LinkedHashMap<>();
         for (TrustSource s : sources.values()) {
             SourceLoadResult r = results.get(s.id());
             if (r == null) {
@@ -317,21 +321,38 @@ public class TrustSourceManager implements AutoCloseable {
                     entityId = own == null && entities.containsKey(entityId) ? null : own == null ? entityId : own;
                 }
                 String id = a.id();
-                TrustAnchor other = anchors.get(id);
-                if (other != null && !Objects.equals(other.frameworkId(), framework)) {
+                List<Placed> held = placedAnchors.get(id);
+                if (held != null && !Objects.equals(held.getFirst().anchor().frameworkId(), framework)) {
                     id = a.id() + "@" + framework;
                 }
                 TrustAnchor anchor = new TrustAnchor(id, a.domain(), a.certificate(), framework, entityId, a.status(),
                         boundedCrlUrls(a, s.id(), refused), a.provenance());
-                TrustAnchor held = anchors.putIfAbsent(id, anchor);
-                // The same anchor listed again (by another source of the framework, say) loses nothing; any other
-                // anchor that cannot be placed is reported: an anchor left out may be a CA's withdrawal or constraint.
-                if (held != null && !sameAnchor(held, anchor)) {
-                    refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Anchor '" + a.id() + "' is not loaded: the name '" + id
-                            + "' is taken by another anchor of framework '" + held.frameworkId() + "'");
-                }
+                placedAnchors.computeIfAbsent(id, k -> new ArrayList<>()).add(new Placed(s.id(), a.id(), anchor));
             }
         }
+        Map<String, TrustAnchor> anchors = new LinkedHashMap<>();
+        placedAnchors.forEach((id, records) -> {
+            TrustAnchor first = records.getFirst().anchor();
+            List<String> differ = records.stream().map(p -> differences(first, p.anchor())).filter(d -> !d.isEmpty())
+                    .findFirst().orElse(List.of());
+            if (differ.isEmpty()) {
+                // The same anchor listed again (by another source of the framework, say) loses nothing.
+                anchors.put(id, first);
+                return;
+            }
+            // Records of one anchor that differ: kept first come, which one counted would depend on the order of the
+            // sources, and the one left out may be the CA's withdrawal (a status) or constraint. Neither is loaded, and
+            // the warning, in the state of each source concerned, names them all.
+            List<String> named = records.stream().map(Placed::sourceId).distinct().toList();
+            String who = named.size() == 1
+                    ? "source '" + named.getFirst() + "' lists it " + (records.size() == 2 ? "twice" : records.size() + " times")
+                    : "sources " + quoted(named) + " list it";
+            List<String> written = records.stream().map(Placed::writtenId).distinct().toList();
+            String message = "Anchor '" + id + "' is not loaded: " + who + " in framework '" + first.frameworkId() + "'"
+                    + (written.size() > 1 ? " (written as " + quoted(written) + ")" : "")
+                    + " with records that differ (" + String.join(", ", differ) + "), and which one counted would depend on the order of the sources";
+            named.forEach(source -> refused.computeIfAbsent(source, k -> new ArrayList<>()).add(message));
+        });
         // What the registry could not take quotes ids and locations as the lists wrote them.
         Map<String, List<String>> reported = new LinkedHashMap<>();
         refused.forEach((source, messages) -> reported.put(source, escaped(messages)));
@@ -379,10 +400,44 @@ public class TrustSourceManager implements AutoCloseable {
                 + "' is listed under when another framework has its id, and only that framework may use it";
     }
 
-    /** Whether two anchor records say the same: one placed instead of the other loses nothing. */
-    private static boolean sameAnchor(TrustAnchor a, TrustAnchor b) {
-        return Objects.equals(a.frameworkId(), b.frameworkId()) && a.domain().equals(b.domain()) && a.thumbprint().equals(b.thumbprint())
-                && Objects.equals(a.entityId(), b.entityId()) && a.status() == b.status() && a.constraints().equals(b.constraints());
+    /** {@code 'a'}, {@code 'a' and 'b'}, {@code 'a', 'b' and 'c'}. */
+    private static String quoted(List<String> names) {
+        List<String> q = names.stream().map(n -> "'" + n + "'").toList();
+        return q.size() == 1 ? q.getFirst() : String.join(", ", q.subList(0, q.size() - 1)) + " and " + q.getLast();
+    }
+
+    /**
+     * An anchor record placed under its id, the source that listed it and the id it was written with (another framework's
+     * anchor of that id places it under {@code <id>@<framework>}).
+     */
+    private record Placed(String sourceId, String writtenId, TrustAnchor anchor) {
+    }
+
+    /**
+     * What two records of one anchor say differently: anything but where and when they were retrieved (the provenance).
+     * Empty when they say the same, and one placed instead of the other loses nothing.
+     */
+    private static List<String> differences(TrustAnchor a, TrustAnchor b) {
+        List<String> differ = new ArrayList<>();
+        if (!Objects.equals(a.frameworkId(), b.frameworkId())) {
+            differ.add("framework");
+        }
+        if (!a.domain().equals(b.domain())) {
+            differ.add("domain");
+        }
+        if (!a.thumbprint().equals(b.thumbprint())) {
+            differ.add("certificate");
+        }
+        if (!Objects.equals(a.entityId(), b.entityId())) {
+            differ.add("entity");
+        }
+        if (a.status() != b.status()) {
+            differ.add("status");
+        }
+        if (!a.constraints().equals(b.constraints())) {
+            differ.add("constraints");
+        }
+        return differ;
     }
 
     /** The entity as an entry of {@code framework} under {@code id}, whatever its source wrote. */

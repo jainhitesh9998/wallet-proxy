@@ -238,8 +238,13 @@ class FallbackNamesTest {
         var registry = new TrustRegistry();
         try (var manager = new TrustSourceManager(registry, FRAMEWORKS, List.of(first, partner), Clock.systemUTC())) {
             manager.start();
+            // The partner's "ca" falls back to "ca@partner", which its own anchor of another certificate holds: two
+            // records of one anchor id in one framework that differ, and neither is loaded (the first one listed was kept).
             assertThat(warnings(manager, "partner")).anyMatch(w -> w.startsWith("Entity 'a' is not loaded"))
-                    .anyMatch(w -> w.startsWith("Anchor 'ca' is not loaded"));
+                    .anyMatch(w -> w.startsWith("Anchor 'ca@partner' is not loaded: source 'partner' lists it twice in framework 'partner'"
+                            + " (written as 'ca@partner' and 'ca') with records that differ (certificate)"));
+            assertThat(registry.snapshot().anchor("ca@partner")).isEmpty();
+            assertThat(registry.snapshot().anchor("ca")).get().satisfies(a -> assertThat(a.frameworkId()).isEqualTo("other"));
         }
     }
 
@@ -271,12 +276,22 @@ class FallbackNamesTest {
         Fixed same = new Fixed("same", "other", listing(List.of(), List.of(anchor("ca", SHARED_CA, "other"))));
         Fixed different = new Fixed("different", "other", listing(List.of(), List.of(anchor("ca", PARTNER_CA, "other"))));
         var registry = new TrustRegistry();
-        try (var manager = new TrustSourceManager(registry, FRAMEWORKS, List.of(one, same, different), Clock.systemUTC())) {
+        try (var manager = new TrustSourceManager(registry, FRAMEWORKS, List.of(one, same), Clock.systemUTC())) {
             manager.start();
             assertThat(registry.snapshot().allAnchors()).singleElement()
                     .satisfies(a -> assertThat(a.thumbprint()).isEqualTo(Certificates.sha256Thumbprint(SHARED_CA.certificate())));
+            assertThat(warnings(manager, "one")).isEmpty();
             assertThat(warnings(manager, "same")).isEmpty();
-            assertThat(warnings(manager, "different")).anyMatch(w -> w.startsWith("Anchor 'ca' is not loaded"));
+        }
+        // A record that differs: the first one listed used to be kept. Now neither is loaded, whatever the order, and every
+        // source concerned is told.
+        registry = new TrustRegistry();
+        try (var manager = new TrustSourceManager(registry, FRAMEWORKS, List.of(one, same, different), Clock.systemUTC())) {
+            manager.start();
+            assertThat(registry.snapshot().allAnchors()).isEmpty();
+            for (String source : List.of("one", "same", "different")) {
+                assertThat(warnings(manager, source)).as(source).anyMatch(w -> w.startsWith("Anchor 'ca' is not loaded: sources 'one', 'same' and 'different'"));
+            }
         }
     }
 }
