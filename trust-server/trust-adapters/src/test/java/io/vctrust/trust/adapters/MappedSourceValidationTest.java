@@ -226,6 +226,102 @@ class MappedSourceValidationTest {
                 + "completely; record 1 (id 'partner:dmv') is listed SUSPENDED: validUntil is not a date: 'soon'");
     }
 
+    // B: what one record may weigh ---------------------------------------------------------------------------------
+
+    /** The partner's list with {@code n} issuers, and {@code root} put into its root. */
+    static Map<String, Object> issuers(int n, Map<String, Object> root) {
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        List<Object> issuers = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            issuers.add(Map.of("id", "p" + i, "credential_issuer", "https://p" + i + ".example", "state", "active"));
+        }
+        d.put("issuers", issuers);
+        d.putAll(root);
+        return d;
+    }
+
+    @Test
+    void b_oneMappedTextValueIsAtMost8192Characters() throws Exception {
+        // name: ^.publisher repeats the root's text into every record: 2,000 records of a 200 kB publisher were
+        // 400,000,000 characters from a 350 kB document.
+        TestContext ctx = ctx();
+        serveJson(ctx, issuers(3, Map.of("publisher_name", "P".repeat(8_193))));
+        Map<String, Object> m = MappedSourceAttacksTest.entities("name", "^.publisher_name");
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", m)))).contains("none of the 3 records at $.issuers[*] "
+                + "could be read completely; record 1 (id 'partner:p0') is listed SUSPENDED: name: a value of 8193 characters, "
+                + "more than 8192");
+        serveJson(ctx, issuers(3, Map.of("publisher_name", "P".repeat(8_192))));
+        assertThat(source(ctx, props("mapping", m)).load().entities()).hasSize(3).allSatisfy(e -> assertThat(e.status()).isEqualTo(EntityStatus.ACTIVE));
+        // So inside an attribute that is an object, and for an anchor (skipped) and an identifier (the load fails).
+        serveJson(ctx, issuers(1, Map.of("meta", Map.of("note", "N".repeat(8_193)))));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", MappedSourceAttacksTest.entities("attributes",
+                Map.of("meta", "^.meta")))))).contains("is listed SUSPENDED: attributes.meta: a value of 8193 characters, more than 8192");
+        Map<String, Object> d = issuers(1, Map.of());
+        d.put("issuers", List.of(Map.of("id", "p0", "credential_issuer", "https://p0.example/" + "x".repeat(8_200), "state", "active")));
+        serveJson(ctx, d);
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props()))).contains("record 1 (id 'partner:p0') cannot be read: "
+                + "identifiers.value: a value of 8219 characters, more than 8192");
+        // A list fact is held to the same bound; it goes into the source's state.
+        serveJson(ctx, issuers(1, Map.of("publisher", "P".repeat(8_193))));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props()))).contains("mapping.list.issuer: a value of 8193 characters, more than 8192");
+    }
+
+    @Test
+    void b_oneRecordYieldsAtMost65536CharactersOfMappedText() throws Exception {
+        // contexts: ^.contexts[*] at the cap of 1,000 values made 5,000,000 entries; ten values of 8,000 characters
+        // each are 80,000 characters for every record.
+        List<Object> contexts = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            contexts.add("https://contexts.example/" + i + "/" + "c".repeat(7_970));
+        }
+        TestContext ctx = ctx();
+        Map<String, Object> d = issuers(2, Map.of("contexts", contexts));
+        d.put("issuers", List.of(Map.of("id", "p0", "credential_issuer", "https://p0.example", "state", "active", "ctx", contexts),
+                Map.of("id", "p1", "credential_issuer", "https://p1.example", "state", "active", "ctx", contexts.subList(0, 8))));
+        serveJson(ctx, d);
+        var r = source(ctx, props("mapping", MappedSourceAttacksTest.entities("contexts", "$.ctx[*]"))).load();
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status()).containsExactly("partner:p0 SUSPENDED", "partner:p1 ACTIVE");
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 1 (id 'partner:p0') is listed SUSPENDED: contexts: the record's "
+                + "mapped text would be more than 65536 characters");
+        assertThat(r.entities().getFirst().attributes()).doesNotContainKey(io.vctrust.trust.core.metadata.Oid4vciMetadataMapper.CONTEXTS);
+    }
+
+    @Test
+    void b_aLoadYieldsAtMostLimitsTextCharactersOfMappedText() throws Exception {
+        TestContext ctx = ctx();
+        serveJson(ctx, issuers(40, Map.of()));
+        // About 60 characters a record: id, role, URL identifier, status.
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("limits", Map.of("text", 1_000)))))
+                .contains("The list's records yield more than 1000 characters of mapped text (limits.text)");
+        assertThat(source(ctx, props("limits", Map.of("text", 10_000))).load().entities()).hasSize(40);
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("limits", Map.of("text", "lots")))))
+                .contains("limits.text must be a positive whole number");
+    }
+
+    @Test
+    void b_valuesAPathSelectsCountTowardTheThousandWhetherOrNotTheyBecomeValues() throws Exception {
+        // A root path over 400,000 nulls took seconds for 2,000 records, because nulls were not counted.
+        List<Object> nulls = new ArrayList<>(java.util.Collections.nCopies(1_001, null));
+        List<Object> codes = new ArrayList<>(java.util.Collections.nCopies(1_001, "unknown"));
+        TestContext ctx = ctx();
+        serveJson(ctx, issuers(2, Map.of("nothing", nulls, "codes", codes)));
+        Map<String, String> members = new LinkedHashMap<>();
+        members.put("contexts", "^.nothing[*]");
+        members.put("name", "^.nothing[*]");
+        for (Map.Entry<String, String> e : members.entrySet()) {
+            assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", MappedSourceAttacksTest.entities(e.getKey(), e.getValue())))))
+                    .as(e.getKey()).contains("is listed SUSPENDED: " + e.getKey() + ": yields more than 1000 values for one record");
+        }
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", MappedSourceAttacksTest.entities("attributes",
+                Map.of("code", Map.of("path", "^.codes[*]", "values", Map.of("known", "yes")))))))).contains("is listed SUSPENDED: "
+                + "attributes.code: yields more than 1000 values for one record");
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", MappedSourceAttacksTest.entities("name",
+                Map.of("template", "x{^.nothing[*]}")))))).contains("is listed SUSPENDED: name: yields more than 1000 values for one record");
+        // A thousand are read.
+        serveJson(ctx, issuers(2, Map.of("nothing", nulls.subList(0, 1_000))));
+        assertThat(source(ctx, props("mapping", MappedSourceAttacksTest.entities("contexts", "^.nothing[*]"))).load().warnings()).isEmpty();
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();

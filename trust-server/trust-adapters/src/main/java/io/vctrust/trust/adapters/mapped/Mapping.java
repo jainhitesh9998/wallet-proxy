@@ -53,10 +53,57 @@ final class Mapping {
     static final List<String> IDENTIFYING = List.of("id", "roles", "identifiers", "certificates");
 
     /**
-     * What one record yields: its entry in the registry format, with every member that could be read, and the members
-     * that could not, each with why (in the order the record was read).
+     * What one record yields: its entry in the registry format, with every member that could be read, the members that
+     * could not, each with why (in the order the record was read), and how many characters of mapped text the entry
+     * holds.
      */
-    record Mapped(Map<String, Object> entry, Map<String, String> unusable) {
+    record Mapped(Map<String, Object> entry, Map<String, String> unusable, int text) {
+    }
+
+    /**
+     * The most characters of mapped text one record yields, all its members together: a path from the root repeats
+     * what it finds into every record, so that a small document could otherwise make a registry of gigabytes.
+     */
+    static final int MAX_RECORD_TEXT = 65_536;
+
+    /**
+     * The characters of mapped text in a value: text, numbers and booleans as written, and the names of an object's
+     * members; counted up to {@code limit + 1} at most, so that the cost is bounded too.
+     *
+     * @throws IllegalArgumentException naming {@code member}, for a text in it longer than {@link Value#MAX_TEXT}
+     */
+    static int weight(Object v, String member, int limit) {
+        if (v instanceof Map<?, ?> m) {
+            int total = 0;
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                total += weight(e.getKey(), member, limit - total);
+                if (total <= limit) {
+                    total += weight(e.getValue(), member, limit - total);
+                }
+                if (total > limit) {
+                    return total;
+                }
+            }
+            return total;
+        }
+        if (v instanceof List<?> l) {
+            int total = 0;
+            for (Object o : l) {
+                total += weight(o, member, limit - total);
+                if (total > limit) {
+                    return total;
+                }
+            }
+            return total;
+        }
+        String t = Value.text(v);
+        if (t == null) {
+            return 0;
+        }
+        if (t.length() > Value.MAX_TEXT) {
+            throw new IllegalArgumentException(member + ": a value of " + t.length() + " characters, more than " + Value.MAX_TEXT);
+        }
+        return t.length();
     }
 
     final ListFacts list;
@@ -368,18 +415,28 @@ final class Mapping {
                     out.put("framework", framework);
                 }
             }
-            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable));
+            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable), r.text);
         }
 
-        /** Reads one member at a time: what it yields, or why it cannot be read. */
+        /**
+         * Reads one member at a time: what it yields, or why it cannot be read. A member that would take the record's
+         * mapped text beyond {@link #MAX_RECORD_TEXT} cannot be read either.
+         */
         private static final class Reader {
             final Map<String, Object> values = new LinkedHashMap<>();
             final Map<String, String> unusable = new LinkedHashMap<>();
+            int text;
 
             void read(String member, java.util.function.Supplier<Object> value) {
                 try {
                     Object v = value.get();
                     if (v != null && !(v instanceof List<?> l && l.isEmpty()) && !(v instanceof Map<?, ?> m && m.isEmpty())) {
+                        int weight = weight(v, member, MAX_RECORD_TEXT - text);
+                        if (text + weight > MAX_RECORD_TEXT) {
+                            throw new IllegalArgumentException(member + ": the record's mapped text would be more than "
+                                    + MAX_RECORD_TEXT + " characters");
+                        }
+                        text += weight;
                         values.put(member, v);
                     }
                 } catch (RuntimeException e) {
@@ -393,7 +450,11 @@ final class Mapping {
             Map<String, Object> attributes = new LinkedHashMap<>();
             @SuppressWarnings("unchecked")
             Map<String, Value> named = (Map<String, Value>) fields.get("attributes");
-            named.forEach((k, v) -> put(attributes, k, first(v, "attributes." + k, record, root)));
+            named.forEach((k, v) -> {
+                Object found = first(v, "attributes." + k, record, root);
+                weight(found, "attributes." + k, MAX_RECORD_TEXT);   // an object's texts are mapped text too
+                put(attributes, k, found);
+            });
             return attributes;
         }
 
@@ -575,6 +636,9 @@ final class Mapping {
             String t = Value.text(v);
             if (t == null) {
                 throw new IllegalArgumentException(member + " is " + (v instanceof Map<?, ?> ? "an object" : "a list") + ", not a value");
+            }
+            if (t.length() > Value.MAX_TEXT) {
+                throw new IllegalArgumentException(member + ": a value of " + t.length() + " characters, more than " + Value.MAX_TEXT);
             }
             return t;
         }

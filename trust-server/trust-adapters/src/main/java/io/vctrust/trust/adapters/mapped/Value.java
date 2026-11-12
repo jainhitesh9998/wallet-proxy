@@ -24,8 +24,15 @@ import java.util.TreeSet;
  */
 sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value.Template {
 
-    /** The most values a member yields for one record: a path from the root could otherwise give each record all of them. */
+    /**
+     * The most values a member yields for one record: a path from the root could otherwise give each record all of them.
+     * Every node a path selects counts, whether or not it becomes a value (a null, a value no translation knows): a
+     * path over 400,000 nulls would otherwise cost each record the time to look at all of them.
+     */
     int MAX_VALUES = 1_000;
+
+    /** The longest text one mapped value may be: a path from the root would otherwise repeat a long text into every record. */
+    int MAX_TEXT = 8_192;
 
     /**
      * Every value this form yields for a record, nulls left out: one for a constant, every match of a path.
@@ -157,22 +164,29 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         return null;
     }
 
-    /** The nodes that are not null, at most {@link #MAX_VALUES} of them. */
+    /** The nodes that are not null, of at most {@link #MAX_VALUES} selected. */
     private static List<Object> present(List<Object> values) {
+        bounded(values);
         List<Object> out = new ArrayList<>(Math.min(values.size(), 16));
         for (Object v : values) {
             if (v != null) {
-                if (out.size() == MAX_VALUES) {
-                    throw tooMany();
-                }
                 out.add(v);
             }
         }
         return out;
     }
 
-    /** The first node that is not null, or null. */
+    /** What a path selected, when it is at most {@link #MAX_VALUES} nodes, nulls included. */
+    private static List<Object> bounded(List<Object> selected) {
+        if (selected.size() > MAX_VALUES) {
+            throw tooMany();
+        }
+        return selected;
+    }
+
+    /** The first node that is not null, or null, of at most {@link #MAX_VALUES} selected. */
     private static Object firstPresent(List<Object> values) {
+        bounded(values);
         for (Object v : values) {
             if (v != null) {
                 return v;
@@ -231,7 +245,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         @Override
         public Object first(Object current, Object root) {
             boolean found = false;
-            for (Object v : path.select(current, root)) {
+            for (Object v : bounded(path.select(current, root))) {
                 if (v != null) {
                     found = true;
                     Object translated = translate(v);
@@ -251,7 +265,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             if (fallback != null) {
                 return null;
             }
-            for (Object v : path.select(current, root)) {
+            for (Object v : bounded(path.select(current, root))) {
                 if (v != null && translate(v) == null) {
                     return v;
                 }

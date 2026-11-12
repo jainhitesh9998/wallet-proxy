@@ -70,6 +70,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             "allowExpired", "mapping", "mappingLocation", "limits");
     static final int DEFAULT_MAX_ENTITIES = 5_000;
     static final int DEFAULT_MAX_ANCHORS = 1_000;
+    /** The characters of mapped text one load may yield, all records together (64 Mi). */
+    static final int DEFAULT_MAX_TEXT = 67_108_864;
     static final int MAX_WARNINGS = 50;
     static final Duration ON_DEMAND_TTL = Duration.ofMinutes(10);
     static final Duration ON_DEMAND_NEGATIVE_TTL = Duration.ofMinutes(1);
@@ -90,7 +92,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
 
     /** The configuration, as read and checked when the source is created. */
     record Config(String location, URI origin, String publicUri, Map<String, String> headers, boolean jws, PinnedKeys keys,
-                  boolean allowUnverified, boolean allowExpired, int maxEntities, int maxAnchors, Mapping mapping) {
+                  boolean allowUnverified, boolean allowExpired, int maxEntities, int maxAnchors, int maxText, Mapping mapping) {
 
         /**
          * Header names only, and the location without its query: header values are credentials, a query often holds
@@ -219,13 +221,15 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
         int maxEntities = DEFAULT_MAX_ENTITIES;
         int maxAnchors = DEFAULT_MAX_ANCHORS;
+        int maxText = DEFAULT_MAX_TEXT;
         if (p.containsKey("limits")) {
-            Map<String, Object> l = Mapping.members(p.get("limits"), "limits", Set.of("entities", "anchors"));
+            Map<String, Object> l = Mapping.members(p.get("limits"), "limits", Set.of("entities", "anchors", "text"));
             maxEntities = l.containsKey("entities") ? Mapping.positive(l.get("entities"), "limits.entities") : maxEntities;
             maxAnchors = l.containsKey("anchors") ? Mapping.positive(l.get("anchors"), "limits.anchors") : maxAnchors;
+            maxText = l.containsKey("text") ? Mapping.positive(l.get("text"), "limits.text") : maxText;
         }
         return new Config(location, origin, publicUri, headers, jws, keys, allowUnverified, bool(p, "allowExpired"),
-                maxEntities, maxAnchors, mapping);
+                maxEntities, maxAnchors, maxText, mapping);
     }
 
     private static String text(Map<String, Object> p, String key) {
@@ -362,6 +366,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             Tally[] entityTallies = tallies(config.mapping().entities);
             Tally[] anchorTallies = tallies(config.mapping().anchors);
+            Text text = new Text(config.maxText(), "The list's records");
             List<TrustedEntity> entities = new ArrayList<>();
             List<TrustAnchor> anchors = new ArrayList<>();
             int entityRecords = 0;
@@ -392,7 +397,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         }
                         for (Object record : records) {
                             Tally t = entityTallies[b];
-                            t.count(mapEntity(block, record, page.root(), provenance, t.records + 1), warnings);
+                            t.count(mapEntity(block, record, page.root(), provenance, t.records + 1, text), warnings);
                         }
                     }
                     for (int b = 0; b < config.mapping().anchors.size(); b++) {
@@ -403,7 +408,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                             throw new TrustSourceException("The list has more than " + config.maxAnchors() + " anchor records (limits.anchors)");
                         }
                         for (Object record : records) {
-                            anchorTallies[b].count(mapAnchor(block, record, page.root(), provenance), warnings);
+                            anchorTallies[b].count(mapAnchor(block, record, page.root(), provenance, text), warnings);
                         }
                     }
                     for (Tally t : entityTallies) {
@@ -747,6 +752,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (t == null) {
                 throw new TrustSourceException("mapping.list." + name + ": the document has no value for it");
             }
+            if (t.length() > Value.MAX_TEXT) {
+                throw new TrustSourceException("mapping.list." + name + ": a value of " + t.length() + " characters, more than "
+                        + Value.MAX_TEXT);
+            }
             return t;
         }
 
@@ -781,9 +790,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          * @return a {@link TrustedEntity} read completely, an {@link Incomplete} one, or a {@link Skipped} record
          * @throws TrustSourceException when the record cannot be listed at all
          */
-        private Object mapEntity(Mapping.Block block, Object record, Object root, Provenance provenance, int number)
+        private Object mapEntity(Mapping.Block block, Object record, Object root, Provenance provenance, int number, Text text)
                 throws TrustSourceException {
             Mapping.Mapped m = block.map(record, root);
+            text.charge(m.text());
             Map<String, Object> entry = new LinkedHashMap<>(m.entry());
             Map<String, String> unusable = new LinkedHashMap<>(m.unusable());
             String id = entry.get("id") instanceof String s ? s : null;
@@ -855,8 +865,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         /** One record as an anchor, or why not. An anchor is one certificate. Leaving an anchor out removes trust. */
-        private Object mapAnchor(Mapping.Block block, Object record, Object root, Provenance provenance) {
+        private Object mapAnchor(Mapping.Block block, Object record, Object root, Provenance provenance, Text text)
+                throws TrustSourceException {
             Mapping.Mapped m = block.map(record, root);
+            text.charge(m.text());
             String id = m.entry().get("id") instanceof String s ? s : null;
             String shown = id != null && ENTRY_ID.matcher(id).matches() ? id : null;
             if (!m.unusable().isEmpty()) {
@@ -885,6 +897,28 @@ public final class MappedSourceFactory implements TrustSourceFactory {
 
         /** An entity listed without what could not be read, not in good standing; and the warning that says so. */
         private record Incomplete(TrustedEntity entity, String warning) {
+        }
+
+        /**
+         * The characters of mapped text a load (or a lookup answer) has yielded, all its records together, against
+         * {@code limits.text}: each record is bounded, and so is what they make together.
+         */
+        private static final class Text {
+            private final int max;
+            private final String what;
+            private long used;
+
+            Text(int max, String what) {
+                this.max = max;
+                this.what = what;
+            }
+
+            void charge(int characters) throws TrustSourceException {
+                used += characters;
+                if (used > max) {
+                    throw new TrustSourceException(what + " yield more than " + max + " characters of mapped text (limits.text)");
+                }
+            }
         }
 
         private static Tally[] tallies(List<Mapping.Block> blocks) {
@@ -1033,10 +1067,11 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     if (records.size() > config.maxEntities()) {
                         throw new TrustSourceException("The lookup answered with more than " + config.maxEntities() + " records");
                     }
+                    Text text = new Text(config.maxText(), "The answer's records");
                     for (int i = 0; i < records.size(); i++) {
                         // A record about the identifier that cannot be read completely answers with a suspended entity,
                         // not with "not found"; one whose identifying members cannot be read fails the lookup.
-                        Object mapped = mapEntity(l.entity(), records.get(i), root, provenance, i + 1);
+                        Object mapped = mapEntity(l.entity(), records.get(i), root, provenance, i + 1, text);
                         TrustedEntity e = mapped instanceof TrustedEntity te ? te : mapped instanceof Incomplete inc ? inc.entity() : null;
                         if (e != null) {
                             if (e.identifiers().contains(identifier)) {
