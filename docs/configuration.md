@@ -427,7 +427,7 @@ trust:
 | `mappingLocation` / `mapping` | one of them | The mapping: a YAML or JSON file of this host (`file:`, `classpath:` or a path, never a URL), or inline. Prefer the file: an inline mapping passes through Spring's property binding ([below](#a-mapping-inside-applicationyml)) |
 | `format` | `json` | `json`, or `jws`: a compact JWS or JWT whose payload is the JSON |
 | `verify.jwks` / `verify.jwksLocation` | none | For `jws`: the public keys (EC or RSA) the list is signed with, as a JWKS inline or in a `file:` / `classpath:` location. The header's `kid` chooses the key |
-| `verify.certificates` / `verify.certificateLocation` | none | Or certificates (PEM or base64 DER; a PEM file) that the JWS's `x5c` chain must validate to. The signing certificate must be allowed to sign: its key usage, when it has one, includes `digitalSignature`; it is no CA certificate, and no TLS server certificate (extended key usage `serverAuth`), unless it is itself pinned |
+| `verify.certificates` / `verify.certificateLocation` | none | Or certificates (PEM or base64 DER; a PEM file) that the JWS's `x5c` chain must validate to. A signing certificate that is itself pinned signs whatever its key usage; any other must be allowed to sign: its key usage, when it has one, includes `digitalSignature`, and it is no CA certificate and no TLS server certificate (extended key usage `serverAuth`) |
 | `verify.typ` | none | The JOSE `typ` the JWS must have, so that another document signed with the same key cannot pass for the list |
 | `verify.issuer` | none | The `iss` the JWT must name; a document without `iss`, or with another, is refused |
 | `verify.audience` | none | This service's name at the list's issuer. A JWT that names an audience (`aud`) is loaded only when it names this one |
@@ -436,7 +436,7 @@ trust:
 | `headers` | none | Sent with requests to the origin of `location` (scheme, host and port) and nowhere else; never shown in a log, a message or the source state |
 | `publicUri` | none | Published as the entries' `provenance.sourceUri`. Without it an https `location` is published, and a local one is not |
 | `limits.entities` / `limits.anchors` | `5000` / `1000` | More records than this fail the load |
-| `limits.text` | `67108864` | The characters of mapped text all the records of a load (or of one lookup answer) may yield; more fail the load |
+| `limits.text` | `67108864` | What all the records of a load (or of one lookup answer) may yield: the characters of their mapped text, certificates and CRLs included, and one for every node (each value, `null`, list and object, empty or not); more fail the load |
 | `limits.duration` | `PT5M` | How long a load may take; one still fetching pages after that fails |
 
 #### The mapping
@@ -449,7 +449,8 @@ list:                                    # optional: facts about the list, read 
   nextUpdate: $.next_update              # past it, the list is not loaded
 pages:                                   # optional: the list comes in pages, each repeating the list facts
   next: $.links.next                     # the next page's URL (may be relative), absent or empty on the last
-  number: $.page                         # optional: the page's own number, 1, 2, ... (or 0, 1, ...)
+  number: $.page                         # optional: the page's own number, first, first + 1, ...
+  first: 1                               # with number: the number the first page says, 0 or 1 (default 1)
   count: $.pages                         # optional: how many pages the list has, the same on every page
   max: 50
 entities:                                # one or more blocks: every match of each is one entity
@@ -457,7 +458,7 @@ entities:                                # one or more blocks: every match of ea
     allowEmpty: false                    # true: a document in which the block finds no record still loads
     required: [validUntil]               # members a record must yield, or it cannot be read completely
     id: { template: "partner:{$.id}" }   # required
-    roles: [CREDENTIAL_ISSUER]
+    roles: [CREDENTIAL_ISSUER]           # required: every record must yield a role
     name: $.display.name                 # or display: [{ each, locale, name, description, logoUri }]
     identifiers:                         # items: type (required), value, and an each of their own if needed
       - { type: URL, value: $.credential_issuer }
@@ -471,7 +472,6 @@ entities:                                # one or more blocks: every match of ea
     contexts: $.contexts[*]              # or items { each, url, sha256 }
     attributes: { country: $.country }
     metadataPolicy: $.metadata_policy    # an object
-    framework: $.framework               # optional: a record that names another framework is skipped
 anchors:
   - each: $.authorities[*]
     id: $.kid
@@ -480,7 +480,7 @@ anchors:
     entity: { template: "partner:{$.issuer_id}" }
     status: $.status
     docTypes: $.doctypes[*]
-    crlUrls: $.crl_urls[*]
+    crlUrls: $.crl_urls[*]               # at most 4
     crl: $.crl
 lookup:                                  # optional: ask about one party at a time (a registry too large to list)
   url: "https://registry.partner.example/v1/issuers/{identifier}"
@@ -492,8 +492,11 @@ lookup:                                  # optional: ask about one party at a ti
 ```
 
 Every member of the registry format that makes sense for remote data can be mapped. `certificateLocation` cannot: a
-document from elsewhere never makes the service read a file. `each`, `allowEmpty` and `required` say how a block is
-read; `required` names members the block maps (another name is a configuration error).
+document from elsewhere never makes the service read a file. Nor can `framework`: every record of a source belongs to
+the source's framework, and a mapping that names `framework` is a configuration error. `each`, `allowEmpty` and
+`required` say how a block is read; `required` names members the block maps (another name is a configuration error). A
+block of entities (and a lookup's `entity`) must map `roles`: the evaluator considers only the entries that have the
+role asked about, so an entry without one keeps nobody out.
 
 **Values.** Every member takes one of these forms; a member that takes a list takes a list of them.
 
@@ -503,19 +506,21 @@ read; `required` names members the block maps (another name is a configuration e
 | `^.path` | The same, from the root of the document |
 | Any other scalar | A constant |
 | `{ value: "$5" }` | A constant that starts with `$` or `^` |
-| `{ path: P, values: { a: X, b: Y }, default: Z }` | The value at `P`, translated. Keys are compared without regard to case and to surrounding whitespace (`Revoked`, ` revoked` and `revoked` are one key; two keys of one table that are the same this way are a configuration error). `default` stands for both a value not in the table and no value at `P`, for every member; without it, either yields nothing. An object or a list at `P` is not translated, and not the default: the member cannot be read. `values` can also be a list of `{ when, then }` pairs |
+| `{ path: P, values: { a: X, b: Y }, default: Z }` | The value at `P`, translated. Keys are compared without regard to case and to surrounding whitespace, the no-break space and the zero-width space included (`Revoked`, ` revoked` and `revoked` are one key); a number in the document matches a key by its value (`1.0` is the key `1`), text by its text. Two keys of one table that are the same this way are a configuration error. `default` stands for both a value not in the table and no value at `P`, for every member; without it, either yields nothing (in a list that restricts, a value not in the table cannot be read: see below). An object or a list at `P` is not translated, and not the default: the member cannot be read. `values` can also be a list of `{ when, then }` pairs |
 | `{ template: "did:web:{$.host}" }` | Text with paths in braces; nothing if any of them yields nothing |
-| `{ path: P, allowEmpty: true }` | For a member that takes a list, with `P` ending in `[*]` or a filter: the values at `P`, and when the list is there and empty, the member is absent (see the restricting lists below). Also with `values` and `default` |
+| `{ path: P, allowEmpty: true }` | For `docTypes`, with a `[*]` or a filter in `P`: the values at `P`, and when the list is there and has no item at all, the member is absent (see the restricting lists below). Also with `values` and `default` |
 
 A path with `[*]` or a filter gives every match to a list member, and its first match to a single one.
 
-**Absent is absent; what cannot be read is never left out quietly.** A path that matches nothing, or `null`, leaves
-its member out. A member cannot be read when its path finds something it cannot use: `[*]`, a filter or an index
-applied to text or a number (doctypes written as one string under `$.doctypes[*]`), a member name applied to anything
-but an object, an object or a list where text belongs (also in a template or a translation), a date that is not one.
-A date is an ISO date-time or date, or seconds since the epoch as a whole number or a string of digits, of at most
-twelve digits: a time in milliseconds is not a date, nor is `""` or `2025-01-01 00:00:00`. A member cannot be read
-either when:
+**Absent is absent; what cannot be read is never left out quietly.** A path that matches nothing, `null` or an empty
+string `""` leaves its member out (`valid_until: ""` is no date, and `certificates: ["", "<PEM>"]` one certificate). A
+member cannot be read when its path finds something it cannot use: `[*]`, a filter or an index applied to text or a
+number (doctypes written as one string under `$.doctypes[*]`), a member name applied to anything but an object, an
+object or a list where text belongs (also in a template or a translation), a date that is not one. A date is an ISO
+date-time with its offset (`Z`, `+01:00` or `+0100`) or an ISO date, or seconds since the epoch as a JSON number, whole,
+of at most twelve digits. A time in milliseconds is not a date; nor is a string of digits (`"20991231"` and `"2099"`
+would be seconds of 1970), `2025-01-01 00:00:00`, or a date-time without its offset (`2025-01-01T00:00:00`, whose
+instant depends on where it was written). A member cannot be read either when:
 
 - it is `status`, mapped, and yields nothing: no value at the path, or one the translation does not know and no
   `default`. A state the mapping does not know is not good standing; an operator who means "no status is active"
@@ -523,17 +528,24 @@ either when:
 - an authorization item lacks a member its mapping configures, or yields nothing at all: an authorization without its
   `type` would cover every type of its format, and none at all would leave the entity unconstrained for a lenient
   client;
-- it is a restricting list that is there and yields nothing: `credentials: []`, `[null]` or `{}` under a mapped
-  `authorizations` (or a filter that keeps none of them), and the same for an anchor's `docTypes`. An empty list says
-  "none", which is not "no restriction"; only a member that is not there at all, or `null`, is absent. Unless the
-  mapping says `allowEmpty: true` for that list: on a nested item (`{ each: "$.credentials[*]", allowEmpty: true,
-  format: $.format, type: $.type }`) or on a list member written as a path (`docTypes: { path: $.doctypes[*],
-  allowEmpty: true }`, also with `values` and `default`), a list that is there and empty leaves the member absent.
-  It turns "authorized for nothing" upstream into "no restriction" here: write it only where the upstream means
-  "none registered" by an empty list (this service's own snapshot does), never where an empty list may mean that
-  everything was withdrawn. It covers nothing else: a wrong kind, or an item that lacks a member, still cannot be
-  read. `allowEmpty` on a member that takes a single value, on an item without an `each` of its own, on a path that
-  does not end in `[*]` or a filter, or with a value other than `true` or `false`, is a configuration error;
+- it is a restricting list (an `authorizations` item's `each`, an anchor's `docTypes`) that is there and yields
+  nothing: `credentials: []`, `[null]` or `{}` under a mapped `authorizations`, a filter that keeps none of them, and
+  the same for `docTypes`. This holds wherever the list is in the path: `$.doctypes[*].id` over `"doctypes": []`, or
+  `$.credentials[*].types[*]` over `"credentials": []`, restricts to nothing too; and past a list, an item that lacks
+  the member the path goes on to (`[{}]` under `$.doctypes[*].id`) cannot be read. An empty list says "none", which
+  is not "no restriction"; only a member that is not there at all, `null` or `""`, is absent. In a restricting list, a
+  value its translation does not know (and no `default`) cannot be read either: left out, it would narrow the list
+  or empty it. Unless the mapping says `allowEmpty: true` for that list: on a nested item
+  (`{ each: "$.credentials[*]", allowEmpty: true, format: $.format, type: $.type }`) or on `docTypes` written as a
+  path (`docTypes: { path: $.doctypes[*], allowEmpty: true }`, also with `values` and `default`), a list that is
+  there and has no item at all (none but `null`) leaves the member absent. It turns "authorized for nothing" upstream
+  into "no restriction" here: write it only where the upstream means "none registered" by an empty list (this
+  service's own snapshot does), never where an empty list may mean that everything was withdrawn. It covers nothing
+  else: a list a filter has emptied is not empty, and neither is one whose items hold `null` where the path goes on;
+  a wrong kind, an item that lacks a member, or a value the translation does not know still cannot be read.
+  `allowEmpty` on a member that takes a single value, on an item without an `each` of its own, on a path without a
+  `[*]` or a filter, on a member where it changes nothing (`roles`, `certificates`, `crlUrls`, contexts, identifier
+  and display items), or with a value other than `true` or `false`, is a configuration error;
 - it is a context item with `sha256` mapped that yields its `url` but no digest (or the reverse): it would be shipped
   unpinned;
 - it is an identifier item that yields its `value` but no `type` (or the reverse); an item that finds nothing at all is
@@ -541,26 +553,43 @@ either when:
 - it is `roles`, translated, and the document holds a role the translation does not know (and no `default`);
 - it is named in `required` and yields nothing. This is how a renamed member upstream is caught: a `valid_until` that
   became `validUntil` would otherwise read as "no expiry";
+- it is an anchor's `crlUrls`, and yields more than 4 locations: each is fetched on every refresh of the revocation
+  data, and a document of a few kilobytes would otherwise decide how many requests the service sends;
+- it holds a PEM text in which a `-----BEGIN` block does not yield a certificate (a damaged block next to a good one,
+  a key): the certificate it was would be bound to nobody;
 - a path of it selects more than 1000 nodes for the record (`null`s and values no translation knows count too), or it
   yields more than 1000 values (all the forms of the member, and the items of a nested `each`, together);
-- one of its values is longer than 8,192 characters, or it would take the record's mapped text beyond 65,536
-  characters: a path from the root would otherwise repeat a long text into every record.
+- one of its values is longer than 8,192 characters, or it would take the record beyond 65,536 characters of mapped
+  text or beyond 4,096 nodes (every value, `null`, list and object counts, empty or not): a path from the root would
+  otherwise repeat a long text, or a long list of `null`s, into every record. A certificate, a PEM bundle or a CRL
+  may be up to 1,048,576 characters, which count toward `limits.text` but not toward the record's 65,536. Text that
+  only describes the party (a `name`, a display item's member, an attribute) and is longer than 8,192 characters is
+  not a reason to suspend it: it is left out with a warning, and the record is otherwise read (a logo written as a
+  `data:` URI of 20,000 characters is ordinary).
 
 What then happens depends on the record:
 
-- **An entity whose `id`, `roles`, `identifiers` or `certificates` cannot be read**, or that yields no `id`, or whose
-  id is not 1 to 128 letters, digits or `. _ : @ ~ -` starting with a letter or digit (the admin API's rule), **fails
-  the load**, with a message that names the block, the record and the member. These say whom the record is about:
-  without them, listing it keeps nobody out. The source keeps its last good content.
+- **An entity whose `id`, `roles`, `identifiers` or `certificates` cannot be read**, or that yields no `id`, or no
+  role, **fails the load**, with a message that names the block, the record and the member. These say whom the record
+  is about: without them, listing it keeps nobody out. The source keeps its last good content.
+- **An entity whose id is text the registry cannot take** (not 1 to 128 letters, digits or `. _ : @ ~ -` starting
+  with a letter or digit, the admin API's rule; or ending in `@` and the id of another framework, a name the registry
+  keeps for that framework's entries) **is listed under a derived id**: `sha256:` and the first 32 hexadecimal digits
+  of the SHA-256 of the mapped id, `SUSPENDED` (or the stricter status it states), with a warning that gives both ids.
+  The load goes on. Which frameworks the service has is not the source's to know: an id with an `@` is taken as it is
+  only when it has one, followed by the source's own framework (`partner:x@partner`).
 - **An entity in which anything else cannot be read is listed `SUSPENDED`**, with what identifies it and every member
   that could be read, but none that could not, and a warning that names the record, the members and why. A status
   stricter than `SUSPENDED` that the record states (`REVOKED`, `EXPIRED`) is kept. `SUSPENDED` means here: the list
   says something about this party that this service could not read, so it is not in good standing, and its
   certificates, identifiers and anchor still find it. Leaving it out instead would leave its party to whatever anchor
-  its certificate chains to, and a chain to an anchor is trusted also without an entity.
-- **An anchor** that cannot be read completely, or lacks its `domain` or `certificate`, **is skipped** with a warning:
-  leaving an anchor out removes trust.
-- A record that names another `framework` is skipped: it is about a party of that framework.
+  its certificate chains to, and a chain to an anchor is trusted also without an entity. An entity record has three
+  outcomes only: listed as the document states it, listed not in good standing, or the load fails.
+- **An anchor** that cannot be read completely, or lacks its `domain` or `certificate`, or whose id is not one, **is
+  skipped** with a warning: leaving an anchor out removes trust. Unless its certificate can be read and another
+  record of the load lists the same certificate in the same domain (in any domain, when its own cannot be read):
+  then the load fails, naming both, since two records about one certificate must agree, and one that cannot be read
+  cannot be said to.
 
 A block none of whose records could be read completely fails the load: the format has probably changed, and the last
 good content is better than suspending everyone. A lookup answer about the identifier asked that cannot be read
@@ -596,9 +625,10 @@ configuration is read.
   key is still checked: `verify.typ`, `verify.issuer`, `verify.audience`, `exp` and `nbf`.
 - *Pin the list's signer, not a CA of anything.* With `verify.certificates`, a certificate the pinned CA issues can
   sign the list when it may sign (`digitalSignature`), unless it is a CA certificate or a TLS server certificate
-  (extended key usage `serverAuth`) that is not itself pinned. Pin the signer's own certificate, or a CA that issues
-  only list signers: a CA that also issues other certificates that may sign (TLS server certificates without an
-  extended key usage, client certificates) lets each of them sign the list.
+  (extended key usage `serverAuth`). A certificate that is itself pinned signs whatever its key usage says: the
+  operator named that very key. Pin the signer's own certificate, or a CA that issues only list signers: a CA that
+  also issues other certificates that may sign (TLS server certificates without an extended key usage, client
+  certificates) lets each of them sign the list.
 - *Freshness, when the list says it.* With `nextUpdate` mapped, a list past it is not loaded; with `issuedAt` or
   `sequence` mapped, a list older than the one held is refused, as for every source. A mapped `sequence` must be a
   whole number of at most 18 digits (a number written `5.0` is 5), since only that orders lists: `v5`, `1.2.3` or a
@@ -610,12 +640,15 @@ configuration is read.
 - *Pages are one list.* Every page repeats the list facts the mapping names, each with the first page's value;
   otherwise the load fails (a page of an older list, or another document, is not a page of this one). Each page of a
   `jws` list is signed on its own, so a `jws` source with `pages` must map `list.sequence` or `list.issuedAt`. Equal
-  facts do not show a page left out, though: whoever serves the pages can serve page 3 at page 2's address, or end
-  the list early. Map what the pages say about themselves: with `pages.number`, page k must say k (the first page 1,
-  or 0 when it says 0, and then each the next number); with `pages.count`, every page must say the same count, at
-  most `pages.max`, and the pages read must be that many. Any difference fails the load. A `jws` list in pages that
-  maps neither loads with a warning, on every load, that its pages can be withheld; for `format: json` the transport
-  is all that vouches for the pages anyway.
+  facts do not show a page left out, though: whoever serves the pages can serve page 3 at page 2's address, serve
+  one page twice, or end the list early. Map what the pages say about themselves: with `pages.number`, the first page
+  must say `pages.first` (1, or 0 for a list that counts from 0) and each later page the next number; with
+  `pages.count`, every page must say the same count, at most `pages.max`, and the pages read must be that many. Any
+  difference fails the load. Only both together tie a signed list's pages: the numbers alone do not show a list ended
+  early, and the count alone does not show one page served twice in place of another. A `jws` list in pages that does
+  not map both loads with a warning, on every load, that its pages can be withheld; for `format: json` the transport
+  is all that vouches for the pages anyway. A page is read once: the address asked and the address it was finally
+  read from, after redirects, both count as read, and a page read from an address already read fails the load.
 - *Headers stay with their origin.* They go with requests to the origin of `location` (for a source that only looks
   up: of `lookup.url`), not to a lookup URL elsewhere, and not after a redirect to another origin: the outbound
   client then passes on `Accept` only.
@@ -623,21 +656,22 @@ configuration is read.
   origin of `location` and not one already read; strict JSON (no member twice, nothing after the value), nested at
   most 32 deep, every number with at most 40 significant digits and a decimal exponent from -40 to 40 (`1e999999999`
   is eleven characters, and a gigabyte as text); for one record, at most 1000 nodes selected by a path of a member and
-  1000 values of a member, at most 8,192 characters in one value and 65,536 characters of mapped text in all; for
-  the whole load (and for one lookup answer), at most `limits.text` characters of mapped text; a load still fetching
-  pages after `limits.duration` fails; at most 50 warnings, then their number. Past a bound of a record, that record
-  cannot be read completely (above); past a bound of the load, the load fails rather than load part of a list. A
-  mapped `crl` is a value too: one longer than 8,192 characters (a CRL of about 6 kB) makes its anchor unreadable.
+  1000 values of a member, at most 8,192 characters in one value (1,048,576 in a certificate, a PEM bundle or a CRL),
+  65,536 characters of mapped text and 4,096 nodes in all, and 4 CRL locations for an anchor; for the whole load (and
+  for one lookup answer), at most `limits.text` characters and nodes; a load still fetching pages after
+  `limits.duration` fails; at most 50 warnings, then their number. Past a bound of a record, that record cannot be read
+  completely (above); past a bound of the load, the load fails rather than load part of a list. The documented
+  examples and the four fixture lists of the tests are far inside these: their records hold a few dozen nodes.
 - *A mapping that produces nothing fails.* When the document has records for a block and none of them could be read
   completely, its format has probably changed: the load fails and the source keeps its last good content. So does a
   block that finds no record in any page, unless it says `allowEmpty: true`: another document of the same signer, or
   an empty answer, must not pass for a list that has emptied.
-- *A source speaks for its own framework.* Everything lands in the source's framework; a record whose mapped
-  `framework` names another is skipped.
+- *A source speaks for its own framework.* Everything lands in the source's framework; `framework` cannot be mapped.
 - *Records with one id, or one certificate.* Records of one load that map to the same anchor id must agree on
   certificate, domain, status, entity and constraints (identical ones are one anchor); records with the same domain
   and certificate must agree on status, entity and constraints whatever their ids (a CA listed active as `row-1` and
-  withdrawn as `row-7`); otherwise the load fails, naming them. Records with one entity id are one entity, merged by
+  withdrawn as `row-7`); otherwise the load fails, naming them. So does a record about a listed certificate that
+  cannot be read (above). Records with one entity id are one entity, merged by
   the registry (one entity per country, say); none of them can relax or hide what another states: each gets the
   strictest status, the latest `validFrom` and the earliest `validUntil` of them all, with a warning when they
   disagreed.
@@ -646,15 +680,18 @@ configuration is read.
   maps to carries the identifier asked about (compared as the registry compares identifiers); when several records of
   an answer do, the first holds, with the strictest status, the latest `validFrom` and the earliest `validUntil` of
   them all. Answers are kept for 10 minutes, misses for 1 minute and failures for 30 seconds, at most 5000 of them
-  (expired ones are dropped as new ones come). A `missStatus` is a miss; any other failure is an error. With
+  holding at most 16,777,216 characters of mapped text in all (the least recently used go first when either bound is
+  reached; expired ones are dropped as new ones come). A `missStatus` is a miss; any other failure is an error. With
   `format: jws` an answer is verified like the list, and must say when it was made: one with neither `exp` nor `iat`
   is refused, one with `iat` and no `exp` counts for `lookup.maxAge` (24 hours) after `iat`, and one past its `exp`
   is refused whatever `allowExpired` says. An answer is kept no longer than it is good for: until its `exp`, or its
   `iat` plus `lookup.maxAge`, when that is sooner than the 10 minutes. `lookup.url` must not hold user information.
 - *Messages name no secret and break no log line.* No message, warning, source state or log line names the query or
   fragment of a web URL (of `location`, of a page, of a lookup URL: cut up to the next whitespace), nor a header
-  value. Every message, warning and state text has its control characters escaped and is at most 2,000 characters
-  long (a warning, 300), whatever it quotes: a document's values, a JWS header, a certificate's names.
+  value. Every message, warning and state text, and the list's issuer in `listInfo`, has its control, format and
+  separator characters escaped (Unicode categories Cc, Cf, Zl and Zp: line breaks, NEL, U+2028, bidi overrides,
+  zero-width characters) and is at most 2,000 characters long (a warning, 300), whatever it quotes: a document's
+  values, a JWS header, a certificate's names.
 
 **What a signature does not tell apart.** A key that signs several kinds of document (a sandbox list and a production
 list, a list of issuers and one of verifiers, lists and lookup answers) lets one of them stand in for another, unless
@@ -667,8 +704,10 @@ what distinguishes its documents, and pin it.
 `mapping` can be written inline, under `properties`. Spring's property binding keeps it intact except for map keys,
 which keep letters, digits, `-` and `_` and lose everything else unless written in brackets. A translation table
 keyed by URIs is therefore written `values: { "[https://partner.example/kinds/iaca]": mdoc-iaca }`, or as
-`{ when, then }` pairs; a key that Spring has split is refused with a message that says so. A table whose keys are all
-numbers arrives as a list, and needs `{ when, then }` pairs too. A mapping file has none of these limits.
+`{ when, then }` pairs; a key that Spring has split is refused with a message that says so. Write the keys of an
+inline `values:` table in quotes: Spring's YAML processing fails on an unquoted numeric key (`values: { 1: ACTIVE }`)
+before this source sees it. A table whose keys are all numbers arrives as a list even quoted, and needs
+`{ when, then }` pairs. A mapping file has none of these limits.
 
 #### Examples
 
