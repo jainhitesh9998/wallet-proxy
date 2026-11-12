@@ -64,7 +64,7 @@ for (const { file, vectors, withMechanism } of PAIRS) {
           lookups: { crl: 'none' }, http: { fetch, retries: 0 }, storage: new MemoryCacheStore() });
         // The mechanisms decided under are the snapshot's, in the order the service stated them.
         await client.sync();
-        expect((await client.status()).rules?.mechanisms.map((m) => m.id)).toEqual(((listed.mechanisms ?? []) as Array<{ id: string }>).map((m) => m.id));
+        expect((await client.status()).mechanisms?.map((m) => m.id)).toEqual(((listed.mechanisms ?? []) as Array<{ id: string }>).map((m) => m.id));
         const differences: string[] = [];
         for (const c of vectors.cases) {
           const got = outcome(await client.evaluate(c.query), withMechanism);

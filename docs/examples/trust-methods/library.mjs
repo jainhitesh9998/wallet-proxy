@@ -38,10 +38,10 @@ if (!pinnedOnly) {
   console.log(`snapshot: ${snapshot.anchors} anchors, ${snapshot.entities} entities, ${snapshot.crls} CRLs, ${snapshot.didDocuments} DID documents, `
     + `${snapshot.mechanisms} trust mechanism${snapshot.mechanisms === 1 ? '' : 's'}`);
 }
-const { rules } = await trust.status();
-const mechanisms = rules.mechanisms.map((m) => m.id);
-console.log(`rules in force: ${Object.keys(rules).filter((r) => rules[r] === true).join(', ') || 'none'}`
-  + (mechanisms.length ? `; trust mechanisms: ${mechanisms.join(', ')}` : ''));
+// The rule flags in force, and next to them the trust mechanisms in force (in the order they are tried).
+const { rules, mechanisms } = await trust.status();
+console.log(`rules in force: ${Object.keys(rules).filter((r) => rules[r]).join(', ') || 'none'}`
+  + (mechanisms.length ? `; trust mechanisms: ${mechanisms.map((m) => m.id).join(', ')}` : ''));
 
 // X.509 chains: an mdoc Document Signer under the IACA, one that was revoked, and one under nobody's IACA.
 show('Document Signer', await trust.evaluate({ role: 'issuer', subject: { x5c: [x5c('ds')] }, context: mdl }));

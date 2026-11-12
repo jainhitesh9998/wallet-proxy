@@ -628,7 +628,8 @@ Mechanisms are rules like the client profile, and outlive the data the same way:
 decision is made from govern it; without a usable snapshot, those of the last snapshot that verified govern decisions
 from [pinned trust](#trust-pinned-in-the-app), also after a restart. An app can state its own (the library option
 `mechanisms`, in the camelCase form of the claim), but they hold only while no snapshot has ever verified: once the
-service has spoken, its list is the list, also when it is empty. `status().rules.mechanisms` lists the ones in force.
+service has spoken, its list is the list, also when it is empty. `status().mechanisms` lists the ones in force, next to
+the rule flags in `status().rules`.
 
 ### Checking that it works
 

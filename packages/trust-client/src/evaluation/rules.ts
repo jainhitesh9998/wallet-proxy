@@ -24,7 +24,11 @@
 import type { SnapshotRules } from '../snapshot/snapshot.js';
 import type { TrustMechanism } from './mechanisms.js';
 
-/** The rules in force. Each flag is a strictness: true means the stricter behaviour. */
+/**
+ * The rule flags in force. Each is a strictness: true means the stricter behaviour. These three and nothing else, so that
+ * code that lists the flags in force lists flags; the trust mechanisms in force are reported next to them
+ * ({@link RulesNow}, {@code status().mechanisms}).
+ */
 export interface TrustRules {
   /** A certificate whose revocation status cannot be determined is not trusted ({@code x509.revocation_unknown} is an error). */
   requireRevocationStatus: boolean;
@@ -32,15 +36,22 @@ export interface TrustRules {
   strictAuthorization: boolean;
   /** Issuer metadata must be signed under a {@code credential-issuer} anchor: {@code issuerMetadata.signed} is then 'require'. */
   requireSignedIssuerMetadata: boolean;
-  /** The trust mechanisms in force, in the order they are tried; empty when none is. */
-  mechanisms: readonly TrustMechanism[];
 }
 
 /** The rules that are flags, each of which the app can make stricter. */
-export type RuleFlags = Omit<TrustRules, 'mechanisms'>;
+export type RuleFlags = TrustRules;
 
 /** The app's own minimum: a rule set to true holds whatever a snapshot says; false or absent leaves the rule to the service. */
 export type MinimumRules = Partial<RuleFlags>;
+
+/** Everything in force now: the flags, and the trust mechanisms in the order they are tried (frozen; empty when none is). */
+export interface RulesNow {
+  rules: TrustRules;
+  mechanisms: readonly TrustMechanism[];
+}
+
+/** No mechanism. Frozen, like every list of mechanisms this library hands out: changing it must not put one in force. */
+export const NO_MECHANISMS: readonly TrustMechanism[] = Object.freeze([]);
 
 const RULE_NAMES: ReadonlyArray<keyof RuleFlags> = ['requireRevocationStatus', 'strictAuthorization', 'requireSignedIssuerMetadata'];
 
@@ -76,16 +87,21 @@ export class RulesInForce {
    * @param appMechanisms the app's own trust mechanisms, already read strictly: in force only while no snapshot has verified
    */
   constructor(private readonly minimum: RuleFlags, private readonly lastStated: () => Promise<SnapshotRules | null>,
-              private readonly appMechanisms: readonly TrustMechanism[] = []) {}
+              private readonly appMechanisms: readonly TrustMechanism[] = NO_MECHANISMS) {}
 
   /**
-   * The rules in force now. {@code decidingFrom} is the snapshot a decision is being made from, so that its data and
+   * Everything in force now. {@code decidingFrom} is the snapshot a decision is being made from, so that its data and
    * its rules are one snapshot's; without one, the rules of the last snapshot that verified hold, whether or not its
    * data can still be used. A store that cannot be read states nothing: the app's minimum, and its mechanisms, are then
-   * in force.
+   * in force. The mechanisms are handed out as they are held, frozen (parseMechanisms, NO_MECHANISMS).
    */
-  async now(decidingFrom?: SnapshotRules | null): Promise<TrustRules> {
+  async inForce(decidingFrom?: SnapshotRules | null): Promise<RulesNow> {
     const stated = decidingFrom ?? await this.lastStated().catch(() => null);
-    return { ...strictest(this.minimum, stated?.policy), mechanisms: stated ? stated.mechanisms : this.appMechanisms };
+    return { rules: strictest(this.minimum, stated?.policy), mechanisms: stated ? stated.mechanisms : this.appMechanisms };
+  }
+
+  /** The rule flags in force now (see {@link inForce}). */
+  async now(decidingFrom?: SnapshotRules | null): Promise<TrustRules> {
+    return (await this.inForce(decidingFrom)).rules;
   }
 }

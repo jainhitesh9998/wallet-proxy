@@ -30,10 +30,12 @@ export interface LocalTrustData {
   /** 'snapshot' when a verified snapshot backs the data; 'pinned' when only the trust bundled with the app does */
   source: 'snapshot' | 'pinned';
   /**
-   * The rules in force (evaluation/rules.ts), the trust mechanisms among them: also with pinned trust, which has no client
-   * profile of its own. Absent: none.
+   * The rule flags in force (evaluation/rules.ts): also with pinned trust, which has no client profile of its own.
+   * Absent: none.
    */
   policy?: Partial<TrustRules>;
+  /** The trust mechanisms in force, in the order they are tried (evaluation/rules.ts), also with pinned trust. Absent: none. */
+  mechanisms?: readonly TrustMechanism[];
   snapshot?: SnapshotRef | null;
   stale?: boolean;
   /**
@@ -322,7 +324,7 @@ export class LocalEvaluator {
    * issuer domains, see domainFor): otherwise leaving the role out would be a way around every issuer mechanism.
    */
   private selectMechanism(data: LocalTrustData, role: QueryRole | undefined, format: string | undefined, types: string[]): TrustMechanism | undefined {
-    return selectMechanism(data.policy?.mechanisms ?? [], role ?? 'issuer', format, types);
+    return selectMechanism(data.mechanisms ?? [], role ?? 'issuer', format, types);
   }
 
   private claim(ev: Evaluation): Claim {

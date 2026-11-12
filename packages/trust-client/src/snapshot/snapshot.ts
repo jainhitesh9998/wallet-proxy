@@ -17,6 +17,7 @@ import type { CacheStore } from '../cache/store.js';
 import type { HttpTransport } from '../transport/http.js';
 import { TrustIntegrityError } from '../errors.js';
 import { parseMechanisms, type TrustMechanism } from '../evaluation/mechanisms.js';
+import { NO_MECHANISMS } from '../evaluation/rules.js';
 import type { DidDocument, EntityView, SnapshotRef, TrustFramework } from '../types.js';
 
 /**
@@ -98,7 +99,7 @@ export interface SnapshotInfo extends SnapshotRef {
   didDocuments: number;
   contexts: number;
   crls: number;
-  /** how many trust mechanisms it states (status().rules lists them) */
+  /** how many trust mechanisms it states (status().mechanisms lists them) */
   mechanisms: number;
   strictAuthorization: boolean;
   requireRevocationStatus: boolean;
@@ -239,7 +240,9 @@ export class SnapshotManager {
       if (Object.prototype.hasOwnProperty.call(p, 'mechanisms')) {
         throw new TrustIntegrityError('A format 4 snapshot carries no trust mechanisms, and this one does: a client that reads only format 4 would ignore them');
       }
-      return [];
+      // Frozen, as parseMechanisms freezes what it reads: the list is handed out (status().mechanisms), and adding to it
+      // must not put a mechanism in force.
+      return NO_MECHANISMS;
     }
     try {
       return parseMechanisms(p.mechanisms);

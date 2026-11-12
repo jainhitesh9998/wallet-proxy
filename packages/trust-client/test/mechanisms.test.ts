@@ -178,7 +178,7 @@ describe('snapshot formats', () => {
   it('reads format 4 as before: no mechanisms', async () => {
     const c = world({ format: 4 }).client();
     expect((await c.sync()).mechanisms).toBe(0);
-    expect((await c.status()).rules?.mechanisms).toEqual([]);
+    expect((await c.status()).mechanisms).toEqual([]);
     const d = await c.evaluate(ds);
     expect([d.decision, d.evidence?.mechanism]).toEqual(['TRUSTED', undefined]);
     expect(d.evidence && 'mechanism' in d.evidence).toBe(false);
@@ -187,7 +187,7 @@ describe('snapshot formats', () => {
   it('reads the mechanisms of format 5 and decides under them', async () => {
     const c = world({ format: 5, mechanisms: [NATIONAL_ID, MDL_REVOCATION] }).client();
     expect((await c.sync()).mechanisms).toBe(2);
-    expect((await c.status()).rules?.mechanisms.map((m) => m.id)).toEqual(['national-id', 'mdl-revocation']);
+    expect((await c.status()).mechanisms?.map((m) => m.id)).toEqual(['national-id', 'mdl-revocation']);
     const d = await c.evaluate(ds);
     expect([d.decision, d.source, d.evidence?.mechanism]).toEqual(['NOT_TRUSTED', 'snapshot', 'mdl-revocation']);
     expect(d.reasons.find((r) => r.severity === 'ERROR')?.code).toBe('x509.revocation_unknown');
@@ -223,7 +223,7 @@ describe('the mechanisms in force', () => {
     for (const c of [client(), client()]) {
       const d = await c.evaluate(ds);
       expect([d.decision, d.source, d.evidence?.mechanism]).toEqual(['NOT_TRUSTED', 'pinned', 'mdl-revocation']);
-      expect((await c.status()).rules?.mechanisms.map((m) => m.id)).toEqual(['mdl-revocation']);
+      expect((await c.status()).mechanisms?.map((m) => m.id)).toEqual(['mdl-revocation']);
     }
   });
 
@@ -234,7 +234,7 @@ describe('the mechanisms in force', () => {
     // No snapshot ever: the app's mechanism routes the mdoc signer to a domain nothing is pinned in.
     const before = await client(own).evaluate(ds);
     expect([before.decision, before.source, before.evidence?.mechanism]).toEqual(['UNKNOWN', 'pinned', 'app-mdoc']);
-    expect((await client(own).status()).rules?.mechanisms.map((m) => m.id)).toEqual(['app-mdoc']);
+    expect((await client(own).status()).mechanisms?.map((m) => m.id)).toEqual(['app-mdoc']);
 
     // The service speaks once, with no mechanisms: its list is the list, also after the snapshot has lapsed.
     w.online = true;
@@ -243,7 +243,7 @@ describe('the mechanisms in force', () => {
     lapse();
     const after = await client(own).evaluate(ds);
     expect([after.decision, after.source, after.evidence?.mechanism]).toEqual(['TRUSTED', 'pinned', undefined]);
-    expect((await client(own).status()).rules?.mechanisms).toEqual([]);
+    expect((await client(own).status()).mechanisms).toEqual([]);
   });
 
   it("a stored snapshot that no longer verifies states none, and the app's own are in force again", async () => {
@@ -257,6 +257,37 @@ describe('the mechanisms in force', () => {
     const d = await client({ mechanisms: [APP_MDOC as unknown as TrustMechanism] }).evaluate(ds);
     expect([d.source, d.evidence?.mechanism]).toEqual(['pinned', 'app-mdoc']);
   });
+
+  it('reports the rule flags in status().rules and the mechanisms next to them, not among them', async () => {
+    const c = world({ format: 5, mechanisms: [NATIONAL_ID, MDL_REVOCATION] }).client({ policy: { strictAuthorization: true } });
+    await c.sync();
+    const s = await c.status();
+    // Code that lists the flags in force (each key that is true, or truthy) lists flags and nothing else.
+    expect(s.rules).toEqual({ requireRevocationStatus: false, strictAuthorization: true, requireSignedIssuerMetadata: false });
+    expect(Object.keys(s.rules ?? {}).filter((k) => (s.rules as unknown as Record<string, unknown>)[k])).toEqual(['strictAuthorization']);
+    expect(s.mechanisms?.map((m) => m.id)).toEqual(['national-id', 'mdl-revocation']);
+  });
+
+  const handedOut: Array<[string, Tree, Partial<TrustClientConfig>, boolean]> = [
+    ['a format 4 snapshot', { format: 4 }, {}, true],
+    ['a format 5 snapshot', { format: 5, mechanisms: [NATIONAL_ID] }, {}, true],
+    ["the app's own, no snapshot ever", { format: 4 }, { mechanisms: [APP_MDOC as unknown as TrustMechanism] }, false],
+    ['none at all, no snapshot ever', { format: 4 }, {}, false],
+  ];
+  for (const [name, claims, extra, online] of handedOut) {
+    it(`hands out the mechanisms in force frozen (${name}): changing them puts nothing in force`, async () => {
+      const { w, client } = world(claims);
+      w.online = online;
+      const c = client(extra);
+      if (online) await c.sync();
+      const before = (await c.evaluate(ds)).evidence?.mechanism;
+      const list = (await c.status()).mechanisms as TrustMechanism[];
+      expect(Object.isFrozen(list)).toBe(true);
+      for (const m of list) expect(Object.isFrozen(m.for)).toBe(true);
+      expect(() => list.push(MDL_REVOCATION as unknown as TrustMechanism)).toThrow(TypeError);
+      expect((await c.evaluate(ds)).evidence?.mechanism).toBe(before);
+    });
+  }
 
   it("refuses an app's mechanism it does not understand, at construction", () => {
     const f = fakeFetch({}).fetch;
