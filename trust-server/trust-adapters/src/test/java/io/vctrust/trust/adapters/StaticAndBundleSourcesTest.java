@@ -74,29 +74,43 @@ class StaticAndBundleSourcesTest {
                 %s
                 """.formatted(Certificates.toPem(ca.certificate()).indent(6));
         var def = new SourceDefinition("partner-list", "static", "sandbox", null, true, Map.of("location", "mem:reg.yaml"));
-        var r = new StaticTrustSourceFactory().create(def, new TestContext().put("mem:reg.yaml", yaml)).load();
-        // The list is configured for the sandbox: what it says about another framework is not loaded at all.
+        var ctx = new TestContext().put("mem:reg.yaml", yaml);
+        // The list is configured for the sandbox: what it says about another framework is not loaded at all. An entry that
+        // names another framework cannot be read, and the list is not loaded (it was skipped with a warning before).
+        assertThatThrownBy(() -> new StaticTrustSourceFactory().create(def, ctx).load()).isInstanceOf(TrustSourceException.class)
+                .hasMessageContaining("entity 'evil' cannot be read: it names framework 'gov', but its source loads into 'sandbox'");
+        ctx.put("mem:reg.yaml", yaml.replace("  - {id: evil, framework: gov, roles: [CREDENTIAL_ISSUER], identifiers: [\"https://evil.example\"]}\n", ""));
+        assertThatThrownBy(() -> new StaticTrustSourceFactory().create(def, ctx).load()).isInstanceOf(TrustSourceException.class)
+                .hasMessageContaining("anchor anchors[0] cannot be read: it names framework 'gov'");
+        ctx.put("mem:reg.yaml", yaml.substring(0, yaml.indexOf("  - {id: evil")));
+        var r = new StaticTrustSourceFactory().create(def, ctx).load();
         assertThat(r.entities()).extracting(e -> e.id() + " in " + e.frameworkId()).containsExactly("partner in sandbox", "same in sandbox");
         assertThat(r.anchors()).isEmpty();
-        assertThat(r.warnings()).hasSize(2).allMatch(w -> w.contains("names framework 'gov'"));
+        assertThat(r.warnings()).isEmpty();
     }
 
     @Test
     void aRegistryFetchedFromElsewhereCannotNameFilesOfThisHost() throws Exception {
         var ca = TestPki.rootCa("CN=Partner CA,C=UT");
-        String yaml = """
+        var ctx = new TestContext().put("https://partner.example/ca.pem", Certificates.toPem(ca.certificate()));
+        var def = new SourceDefinition("partner", "static", "sandbox", null, true, Map.of("location", "https://partner.example/registry.yaml"));
+        // Such an anchor cannot be read, and the registry is not loaded (it was skipped with a warning before).
+        for (String local : List.of("classpath:etsi/eu-lotl.xml", "/etc/hosts", "file:///etc/hosts")) {
+            ctx.put("https://partner.example/registry.yaml", """
+                    anchors:
+                      - {domain: credential-issuer, certificateLocation: "https://partner.example/ca.pem"}
+                      - {domain: credential-issuer, certificateLocation: "%s"}
+                    """.formatted(local));
+            assertThatThrownBy(() -> new StaticTrustSourceFactory().create(def, ctx).load()).as(local).isInstanceOf(TrustSourceException.class)
+                    .hasMessageContaining("anchor anchors[1] cannot be read: ").hasMessageContaining("Only an http(s) location");
+        }
+        ctx.put("https://partner.example/registry.yaml", """
                 anchors:
-                  - {domain: credential-issuer, certificateLocation: "classpath:etsi/eu-lotl.xml"}
-                  - {domain: credential-issuer, certificateLocation: "/etc/hosts"}
-                  - {domain: credential-issuer, certificateLocation: "file:///etc/hosts"}
                   - {domain: credential-issuer, certificateLocation: "https://partner.example/ca.pem"}
-                """;
-        var ctx = new TestContext().put("https://partner.example/registry.yaml", yaml)
-                .put("https://partner.example/ca.pem", Certificates.toPem(ca.certificate())).put("mem:local.yaml", yaml);
-        var remote = new StaticTrustSourceFactory().create(new SourceDefinition("partner", "static", "sandbox", null, true,
-                Map.of("location", "https://partner.example/registry.yaml")), ctx).load();
+                """);
+        var remote = new StaticTrustSourceFactory().create(def, ctx).load();
         assertThat(remote.anchors()).singleElement().satisfies(a -> assertThat(a.certificate()).isEqualTo(ca.certificate()));
-        assertThat(remote.warnings()).hasSize(3).allMatch(w -> w.contains("Only an http(s) location"));
+        assertThat(remote.warnings()).isEmpty();
     }
 
     @Test

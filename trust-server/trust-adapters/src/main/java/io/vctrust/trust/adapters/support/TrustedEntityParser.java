@@ -27,10 +27,33 @@ import java.util.Map;
  * Parses the service's native entity / anchor document format (used by the static source and the admin API).
  * Shape: {@code {entities: [...], anchors: [...]}}; see {@code docs/configuration.md}. Entries take the framework
  * of their source; a {@code framework} key is accepted only when it names that same framework.
+ *
+ * <p>An entry that cannot be read is refused with an exception that says what is wrong with it, never read in part:
+ * an entity entry is what restricts a party whose CA is trusted, and one left out (or read without its status) lets
+ * that party be trusted through the CA. The sources that use this parser fail to load on such an entry, naming it
+ * ({@link #name}), and keep their last good content.
  */
 public final class TrustedEntityParser {
 
     private TrustedEntityParser() {
+    }
+
+    /**
+     * How an error names an entry of a list: {@code entity 'acme'} by its id when it has one that can be read,
+     * otherwise by its place, {@code entity entities[3]}.
+     *
+     * @param kind  {@code entity} or {@code anchor}
+     * @param list  the name of the list ({@code entities}, {@code anchors})
+     * @param index the entry's place in that list, from 0
+     */
+    public static String name(String kind, String list, int index, Object entry) {
+        Object id = entry instanceof Map<?, ?> m ? m.get("id") : null;
+        return id instanceof String s && !s.isBlank() ? kind + " '" + shown(s) + "'" : kind + " " + list + "[" + index + "]";
+    }
+
+    /** A value from a document as an error quotes it: at most 40 characters, as {@link Enums} quotes one. */
+    static String shown(String value) {
+        return value.length() <= 40 ? value : value.substring(0, 40) + "…";
     }
 
     @SuppressWarnings("unchecked")
@@ -38,9 +61,9 @@ public final class TrustedEntityParser {
                                        ResourceLoader loader) throws IOException {
         String id = Json.string(m, "id");
         if (id == null) {
-            throw new IllegalArgumentException("Entity without id");
+            throw new IllegalArgumentException("it has no id");
         }
-        TrustedEntity.Builder b = TrustedEntity.builder(id).framework(framework(m, "Entity " + id, sourceFramework))
+        TrustedEntity.Builder b = TrustedEntity.builder(id).framework(framework(m, sourceFramework))
                 .provenance(provenance);
         for (String r : Json.strings(m.get("roles"))) {
             b.role(Enums.parse(EntityRole.class, r, "role"));
@@ -97,7 +120,7 @@ public final class TrustedEntityParser {
                 Map<String, Object> cm = c instanceof Map<?, ?> ? Json.object(c) : Map.of("url", String.valueOf(c));
                 String url = Json.string(cm, "url");
                 if (url == null) {
-                    throw new IllegalArgumentException("Entity " + id + ": a context needs a url");
+                    throw new IllegalArgumentException("a context needs a url");
                 }
                 urls.add(url);
                 if (Json.string(cm, "sha256") != null) {
@@ -116,13 +139,13 @@ public final class TrustedEntityParser {
                                             ResourceLoader loader) throws IOException {
         String domain = Json.string(m, "domain");
         if (domain == null) {
-            throw new IllegalArgumentException("Anchor without domain");
+            throw new IllegalArgumentException("it has no domain");
         }
         List<X509Certificate> certs = AdapterSupport.certificates(m, loader);
         if (certs.isEmpty()) {
-            throw new IllegalArgumentException("Anchor in domain " + domain + " has no certificate");
+            throw new IllegalArgumentException("it has no certificate");
         }
-        String framework = framework(m, "Anchor in domain " + domain, sourceFramework);
+        String framework = framework(m, sourceFramework);
         EntityStatus status = m.get("status") == null ? EntityStatus.ACTIVE
                 : Enums.parse(EntityStatus.class, String.valueOf(m.get("status")), "status");
         List<TrustAnchor> out = new ArrayList<>();
@@ -138,10 +161,10 @@ public final class TrustedEntityParser {
      * An entry belongs to the framework of the source that lists it. A document cannot place an entry in another
      * one: whoever writes a list for one framework would otherwise decide what the clients of any framework trust.
      */
-    private static String framework(Map<String, Object> m, String what, String sourceFramework) {
+    private static String framework(Map<String, Object> m, String sourceFramework) {
         Object named = m.get("framework");
         if (named != null && !String.valueOf(named).equals(sourceFramework)) {
-            throw new IllegalArgumentException(what + " names framework '" + named + "', but its source loads into "
+            throw new IllegalArgumentException("it names framework '" + named + "', but its source loads into "
                     + (sourceFramework == null ? "no framework" : "'" + sourceFramework + "'"));
         }
         return sourceFramework;

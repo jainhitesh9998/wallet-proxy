@@ -175,6 +175,67 @@ class ManagedEntryServiceTest {
         assertThat(registry.snapshot().entity("victim@partner")).get().satisfies(e -> assertThat(e.frameworkId()).isEqualTo("partner"));
     }
 
+    static final TestPki.Issued PARTNER_CA = TestPki.rootCa("CN=Partner Issuer CA,C=UT");
+    static final TestPki.Issued ACME = TestPki.leaf("CN=Acme Issuer,C=UT", PARTNER_CA, List.of(), null);
+    static final ClientProfile PARTNER = new ClientProfile("partner-wallet", "Partner", Set.of("partner"), false, false, false);
+
+    Decision acmeDecision() {
+        return new TrustEvaluator(registry, sources, new DidResolver(List.of()), new X509PathValidator(), Clock.systemUTC(), Duration.ofHours(1))
+                .evaluate(new TrustQuery(EntityRole.CREDENTIAL_ISSUER,
+                        new TrustQuery.Subject(null, List.of(Certificates.toBase64(ACME.certificate())), null, null),
+                        new TrustQuery.Context("oid4vci", "dc+sd-jwt", "org.example.diploma", null, null, List.of())), PARTNER).decision();
+    }
+
+    static Map<String, Object> revokedAcme() {
+        Map<String, Object> doc = new LinkedHashMap<>();
+        doc.put("roles", List.of("CREDENTIAL_ISSUER"));
+        doc.put("certificates", List.of(Certificates.toPem(ACME.certificate())));
+        doc.put("status", "REVOKED");
+        doc.put("validUntil", "2030-01-01T00:00:00Z");
+        return doc;
+    }
+
+    /** What the store holds for {@code acme}, edited as if it had been stored before a rule existed. */
+    void storeUnreadableAcme() {
+        Map<String, Object> doc = new LinkedHashMap<>(store.get(ManagedEntityStore.Kind.ENTITY, "acme").orElseThrow());
+        doc.put("validUntil", "2030-01-32T00:00:00Z");
+        store.put(ManagedEntityStore.Kind.ENTITY, "acme", doc);
+    }
+
+    io.vctrust.trust.core.registry.SourceState managedState() {
+        return sources.states().stream().filter(s -> s.id().equals("managed")).findFirst().orElseThrow();
+    }
+
+    @Test
+    void anUnreadableStoredEntryFailsTheLoadAndCanStillBeReplacedOrDeleted() {
+        Map<String, Object> anchor = new LinkedHashMap<>();
+        anchor.put("domain", "credential-issuer");
+        anchor.put("certificate", Certificates.toPem(PARTNER_CA.certificate()));
+        managed.put(OPERATOR, "anchors", "partner-ca", anchor);
+        managed.put(OPERATOR, "entities", "acme", revokedAcme());
+        assertThat(acmeDecision()).isEqualTo(Decision.NOT_TRUSTED);
+
+        storeUnreadableAcme();
+        sources.refresh("managed");
+        // The source keeps its last good content: the party stays revoked, it is not trusted through the CA.
+        assertThat(managedState().lastError()).contains("managed entity 'acme' cannot be read").contains("2030-01-32");
+        assertThat(acmeDecision()).isEqualTo(Decision.NOT_TRUSTED);
+
+        // Replaced through the admin API while the source is failing: it loads again.
+        managed.put(OPERATOR, "entities", "acme", revokedAcme());
+        assertThat(managedState().lastError()).isNull();
+        assertThat(acmeDecision()).isEqualTo(Decision.NOT_TRUSTED);
+
+        // Deleted while failing: it loads without it, and the CA vouches for the certificate again.
+        storeUnreadableAcme();
+        sources.refresh("managed");
+        assertThat(managedState().lastError()).contains("managed entity 'acme' cannot be read");
+        managed.delete(OPERATOR, "entities", "acme");
+        assertThat(managedState().lastError()).isNull();
+        assertThat(registry.snapshot().entity("acme")).isEmpty();
+        assertThat(acmeDecision()).isEqualTo(Decision.TRUSTED);
+    }
+
     @Test
     void anEntryStoredBeforeTheRuleDoesNotGetTheName() {
         // Written to the database directly, or before this check existed: the registry does not give it the name all the

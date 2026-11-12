@@ -22,6 +22,7 @@ import java.util.Map;
  * {@code type: static} — entities and anchors maintained in a YAML/JSON document in the service's native
  * format. Properties: {@code location} (classpath:, file: or https:); optional {@code publicUri}, published as the
  * source of what it loads in place of a location on this host (see {@link AdapterSupport#publishedLocation}).
+ * A document with an entry that cannot be read is not loaded at all; the error names the entry.
  */
 public final class StaticTrustSourceFactory implements TrustSourceFactory {
 
@@ -49,28 +50,43 @@ public final class StaticTrustSourceFactory implements TrustSourceFactory {
                     ResourceLoader named = ResourceLoader.isRemote(location) ? ResourceLoader.remoteOnly(ctx.resources()) : ctx.resources();
                     Provenance prov = Provenance.of(def.id(), type(), def.frameworkId(),
                             AdapterSupport.publishedLocation(def, location), ctx.clock().instant());
+                    // An entry that cannot be read fails the load, naming it: skipped, a revoked entity would let its
+                    // party be trusted through the CA, and an anchor would drop out. The last good content stays.
                     List<TrustedEntity> entities = new ArrayList<>();
                     List<TrustAnchor> anchors = new ArrayList<>();
-                    List<String> warnings = new ArrayList<>();
-                    for (Object o : (List<Object>) doc.getOrDefault("entities", List.of())) {
+                    List<Object> listed = (List<Object>) doc.getOrDefault("entities", List.of());
+                    for (int i = 0; i < listed.size(); i++) {
                         try {
-                            entities.add(TrustedEntityParser.entity((Map<String, Object>) o, def.frameworkId(), prov, named));
+                            entities.add(TrustedEntityParser.entity(entry(listed.get(i)), def.frameworkId(), prov, named));
                         } catch (Exception e) {
-                            warnings.add("Skipped entity: " + e.getMessage());
+                            throw unreadable(TrustedEntityParser.name("entity", "entities", i, listed.get(i)), e);
                         }
                     }
-                    for (Object o : (List<Object>) doc.getOrDefault("anchors", List.of())) {
+                    listed = (List<Object>) doc.getOrDefault("anchors", List.of());
+                    for (int i = 0; i < listed.size(); i++) {
                         try {
-                            anchors.addAll(TrustedEntityParser.anchors((Map<String, Object>) o, def.frameworkId(), prov, named));
+                            anchors.addAll(TrustedEntityParser.anchors(entry(listed.get(i)), def.frameworkId(), prov, named));
                         } catch (Exception e) {
-                            warnings.add("Skipped anchor: " + e.getMessage());
+                            throw unreadable(TrustedEntityParser.name("anchor", "anchors", i, listed.get(i)), e);
                         }
                     }
-                    return new SourceLoadResult(entities, anchors, ListInfo.unsigned(), warnings);
+                    return new SourceLoadResult(entities, anchors, ListInfo.unsigned(), List.of());
                 } catch (Exception e) {
                     throw new TrustSourceException("Cannot load static registry " + location + ": " + e.getMessage(), e);
                 }
             }
         };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> entry(Object o) {
+        if (!(o instanceof Map<?, ?> m)) {
+            throw new IllegalArgumentException("it is not an object");
+        }
+        return (Map<String, Object>) m;
+    }
+
+    private static IllegalArgumentException unreadable(String name, Exception e) {
+        return new IllegalArgumentException(name + " cannot be read: " + e.getMessage(), e);
     }
 }

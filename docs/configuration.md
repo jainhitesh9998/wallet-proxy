@@ -207,7 +207,9 @@ A list past its next update is not loaded (`allowExpired: true` loads it with a 
 one from before an entry was withdrawn, served again by whoever controls its location. For the same reason a list
 that is older than the one already loaded (issued earlier, or with a lower sequence number) is refused, for as long
 as the service runs. A source that fails to load keeps its last good content; its state (`GET /admin/v1/sources`)
-shows the error.
+shows the error. A `static` or `managed` source fails to load when one of its entries cannot be read (see
+[Registry format](#registry-format)): no entry is skipped, since a skipped entity could be the one that withdraws a
+party whose CA is trusted.
 
 What a source tells clients about where its list comes from (the `sourceUri` in the `provenance` of what it loads,
 and the `trustedListUri` that `vical`, `etsi-tl` and `etsi-lote` put on their anchors and entities, which a DCQL
@@ -275,9 +277,23 @@ anchors:
 ```
 
 Entries belong to the framework of their source; a `framework` key is accepted only when it names that framework,
-and an entry naming another one is skipped with a warning. `certificateLocation` may name a `classpath:` or `file:`
+and an entry naming another one cannot be read. `certificateLocation` may name a `classpath:` or `file:`
 location only in a registry that is itself a local file; in a registry fetched over the network and in entries sent
 to the admin API it must be an `https:` URL.
+
+**An entry that cannot be read fails the load.** A `static` registry with one entity or anchor that cannot be read is
+not loaded at all: the source keeps what it loaded last, its state (`GET /admin/v1/sources`) has the error, and a
+required source that has never loaded keeps the service not ready. The error names the entry, by its `id`, or by its
+place when it has none (`anchors[2]`), and says what is wrong with it:
+
+```text
+Cannot load static registry file:/etc/trust/registry.yaml: entity 'acme' cannot be read: Unknown role 'ISSUER'; one of CREDENTIAL_ISSUER, VERIFIER, WALLET_PROVIDER, AUTHORIZATION_SERVER, ACCREDITATION_AUTHORITY, STATUS_LIST_PROVIDER, OTHER
+```
+
+The admin API refuses such an entry (`invalid_document`), so a `managed` source meets one only when it was stored
+before a rule existed; it then fails to load in the same way, and the entry can still be replaced or deleted through
+the admin API. An anchor whose `certificateLocation` cannot be fetched fails the load too, so the anchor stays as it
+was loaded last rather than dropping out until the next refresh.
 
 **How to list a party so that its credentials are attributed to it.** An entity is found through what a signing key
 proves, never through what a credential claims. List at least one of:
