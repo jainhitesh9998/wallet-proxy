@@ -72,6 +72,9 @@ final class Mapping {
      */
     static final int MAX_RECORD_TEXT = 65_536;
 
+    /** The most CRL locations a mapped anchor names (more make it unreadable): each is fetched on every refresh. */
+    static final int MAX_CRL_URLS = 4;
+
     /**
      * The characters of mapped text in a value: text, numbers and booleans as written, and the names of an object's
      * members; counted up to {@code limit + 1} at most, so that the cost is bounded too.
@@ -392,7 +395,7 @@ final class Mapping {
                 r.read("entity", () -> text("entity", record, root));
                 r.read("status", () -> text("status", record, root));
                 r.read("docTypes", () -> docTypes(record, root));
-                r.read("crlUrls", () -> texts("crlUrls", record, root));
+                r.read("crlUrls", () -> crlUrls(record, root));
                 r.read("crl", () -> text("crl", record, root));
             }
             r.read("framework", () -> text("framework", record, root));
@@ -517,6 +520,19 @@ final class Mapping {
                     out.add(scalar(o, member));
                 }
                 bounded(out, member);
+            }
+            return out;
+        }
+
+        /**
+         * Where the CA publishes its CRL: at most {@link #MAX_CRL_URLS}. Each is fetched on every refresh of the
+         * revocation data, so that a document of a few kilobytes that gives each of its anchors a thousand locations
+         * would decide how many requests the service sends.
+         */
+        private List<String> crlUrls(Object record, Object root) {
+            List<String> out = texts("crlUrls", record, root);
+            if (out.size() > MAX_CRL_URLS) {
+                throw new IllegalArgumentException("crlUrls: " + out.size() + " CRL locations, more than " + MAX_CRL_URLS + " for one anchor");
             }
             return out;
         }
