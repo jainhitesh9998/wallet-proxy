@@ -12,6 +12,7 @@ scripts/test-all.sh              # everything, including the live suites
 
 CI runs the offline suites on every pull request; the conformance workflow adds the x509-limbo suite and, weekly,
 the live issuers. `scripts/build-site.sh` builds the documentation site (needs `pip install mkdocs-material`).
+After a change to the REST API, `scripts/update-openapi.sh` regenerates `docs/openapi.json` from the built service.
 
 ## Releasing
 
