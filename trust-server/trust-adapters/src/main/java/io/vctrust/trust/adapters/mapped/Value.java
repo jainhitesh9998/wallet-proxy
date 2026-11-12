@@ -60,22 +60,24 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
     List<Object> constants();
 
     /**
-     * What this form yields for a member that restricts (an anchor's doctypes), read as {@link JsonPath#restricted}
-     * reads its path: past a list, an item that lacks what the path goes on to cannot be read; and a value that its
-     * translation does not know (without a default) cannot be read either. Dropped, it would narrow the list or empty
-     * it, and an emptied list may read as "none stated".
+     * What this form yields for a list that may say {@code allowEmpty} (an anchor's doctypes, the roles), read as
+     * {@link JsonPath#restricted} reads its path: past a list, an item that lacks what the path goes on to cannot be
+     * read; and a value that its translation does not know (without a default) cannot be read either. Dropped, it
+     * would narrow the list or empty it, and an emptied list may read as "none stated".
      *
      * @throws IllegalArgumentException as {@link #all}, and for those two
      */
     default Restricting restricting(Object current, Object root) {
-        return new Restricting(all(current, root), false, false);
+        return new Restricting(all(current, root), false, false, false);
     }
 
     /**
-     * What a form of a restricting member yields, and what tells a list that is there and empty from one that is not
-     * there ({@link JsonPath.Restricted}).
+     * What a form of a list that may say {@code allowEmpty} yields, and what tells a list that is there and has no item
+     * from one that is not there ({@link JsonPath.Restricted}).
+     *
+     * @param blank whether the path selected an item that holds nothing ({@link #blank}): a list of {@code null}s
      */
-    record Restricting(List<Object> values, boolean there, boolean lost) {
+    record Restricting(List<Object> values, boolean there, boolean lost, boolean blank) {
     }
 
     /**
@@ -125,8 +127,8 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
 
     /** What is said of {@code allowEmpty} where it changes nothing. */
     static String changesNothing() {
-        return "allowEmpty applies to a list that restricts (authorizations, docTypes), where a list that is there and empty "
-                + "would otherwise restrict to nothing; here it would change nothing";
+        return "allowEmpty applies to a list that restricts (authorizations, docTypes) and to roles, where a list that is there "
+                + "and has no item would otherwise restrict to nothing or fail the load; here it would change nothing";
     }
 
     private static Value read(Object raw, Kind kind) {
@@ -391,7 +393,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         @Override
         public Restricting restricting(Object current, Object root) {
             JsonPath.Restricted r = path.restricted(current, root);
-            return new Restricting(present(r.nodes()), r.there(), r.lost());
+            return new Restricting(present(r.nodes()), r.there(), r.lost(), r.nodes().stream().anyMatch(Value::blank));
         }
     }
 
@@ -482,8 +484,9 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         public Restricting restricting(Object current, Object root) {
             JsonPath.Restricted r = path.restricted(current, root);
             List<Object> found = present(r.nodes());
+            boolean blanks = r.nodes().stream().anyMatch(Value::blank);
             if (found.isEmpty()) {
-                return new Restricting(blank(fallback) ? List.of() : List.of(fallback), r.there(), r.lost());
+                return new Restricting(blank(fallback) ? List.of() : List.of(fallback), r.there(), r.lost(), blanks);
             }
             List<Object> out = new ArrayList<>(found.size());
             for (Object v : found) {
@@ -494,7 +497,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
                 }
                 out.add(translated);
             }
-            return new Restricting(out, r.there(), r.lost());
+            return new Restricting(out, r.there(), r.lost(), blanks);
         }
     }
 

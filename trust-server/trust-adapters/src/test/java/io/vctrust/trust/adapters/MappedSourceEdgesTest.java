@@ -105,16 +105,19 @@ class MappedSourceEdgesTest {
         Map<String, Object> m = boundMapping();
         block(m).remove("roles");
         assertThat(loadError(source(ctx, props("mapping", m)))).isEqualTo("Source 'partner' (mapped): mapping.entities[0]: roles is "
-                + "required: an entity that yields no role answers no question, and keeps nobody out");
+                + "required: say where a record states its roles (with { path, allowEmpty: true } when a list that is there and empty "
+                + "means none stated)");
         Map<String, Object> lookup = lookupOnly();
         Map<String, Object> l = new LinkedHashMap<>((Map<String, Object>) ((Map<String, Object>) lookup.get("mapping")).get("lookup"));
         l.put("entity", Map.of("id", "$.id", "identifiers", List.of(Map.of("type", "DID", "value", "$.did"))));
         lookup.put("mapping", Map.of("lookup", l));
         assertThat(loadError(source(ctx, lookup))).contains("mapping.lookup.entity: roles is required");
-        // allowEmpty says nothing about roles: a record without one fails the load all the same.
-        block(m).put("roles", Map.of("path", "$.roles[*]", "allowEmpty", true));
-        assertThat(loadError(source(ctx, props("mapping", m)))).contains("mapping.entities[0].roles: allowEmpty");
         assertThat(ctx.http.requests).isEmpty();
+        // allowEmpty on roles was refused here; it is allowed again since the registry keeps a party out by an entry not
+        // in good standing that names no role (MappedSourceRegistryTest.item2_...): an empty list then means none stated,
+        // and a record whose roles are not there at all still fails the load.
+        block(m).put("roles", Map.of("path", "$.roles[*]", "allowEmpty", true));
+        assertThat(loadError(source(ctx, props("mapping", m)))).contains("record 1 (id 'partner:dmv') cannot be read: it yields no role");
     }
 
     @Test

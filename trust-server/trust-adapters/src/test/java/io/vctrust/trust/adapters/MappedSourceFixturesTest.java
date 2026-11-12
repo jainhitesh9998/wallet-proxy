@@ -201,7 +201,7 @@ class MappedSourceFixturesTest {
             entities:
               - each: $.entities[*]
                 id: $.id
-                roles: $.roles[*]
+                roles: { path: "$.roles[*]", allowEmpty: true }   # [] in a snapshot: an entry that states no role
                 display:
                   - { each: "$.display[*]", locale: $.locale, name: $.name, description: $.description, logoUri: $.logoUri }
                 identifiers:

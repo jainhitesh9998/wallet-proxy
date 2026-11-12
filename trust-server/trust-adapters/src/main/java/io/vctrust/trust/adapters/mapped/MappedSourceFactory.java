@@ -1017,8 +1017,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 throw unreadable(block, label, "it yields no id");
             }
             if (!entry.containsKey("roles")) {
-                // The evaluator considers only the entries that have the role asked about: listed without one, the
-                // record would restrict nobody, and its party's key would be left to whatever anchor it chains to.
+                // A record that yields no role may be one whose roles the upstream renamed or dropped: listed without
+                // one, it would authorize nothing if it is in good standing, and keep its party out whatever is asked
+                // if it is not. Which the list meant cannot be told; the load fails, unless the mapping says that a
+                // list that is there and empty means none stated (allowEmpty), and the record has one ("roles": []).
                 throw unreadable(block, label, "it yields no role");
             }
             String notAnId = refusedId(id);

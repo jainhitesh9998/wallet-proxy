@@ -383,12 +383,12 @@ final class Mapping {
             if (!m.containsKey("roles")) {
                 // The evaluator considers only the entries that have the role asked about: an entry without one would
                 // leave its party's key to whatever anchor it chains to.
-                throw new IllegalArgumentException(where + ": roles is required: an entity that yields no role answers no question, "
-                        + "and keeps nobody out");
+                throw new IllegalArgumentException(where + ": roles is required: say where a record states its roles (with "
+                        + "{ path, allowEmpty: true } when a list that is there and empty means none stated)");
             }
             Map<String, Object> f = new LinkedHashMap<>();
             f.put("id", required(m, "id", where));
-            f.put("roles", many(m.get("roles"), where + ".roles", false));
+            f.put("roles", many(m.get("roles"), where + ".roles", true));
             f.put("name", optional(m, "name", where));
             f.put("display", items(m.get("display"), where + ".display", Set.of("locale", "name", "description", "logoUri"), Set.of("name"), false));
             f.put("identifiers", items(m.get("identifiers"), where + ".identifiers", Set.of("type", "value"), Set.of("type", "value"), false));
@@ -493,7 +493,7 @@ final class Mapping {
             if (entity) {
                 // What identifies the record first: what it says about whom matters most.
                 r.read("id", () -> text("id", record, root));
-                r.read("roles", () -> roles(record, root));
+                r.readKeepingEmpty("roles", () -> roles(record, root));
                 r.read("identifiers", () -> objects("identifiers", record, root, Set.of("type", "value"), Items.WHOLE));
                 r.read("certificates", () -> pem(texts("certificates", record, root), "certificates"));
                 r.read("name", () -> describing(r, () -> text("name", record, root)));
@@ -554,9 +554,18 @@ final class Mapping {
             final Weight weight = Weight.ofRecord();
 
             void read(String member, java.util.function.Supplier<Object> value) {
+                read(member, value, false);
+            }
+
+            /** As {@link #read}, and an empty list is kept: it says that the record states none (the roles). */
+            void readKeepingEmpty(String member, java.util.function.Supplier<Object> value) {
+                read(member, value, true);
+            }
+
+            private void read(String member, java.util.function.Supplier<Object> value, boolean keepEmpty) {
                 try {
                     Object v = value.get();
-                    if (v != null && !(v instanceof List<?> l && l.isEmpty()) && !(v instanceof Map<?, ?> m && m.isEmpty())) {
+                    if (v != null && (keepEmpty || !(v instanceof List<?> l && l.isEmpty())) && !(v instanceof Map<?, ?> m && m.isEmpty())) {
                         Weight w = weight.remaining();
                         weigh(v, member, w);
                         w.check(member);
@@ -727,19 +736,55 @@ final class Mapping {
             return i.toString();
         }
 
-        /** The roles: a value the roles' translation does not know (and no default) is one the mapping cannot read. */
+        /**
+         * The roles: a value the roles' translation does not know (and no default) is one the mapping cannot read. Null
+         * when the record yields none; an empty list when it states none: a form that says {@code allowEmpty} found a
+         * list that is there and has no item at all ({@code "roles": []}, as this service's own snapshot writes for an
+         * entry that only describes a party, or a withdrawn one). The record is then listed without a role, as the
+         * document states it: not in good standing, the evaluator holds it against its party whatever is asked; in good
+         * standing, it authorizes nothing. A list a filter emptied, one of nulls, or a role the translation does not
+         * know is not "none stated", and cannot be read.
+         */
         private List<String> roles(Object record, Object root) {
-            List<String> out = texts("roles", record, root);
+            List<String> out = new ArrayList<>();
+            boolean noneStated = false;
             for (Value v : values(fields.get("roles"))) {
-                if (v instanceof Value.Translated t) {
-                    Object unknown = t.untranslated(record, root);
-                    if (unknown != null) {
-                        throw new IllegalArgumentException("roles: " + quote(unknown) + " is not one of the values its translation knows, "
-                                + "and it has no default");
+                if (v.allowEmpty()) {
+                    Value.Restricting found;
+                    try {
+                        found = v.restricting(record, root);
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException("roles: " + e.getMessage(), e);
+                    }
+                    for (Object o : found.values()) {
+                        out.add(scalar(o, "roles"));
+                    }
+                    if (found.values().isEmpty() && found.there()) {
+                        String path = v instanceof Value.At a ? a.path().text() : ((Value.Translated) v).path().text();
+                        if (found.lost()) {
+                            throw lostList("roles", path);
+                        }
+                        if (found.blank()) {
+                            throw new IllegalArgumentException("roles: " + path + " finds a list whose items hold nothing (null or "
+                                    + "\"\"): that is not a list with no role");
+                        }
+                        noneStated = true;
+                    }
+                } else {
+                    for (Object o : all(v, "roles", record, root)) {
+                        out.add(scalar(o, "roles"));
+                    }
+                    if (v instanceof Value.Translated t) {
+                        Object unknown = t.untranslated(record, root);
+                        if (unknown != null) {
+                            throw new IllegalArgumentException("roles: " + quote(unknown) + " is not one of the values its translation "
+                                    + "knows, and it has no default");
+                        }
                     }
                 }
+                bounded(out, "roles");
             }
-            return out;
+            return out.isEmpty() ? (noneStated ? List.of() : null) : out;
         }
 
         /**

@@ -495,8 +495,12 @@ Every member of the registry format that makes sense for remote data can be mapp
 document from elsewhere never makes the service read a file. Nor can `framework`: every record of a source belongs to
 the source's framework, and a mapping that names `framework` is a configuration error. `each`, `allowEmpty` and
 `required` say how a block is read; `required` names members the block maps (another name is a configuration error). A
-block of entities (and a lookup's `entity`) must map `roles`: the evaluator considers only the entries that have the
-role asked about, so an entry without one keeps nobody out.
+block of entities (and a lookup's `entity`) must map `roles`, and a record that yields none fails the load: its roles
+may be a member the upstream renamed or dropped. Where the upstream writes `"roles": []` for a party it states no role
+for (this service's own snapshot does, for an entry that only describes a party, or a withdrawn one), say so with
+`roles: { path: $.roles[*], allowEmpty: true }`: such a record is listed without a role, as the document states it. An
+entry without a role that is not in good standing keeps its party out whatever is asked; one in good standing
+authorizes nothing.
 
 **Values.** Every member takes one of these forms; a member that takes a list takes a list of them.
 
@@ -508,7 +512,7 @@ role asked about, so an entry without one keeps nobody out.
 | `{ value: "$5" }` | A constant that starts with `$` or `^` |
 | `{ path: P, values: { a: X, b: Y }, default: Z }` | The value at `P`, translated. Keys are compared without regard to case and to surrounding whitespace, the no-break space and the zero-width space included (`Revoked`, ` revoked` and `revoked` are one key); a number in the document matches a key by its value (`1.0` is the key `1`), text by its text. Two keys of one table that are the same this way are a configuration error. `default` stands for both a value not in the table and no value at `P`, for every member; without it, either yields nothing (in a list that restricts, a value not in the table cannot be read: see below). An object or a list at `P` is not translated, and not the default: the member cannot be read. `values` can also be a list of `{ when, then }` pairs |
 | `{ template: "did:web:{$.host}" }` | Text with paths in braces; nothing if any of them yields nothing |
-| `{ path: P, allowEmpty: true }` | For `docTypes`, with a `[*]` or a filter in `P`: the values at `P`, and when the list is there and has no item at all, the member is absent (see the restricting lists below). Also with `values` and `default` |
+| `{ path: P, allowEmpty: true }` | For `roles` and `docTypes`, with a `[*]` or a filter in `P`: the values at `P`, and when the list is there and has no item at all, the record states none: no role, or no doctype constraint (see below). Also with `values` and `default` |
 
 A path with `[*]` or a filter gives every match to a list member, and its first match to a single one.
 
@@ -544,13 +548,15 @@ instant depends on where it was written). A member cannot be read either when:
   else: a list a filter has emptied is not empty, and neither is one whose items hold `null` where the path goes on;
   a wrong kind, an item that lacks a member, or a value the translation does not know still cannot be read.
   `allowEmpty` on a member that takes a single value, on an item without an `each` of its own, on a path without a
-  `[*]` or a filter, on a member where it changes nothing (`roles`, `certificates`, `crlUrls`, contexts, identifier
-  and display items), or with a value other than `true` or `false`, is a configuration error;
+  `[*]` or a filter, on a member where it changes nothing (`certificates`, `crlUrls`, contexts, identifier and
+  display items), or with a value other than `true` or `false`, is a configuration error;
 - it is a context item with `sha256` mapped that yields its `url` but no digest (or the reverse): it would be shipped
   unpinned;
 - it is an identifier item that yields its `value` but no `type` (or the reverse); an item that finds nothing at all is
   absent. Display items and context URLs without what they need are left out;
-- it is `roles`, translated, and the document holds a role the translation does not know (and no `default`);
+- it is `roles`, translated, and the document holds a role the translation does not know (and no `default`); or
+  `roles` under `allowEmpty`, and the list is there but yields nothing for another reason than having no item: a
+  filter emptied it, or its items are `null`;
 - it is named in `required` and yields nothing. This is how a renamed member upstream is caught: a `valid_until` that
   became `validUntil` would otherwise read as "no expiry";
 - it is an anchor's `crlUrls`, and yields more than 4 locations: each is fetched on every refresh of the revocation
@@ -570,8 +576,8 @@ instant depends on where it was written). A member cannot be read either when:
 What then happens depends on the record:
 
 - **An entity whose `id`, `roles`, `identifiers` or `certificates` cannot be read**, or that yields no `id`, or no
-  role, **fails the load**, with a message that names the block, the record and the member. These say whom the record
-  is about: without them, listing it keeps nobody out. The source keeps its last good content.
+  role (unless its roles are there and empty under `allowEmpty`), **fails the load**, with a message that names the
+  block, the record and the member. These say whom the record is about. The source keeps its last good content.
 - **An entity whose id is text the registry cannot take** (not 1 to 128 letters, digits or `. _ : @ ~ -` starting
   with a letter or digit, the admin API's rule; or ending in `@` and the id of another framework, a name the registry
   keeps for that framework's entries) **is listed under a derived id**: `sha256:` and the first 32 hexadecimal digits
@@ -750,14 +756,15 @@ entities:
 Another trust service like this one, through its snapshot ([the claims](architecture.md#the-snapshot)): `location`
 its `/api/v1/snapshot`, `headers` its API key for this service, `format: jws`, and
 `verify: { jwksLocation: file:/etc/trust/upstream-jwks.json, typ: trust-snapshot+jwt, audience: <this service's client id there> }`.
-A snapshot writes `"authorizations": []` for an entity with none registered, hence `allowEmpty: true` on that list.
+A snapshot writes `"authorizations": []` for an entity with none registered, and `"roles": []` for one it states no
+role for, hence `allowEmpty: true` on those lists.
 
 ```yaml
 list: { issuer: $.iss, issuedAt: $.iat, nextUpdate: $.exp }
 entities:
   - each: $.entities[*]
     id: $.id
-    roles: $.roles[*]
+    roles: { path: "$.roles[*]", allowEmpty: true }   # [] in a snapshot: an entry that states no role
     display:
       - { each: "$.display[*]", locale: $.locale, name: $.name, description: $.description, logoUri: $.logoUri }
     identifiers:
