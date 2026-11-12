@@ -2,6 +2,7 @@ package io.vctrust.trust.server.service;
 
 import io.vctrust.trust.adapters.support.TrustedEntityParser;
 import io.vctrust.trust.core.model.Provenance;
+import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.policy.ClientProfile;
 import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.core.spi.ResourceLoader;
@@ -16,8 +17,9 @@ import java.util.regex.Pattern;
 
 /**
  * The entities and anchors an operator maintains at run time. A document is stored only if it parses as what it
- * claims to be, for the framework the managed source loads into; every change is audited and published by reloading
- * the managed sources. Like every operator use case it refuses a client that is not an operator.
+ * claims to be, for the framework the managed source loads into, and does not take the name another framework's entry
+ * is listed under when its id is taken; every change is audited and published by reloading the managed sources. Like
+ * every operator use case it refuses a client that is not an operator.
  */
 public class ManagedEntryService {
 
@@ -53,14 +55,20 @@ public class ManagedEntryService {
         String framework = managedFramework(d.get("framework"));
         d.put("framework", framework);
         Provenance probe = Provenance.of("managed", "managed", framework, "admin-api", Instant.now());
+        List<String> ids;
         try {
-            if (k == ManagedEntityStore.Kind.ENTITY) {
-                TrustedEntityParser.entity(d, framework, probe, ResourceLoader.remoteOnly(loader));
-            } else {
-                TrustedEntityParser.anchors(d, framework, probe, ResourceLoader.remoteOnly(loader));
-            }
+            ids = k == ManagedEntityStore.Kind.ENTITY
+                    ? List.of(TrustedEntityParser.entity(d, framework, probe, ResourceLoader.remoteOnly(loader)).id())
+                    : TrustedEntityParser.anchors(d, framework, probe, ResourceLoader.remoteOnly(loader)).stream().map(TrustAnchor::id).toList();
         } catch (Exception e) {
             throw ServiceException.invalidRequest("invalid_document", e.getMessage());
+        }
+        // The registry would not load it (TrustSourceManager.fallbackNameOf): say so now rather than store it.
+        for (String loaded : ids) {
+            sources.fallbackNameOf(loaded, framework).ifPresent(owner -> {
+                throw ServiceException.invalidRequest("invalid_document", "'" + loaded + "' is the name an entry of framework '" + owner
+                        + "' is listed under when another framework has its id; an entry of framework '" + framework + "' cannot have it");
+            });
         }
         store.put(k, id, d);
         AuditLog.managedPut(admin, k.name().toLowerCase(Locale.ROOT), id, d.get("framework"));

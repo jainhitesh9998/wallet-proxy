@@ -24,6 +24,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -43,8 +45,11 @@ import java.util.function.Predicate;
  *
  * <p>A source speaks for its own framework and for nothing else. Whatever it loads is placed in the framework it is
  * configured for; entities of the same id are merged only within a framework; an anchor is tied to an entity only
- * of its own framework. A source of one framework can therefore add nothing to, and take nothing from, what a
- * client of another framework is told. A list that is older than the one already held is not loaded.
+ * of its own framework. An entry whose id another framework already has is listed as {@code <id>@<framework>}, and
+ * that name is its framework's: an entry of another framework written with it is not loaded, so it is always free
+ * ({@link #fallbackNameOf}). A source of one framework can therefore add nothing to, and take nothing from, what a
+ * client of another framework is told. An entry that is not loaded is named in a warning of its source's state. A
+ * list that is older than the one already held is not loaded.
  */
 public class TrustSourceManager implements AutoCloseable {
 
@@ -54,6 +59,8 @@ public class TrustSourceManager implements AutoCloseable {
 
     private final TrustRegistry registry;
     private final Collection<TrustFramework> frameworks;
+    /** The ids of the configured frameworks and of those a source loads into: each owns the names ending in "@" and its id. */
+    private final Set<String> frameworkIds = new TreeSet<>();
     private final Map<String, TrustSource> sources = new LinkedHashMap<>();
     private final Map<String, SourceLoadResult> results = new ConcurrentHashMap<>();
     private final Map<String, SourceState> states = new ConcurrentHashMap<>();
@@ -68,6 +75,8 @@ public class TrustSourceManager implements AutoCloseable {
         this.registry = registry;
         this.frameworks = List.copyOf(frameworks);
         sources.forEach(s -> this.sources.put(s.id(), s));
+        this.frameworks.stream().map(TrustFramework::id).filter(Objects::nonNull).forEach(frameworkIds::add);
+        this.sources.values().stream().map(s -> s.definition().frameworkId()).filter(Objects::nonNull).forEach(frameworkIds::add);
         this.clock = clock;
         this.scheduler = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "trust-source-refresh");
@@ -128,6 +137,20 @@ public class TrustSourceManager implements AutoCloseable {
 
     public Collection<TrustSource> sources() {
         return sources.values();
+    }
+
+    /**
+     * The framework whose fallback name {@code id} is, when that is not {@code framework}. An entry whose id an entry
+     * of another framework already has is listed as {@code <id>@<its framework>}; that name belongs to the framework it
+     * names, so an entry of any other framework that is written with it is not loaded. Otherwise a source loaded
+     * earlier could hold the name, and the entry it is the fallback for (a withdrawn issuer, say) would not be loaded
+     * at all. The frameworks are those configured and those a source loads into.
+     */
+    public Optional<String> fallbackNameOf(String id, String framework) {
+        if (id == null) {
+            return Optional.empty();
+        }
+        return frameworkIds.stream().filter(f -> !f.equals(framework) && id.endsWith("@" + f)).findFirst();
     }
 
     /** Asks on-demand capable sources to resolve an identifier missing from the pre-loaded registry. */
@@ -219,6 +242,11 @@ public class TrustSourceManager implements AutoCloseable {
             }
             String framework = s.definition().frameworkId();
             for (TrustedEntity e : r.entities()) {
+                Optional<String> reserved = fallbackNameOf(e.id(), framework);
+                if (reserved.isPresent()) {
+                    refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add(reservedName("Entity", e.id(), reserved.get()));
+                    continue;
+                }
                 String id = placed.get(Arrays.asList(framework, e.id()));
                 if (id == null) {
                     id = e.id();
@@ -227,8 +255,9 @@ public class TrustSourceManager implements AutoCloseable {
                         // The id is taken by an entity of another framework: the two are different parties.
                         id = e.id() + "@" + framework;
                         if (entities.containsKey(id)) {
-                            refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id()
-                                    + "' is not loaded: its id and '" + id + "' are both taken by entities of other frameworks");
+                            // Only an entry of this framework can hold that name: no other framework may write it.
+                            refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is not loaded: framework '"
+                                    + other.frameworkId() + "' already has an entity with that id, and '" + id + "' is taken too");
                             continue;
                         }
                         refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is listed as '" + id
@@ -247,6 +276,11 @@ public class TrustSourceManager implements AutoCloseable {
             }
             String framework = s.definition().frameworkId();
             for (TrustAnchor a : r.anchors()) {
+                Optional<String> reserved = fallbackNameOf(a.id(), framework);
+                if (reserved.isPresent()) {
+                    refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add(reservedName("Anchor", a.id(), reserved.get()));
+                    continue;
+                }
                 String entityId = a.entityId();
                 if (entityId != null) {
                     String own = placed.get(Arrays.asList(framework, entityId));
@@ -261,8 +295,15 @@ public class TrustSourceManager implements AutoCloseable {
                 if (other != null && !Objects.equals(other.frameworkId(), framework)) {
                     id = a.id() + "@" + framework;
                 }
-                anchors.putIfAbsent(id, new TrustAnchor(id, a.domain(), a.certificate(), framework, entityId, a.status(),
-                        a.constraints(), a.provenance()));
+                TrustAnchor anchor = new TrustAnchor(id, a.domain(), a.certificate(), framework, entityId, a.status(),
+                        a.constraints(), a.provenance());
+                TrustAnchor held = anchors.putIfAbsent(id, anchor);
+                // The same anchor listed again (by another source of the framework, say) loses nothing; any other
+                // anchor that cannot be placed is reported: an anchor left out may be a CA's withdrawal or constraint.
+                if (held != null && !sameAnchor(held, anchor)) {
+                    refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Anchor '" + a.id() + "' is not loaded: the name '" + id
+                            + "' is taken by another anchor of framework '" + held.frameworkId() + "'");
+                }
             }
         }
         if (!refused.equals(conflicts)) {
@@ -278,6 +319,17 @@ public class TrustSourceManager implements AutoCloseable {
         }
         published = content;
         registry.publish(new RegistrySnapshot(version.incrementAndGet(), clock.instant(), frameworks, merged, anchored));
+    }
+
+    private static String reservedName(String kind, String id, String owner) {
+        return kind + " '" + id + "' is not loaded: '" + id + "' is the name an entry of framework '" + owner
+                + "' is listed under when another framework has its id, and only that framework may use it";
+    }
+
+    /** Whether two anchor records say the same: one placed instead of the other loses nothing. */
+    private static boolean sameAnchor(TrustAnchor a, TrustAnchor b) {
+        return Objects.equals(a.frameworkId(), b.frameworkId()) && a.domain().equals(b.domain()) && a.thumbprint().equals(b.thumbprint())
+                && Objects.equals(a.entityId(), b.entityId()) && a.status() == b.status() && a.constraints().equals(b.constraints());
     }
 
     /** The entity as an entry of {@code framework} under {@code id}, whatever its source wrote. */

@@ -209,9 +209,13 @@ service with an error that names the source. The lists an EU LOTL points to are 
 **A source speaks for its own framework only.** Everything it loads is placed in the framework it is configured
 for. Entities with the same id are merged when they come from sources of the same framework, so several sources may
 describe one party together; an id that an entity of another framework already has is listed as `<id>@<framework>`
-instead, and an anchor is tied only to an entity of its own framework. A source of one framework therefore adds
-nothing to what the clients of another framework are told. Put sources that should not vouch for each other's
-entries into different frameworks.
+instead, and an anchor is tied only to an entity of its own framework. A name `<id>@<framework>` (the id of a
+configured framework, or of one a source loads into) belongs to that framework: an entity or anchor of another
+framework written with such an id is not loaded, and the admin API refuses it (`invalid_document`), so the name an
+entry falls back to is always free. An entry that is not loaded for any reason is named in a warning of its source's
+state (`GET /admin/v1/sources`). A source of one framework therefore adds nothing to, and takes nothing from, what
+the clients of another framework are told. Put sources that should not vouch for each other's entries into different
+frameworks.
 
 ### Registry format
 
