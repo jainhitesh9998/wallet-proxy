@@ -81,6 +81,9 @@ The domain is chosen by the question, never by the certificate, so an anchor of 
 | Verifier (OpenID4VP request signer) | `verifier-access` | The signer is not a CA; for `x509_san_dns` the DNS name is a SAN of the leaf |
 | Wallet provider, status list signer | `wallet-provider`, `status-list` | RFC 5280 only |
 
+This is the default routing. A [trust mechanism](#your-own-mechanisms) can say that for a class of questions the
+anchors of another domain count instead; the profile in the table still applies, because it follows the question.
+
 An anchor can be listed in four ways. They produce the same record:
 
 | Way | For | See |
@@ -293,6 +296,7 @@ p = sys.stdin.read().split(".")[1]
 claims = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
 for c in claims["crls"]: print({k: v for k, v in c.items() if k != "crl"})'
 # {'issuer': 'zQYvloYZ3gFN118CWOIHxIjm6WW87sfCQULlUuFfvBw', 'thisUpdate': '2026-11-01T04:46:22Z', 'nextUpdate': '2045-12-31T04:46:22Z', 'crlNumber': '1'}
+# {'issuer': 'SjFeBU53lNFzBEcIjw-kBrwOcM-eiMHqAv1CSlZqMXU', 'thisUpdate': '2026-11-12T04:11:24Z', 'nextUpdate': '2046-01-11T04:11:24Z', 'crlNumber': '1'}
 
 # Any other CRL, by its distribution point (URL-encoded; this one is a placeholder). The answer is the CRL itself.
 curl -s -o iaca.crl -H 'Authorization: Bearer wallet-key' 'localhost:8095/api/v1/proxy/crl?url=https%3A%2F%2Fpki.example.org%2Fiaca.crl'
@@ -315,7 +319,8 @@ when the distribution point does not answer, `502 invalid_crl` when what it serv
   `current`, and whether snapshots carry it (`inSnapshots`: current and no larger than `snapshot-max-crl-bytes`). An
   entry with `inSnapshots: false` is a CRL devices do not get from the service. In the example,
   `curl -s -H 'Authorization: Bearer ops-key' localhost:8095/admin/v1/crls` lists the CRL pushed with `utopia-iaca`:
-  `"crlNumber": "1", "revoked": 2, "current": true, "inSnapshots": true`, and no `url` or `error`.
+  `"crlNumber": "1", "revoked": 2, "current": true, "inSnapshots": true`, and no `url` or `error` (and the one pushed
+  with `national-id-ca`, which revokes nothing: see [your own mechanisms](#your-own-mechanisms)).
 
 ## Credential status lists
 
@@ -496,6 +501,141 @@ not used: the URL itself is asked, and if that has another digest too, the looku
 snapshot does not know is returned with `vouched: false` whichever way it came, which the wallet core reports as a
 warning on the credential.
 
+## Your own mechanisms
+
+The methods above tie a key to a party by fixed rules: the question picks the trust domain, and the domain has a
+certificate profile. A **trust mechanism** is a rule of your own for a class of questions: which proof of key is
+accepted for them, which anchors count, what the certificate must look like, and whether its revocation status must be
+known. It travels in the snapshot, and the library applies it on the device as the service does.
+[Configuration](configuration.md#trust-mechanisms) lists every member and code.
+
+### What the operator lists
+
+The example's [`application.yml`](examples/trust-methods/application.yml) has one mechanism: national identity
+cards (`org.example.id.*`, as mdoc) are trusted through the CAs of a domain of their own, `national-id`, under a
+certificate profile of their own, and only with a known revocation status.
+
+```yaml
+trust:
+  mechanisms:
+    - id: national-id
+      for: { role: issuer, formats: [mso_mdoc], types: ["org.example.id.*"] }
+      keys: [x5c]
+      x509:
+        domain: national-id
+        profile:
+          leaf:
+            ca: false
+            key-usage: [digitalSignature]
+            extended-key-usage: ["1.3.6.1.4.1.99999.1.1"]
+            same-country-as-anchor: true
+            crl-distribution-point: true
+          max-intermediates: 0
+        revocation: required
+```
+
+The [registry](examples/trust-methods/registry.yaml) lists the national CA as an anchor of that domain, belonging to
+the party Utopia Nation, with its CRL (`conformance/pki/nid-ca.crl`, which revokes nothing):
+
+```yaml
+anchors:
+  - id: national-id-ca
+    domain: national-id
+    entity: utopia-nation
+    certificateLocation: conformance/pki/nid-ca.pem
+    constraints:
+      crl: "MIH/MIGlAgEBMAoGCCqGSM49..."
+```
+
+### How a decision is made
+
+1. **Selection.** Mechanisms are tried in the order they are listed; the first whose `for` matches governs the
+   question: the role, the format, and any type the question asserts (an exact type, or a prefix ending in `*`). A
+   question none matches is decided as in the sections above.
+2. **The key.** A key presented in a way `keys` does not list is refused (`mechanism.key_not_accepted`), and so is a
+   DID key of a method `did.methods` does not list (`mechanism.did_method_not_accepted`). An identifier alone is still
+   a registry lookup.
+3. **The anchors.** The anchors of `x509.domain` count, and only those: a chain to an anchor of the default domain is
+   `UNKNOWN` for a governed question (`x509.no_anchor`).
+4. **The certificate.** The built-in profile of the question applies (the table in [X.509 chains](#x509-chains)), and
+   the mechanism's profile on top, one code per member (`profile.*`).
+5. **Revocation.** With `revocation: required`, an unknown status is an error for every client.
+6. **Everything else** is as before: what binds a certificate to the question, DID relationships, identifier binding,
+   the entity's standing and authorizations. A mechanism only adds refusals and chooses the anchors; it never switches a
+   built-in check off. The decision names the mechanism in `evidence.mechanism`.
+
+### Try it
+
+With the example service running:
+
+```sh
+ask wallet-key '{"role": "issuer", "subject": {"x5c": ["'"$(x5c nid-signer)"'"]},
+  "context": {"credentialFormat": "mso_mdoc", "credentialType": "org.example.id.card"}}' | jq "$short + {mechanism: .evidence.mechanism}"
+```
+
+```json
+{
+  "decision": "TRUSTED",
+  "summary": "Trusted credential issuer 'Utopia Nation' in framework 'example'",
+  "reasons": ["INFO x509.valid"],
+  "revocation": [{ "subject": "CN=National ID signer,O=Utopia Nation,C=UT", "status": "GOOD", "reason": null }],
+  "mechanism": "national-id"
+}
+```
+
+Variations (`[decision, mechanism, codes that are not INFO]`):
+
+| Question | Answer |
+| --- | --- |
+| `$(x5c nid-no-dp)`, a signer that names no CRL distribution point, for the same card | `["NOT_TRUSTED","national-id",["profile.crl_distribution_point"]]` |
+| `$(x5c nid-foreign)`, a signer of another country than its CA | `["NOT_TRUSTED","national-id",["profile.country"]]` |
+| `$(x5c ds)`, Utopia DMV's Document Signer, for the same card: its IACA is in the default domain, which does not count | `["UNKNOWN","national-id",["x509.no_anchor"]]` |
+| `$(x5c nid-signer)` for `"credentialType": "org.iso.18013.5.1.mDL"`: no mechanism governs it, and the national CA is no IACA | `["UNKNOWN",null,["x509.no_anchor"]]` |
+| `$(x5c ds)` for the mDL, as in [X.509 chains](#x509-chains) | `["TRUSTED",null,[]]` |
+| A DID key (`"kid": "did:key:z6Mkha...#z6Mkha..."`) for the card | `["NOT_TRUSTED","national-id",["mechanism.key_not_accepted","entity.not_authorized"]]` |
+
+### On the device
+
+The snapshot carries the mechanisms in the claim `mechanisms`, and a snapshot that does is `format: 5`; a service
+without mechanisms keeps issuing `format: 4`. A library that predates mechanisms refuses format 5 ("update the client
+or the service") and decides from pinned trust only, so update the apps before configuring the first mechanism. A
+library that knows them refuses a snapshot whose mechanisms name a member or a value it does not know, rather than apply
+part of a rule. [`library.mjs`](examples/trust-methods/library.mjs) asks the same questions on the device:
+
+```
+snapshot: 4 anchors, 4 entities, 2 CRLs, 1 DID documents, 1 trust mechanism
+rules in force: none; trust mechanisms: national-id
+...
+national ID signer: TRUSTED (decided from: snapshot, under mechanism national-id)
+  INFO x509.valid
+  INFO local.snapshot
+  certificate 0: GOOD, CRL from snapshot
+national ID signer naming no CRL distribution point: NOT_TRUSTED (decided from: snapshot, under mechanism national-id)
+  ERROR profile.crl_distribution_point
+  INFO local.snapshot
+  certificate 0: GOOD, CRL from snapshot
+Document Signer of the IACA, for an ID card: UNKNOWN (decided from: snapshot, under mechanism national-id)
+  WARNING x509.no_anchor
+  INFO local.snapshot
+```
+
+Mechanisms are rules like the client profile, and outlive the data the same way: the mechanisms of the snapshot a
+decision is made from govern it; without a usable snapshot, those of the last snapshot that verified govern decisions
+from [pinned trust](#trust-pinned-in-the-app), also after a restart. An app can state its own (the library option
+`mechanisms`, in the camelCase form of the claim), but they hold only while no snapshot has ever verified: once the
+service has spoken, its list is the list, also when it is empty. `status().rules.mechanisms` lists the ones in force.
+
+### Checking that it works
+
+```sh
+curl -s localhost:8095/.well-known/trust-service | jq .snapshot_format                    # 5
+curl -s -H 'Authorization: Bearer ops-key' localhost:8095/admin/v1/registry | jq -c .mechanisms   # ["national-id"]
+```
+
+The service logs the mechanisms when it starts (`Trust mechanisms, tried in this order: [national-id]`), and does not
+start with one it cannot read exactly: an unknown member or value, a duplicate id, or a member that would never apply,
+named in the message.
+
 ## Where anchors and entities come from
 
 Anchors and entities reach the registry through **sources**, each in one framework
@@ -562,6 +702,7 @@ Document Signer that names no distribution point at all.
 | Identifiers, issuer metadata | Entity identifiers, `metadataPolicy`; `trust.cache.metadata-*` | `allow-unregistered-metadata`, `require-signed-issuer-metadata` | `lookups.metadata`, `issuerMetadata.signed`, `policy.requireSignedIssuerMetadata` |
 | JSON-LD contexts | Entity `contexts`, `oid4vci-discovery` sources; `trust.service.snapshot-max-context-bytes`; `trust.cache.context-ttl`, `relay-contexts` | | `lookups.contexts` |
 | Unknown parties | `openid-federation`, `ebsi-tir` sources | | `lookups.unknownParties` |
+| Your own mechanisms | `trust.mechanisms`; anchors in the domains they name | | `mechanisms` (only while no snapshot has verified) |
 
 The service properties are described in [configuration.md](configuration.md#trust-service), the library options in
 [its section there](configuration.md#client-library).

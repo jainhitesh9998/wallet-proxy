@@ -37,3 +37,24 @@ trust:
       framework: example
       properties:
         location: docs/examples/trust-methods/registry.yaml
+
+  # A trust mechanism (docs/trust-methods.md, "Your own mechanisms"): national identity documents as mdoc are trusted
+  # through the CAs of the national-id domain only, under a certificate profile of their own, with revocation known.
+  mechanisms:
+    - id: national-id
+      for:
+        role: issuer
+        formats: [mso_mdoc]
+        types: ["org.example.id.*"]
+      keys: [x5c]
+      x509:
+        domain: national-id
+        profile:
+          leaf:
+            ca: false
+            key-usage: [digitalSignature]
+            extended-key-usage: ["1.3.6.1.4.1.99999.1.1"]
+            same-country-as-anchor: true
+            crl-distribution-point: true
+          max-intermediates: 0
+        revocation: required

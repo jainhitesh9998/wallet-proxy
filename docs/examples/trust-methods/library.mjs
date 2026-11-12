@@ -12,7 +12,7 @@ const x5c = (name) => pem(name).replace(/-----[^-]+-----|\s/g, '');     // a PEM
 const mdl = { credentialFormat: 'mso_mdoc', credentialType: 'org.iso.18013.5.1.mDL' };
 
 const show = (what, d) => {
-  console.log(`${what}: ${d.decision} (decided from: ${d.source})`);
+  console.log(`${what}: ${d.decision} (decided from: ${d.source}${d.evidence?.mechanism ? `, under mechanism ${d.evidence.mechanism}` : ''})`);
   for (const r of d.reasons) console.log(`  ${r.severity} ${r.code}`);
   for (const r of d.evidence?.x509?.revocation ?? []) {
     console.log(`  certificate ${r.index}: ${r.status}${r.reason ? ` (${r.reason})` : ''}${r.source ? `, CRL from ${r.source}` : ''}`);
@@ -35,10 +35,13 @@ const trust = createTrustClient(pinnedOnly
 
 if (!pinnedOnly) {
   const snapshot = await trust.sync();
-  console.log(`snapshot: ${snapshot.anchors} anchors, ${snapshot.entities} entities, ${snapshot.crls} CRLs, ${snapshot.didDocuments} DID documents`);
+  console.log(`snapshot: ${snapshot.anchors} anchors, ${snapshot.entities} entities, ${snapshot.crls} CRLs, ${snapshot.didDocuments} DID documents, `
+    + `${snapshot.mechanisms} trust mechanism${snapshot.mechanisms === 1 ? '' : 's'}`);
 }
 const { rules } = await trust.status();
-console.log(`rules in force: ${Object.keys(rules).filter((r) => rules[r]).join(', ') || 'none'}`);
+const mechanisms = rules.mechanisms.map((m) => m.id);
+console.log(`rules in force: ${Object.keys(rules).filter((r) => rules[r] === true).join(', ') || 'none'}`
+  + (mechanisms.length ? `; trust mechanisms: ${mechanisms.join(', ')}` : ''));
 
 // X.509 chains: an mdoc Document Signer under the IACA, one that was revoked, and one under nobody's IACA.
 show('Document Signer', await trust.evaluate({ role: 'issuer', subject: { x5c: [x5c('ds')] }, context: mdl }));
@@ -61,4 +64,11 @@ if (!pinnedOnly) {
 
   // An identifier alone, as in a credential offer: a registry lookup.
   show('issuer URL', await trust.evaluateIssuer({ credentialIssuer: 'https://issuer.utopia.example' }));
+
+  // The trust mechanism of application.yml: ID cards (org.example.id.*) count only the CA of the national-id domain,
+  // under a certificate profile of their own, and need a known revocation status.
+  const idCard = { credentialFormat: 'mso_mdoc', credentialType: 'org.example.id.card' };
+  show('national ID signer', await trust.evaluate({ role: 'issuer', subject: { x5c: [x5c('nid-signer')] }, context: idCard }));
+  show('national ID signer naming no CRL distribution point', await trust.evaluate({ role: 'issuer', subject: { x5c: [x5c('nid-no-dp')] }, context: idCard }));
+  show('Document Signer of the IACA, for an ID card', await trust.evaluate({ role: 'issuer', subject: { x5c: [x5c('ds')] }, context: idCard }));
 }

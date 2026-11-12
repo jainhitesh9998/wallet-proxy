@@ -7,7 +7,8 @@ method by method (X.509 chains, CRLs, status lists, DIDs, issuer metadata, JSON-
 
 - [Trust service](#trust-service): [quick start](#quick-start), [service and signing key](#service-and-signing-key),
   [clients](#clients), [authentication](#client-authentication), [frameworks and sources](#frameworks-and-sources),
-  [registry format](#registry-format), [proxy, cache and outbound HTTP](#proxy-cache-and-outbound-http),
+  [registry format](#registry-format), [trust mechanisms](#trust-mechanisms),
+  [proxy, cache and outbound HTTP](#proxy-cache-and-outbound-http),
   [revocation](#revocation), [admin API](#admin-api), [production checklist](#production-checklist)
 - [Client library](#client-library)
 - [Wallet core](#wallet-core)
@@ -267,6 +268,105 @@ proves, never through what a credential claims. List at least one of:
 A credential that names a registered issuer in `iss` or `issuer` while its key is bound to nobody, or to someone
 else, is refused (`identifier.unbound`).
 
+### Trust mechanisms
+
+A trust mechanism is a rule for a class of questions: which proof of key is accepted for them, which trust anchors
+count, what the certificate must look like, and whether its revocation status must be known. Trust is decided on the
+device, so a mechanism is data: every snapshot carries the mechanisms, and the library applies them exactly as the
+service's own evaluator does (the [evaluation vectors](architecture.md#conformance) hold the two alike).
+[Trust methods](trust-methods.md#your-own-mechanisms) works through an example.
+
+```yaml
+trust:
+  mechanisms:
+    - id: national-id                        # reported in every decision it governs (evidence.mechanism)
+      for:                                   # the questions it governs; every member given must match
+        role: issuer                         # issuer | verifier | wallet_provider | status_list_provider
+        formats: [mso_mdoc]                  # credential formats; omitted: any
+        types: ["org.example.id.*"]          # doctype / vct / VC type: exact, or a prefix ending in *; omitted: any
+      keys: [x5c]                            # the proofs of key accepted: x5c, did, jwk; omitted: all
+      x509:
+        domain: national-id                  # the trust domain whose anchors count (instead of the default one)
+        profile:                             # requirements on the chain, on top of the built-in ones
+          leaf:
+            ca: false
+            key-usage: [digitalSignature]
+            extended-key-usage: ["1.3.6.1.4.1.99999.1.1"]
+            same-country-as-anchor: true
+            max-validity-days: 1100
+            crl-distribution-point: true
+          max-intermediates: 0
+        revocation: required                 # an unknown revocation status is an error for every client
+    - id: diplomas
+      for: { role: issuer, formats: [ldp_vc], types: [UniversityDegreeCredential] }
+      keys: [did]
+      did:
+        methods: [web]                       # the DID methods accepted for a DID key; omitted: any
+```
+
+| Member | Values | Meaning |
+| --- | --- | --- |
+| `id` | 1 to 128 letters, digits or `. _ : @ ~ -`; unique | Named in the evidence of every decision the mechanism governs (`evidence.mechanism`, on the service and on the device) |
+| `for.role` | `issuer`, `verifier`, `wallet_provider`, `status_list_provider`; required | The role the question asks about |
+| `for.formats` | `mso_mdoc`, `dc+sd-jwt` (also written `vc+sd-jwt`), `ldp_vc`, `jwt_vc_json`, `jwt_vc_json-ld` | Compared in their canonical spelling. A question that names no format matches only a mechanism without `formats` |
+| `for.types` | A type, or a prefix followed by `*` (printable ASCII, no spaces, `*` only at the end) | A question matches when any type it asserts matches: its doctype, vct or type, and for a W3C credential every type in `credentialTypes`, so that listing the types in another order does not get a question past a mechanism. A question that asserts no type matches only a mechanism without `types` |
+| `keys` | `x5c`, `did`, `jwk` | A key presented another way (an `x5c` chain, a DID key, a bare JWK) is refused. A question without key material (an identifier alone, as with a credential offer) is still a registry lookup |
+| `x509.domain` | A trust domain as anchors name it (lower case, no spaces) | The anchors of that domain, in the client's frameworks, are the ones that count; the default domain's do not. Omitted: the default domain |
+| `x509.profile` | The members below | Requirements on the chain, each a check of its own |
+| `x509.revocation` | `required` | An unknown revocation status is an error, whatever the client profile says. Omitted: the client profile decides |
+| `did.methods` | DID method names (`web`, `key`, `jwk`, ...) | A DID key of another method is refused |
+
+The certificate profile of a mechanism:
+
+| Member | Requirement | Code |
+| --- | --- | --- |
+| `leaf.ca: false` | The signing certificate is not a CA | `profile.leaf_is_ca` |
+| `leaf.key-usage: [..]` | The key usage extension is present and asserts every listed bit (`digitalSignature`, `nonRepudiation`, `keyEncipherment`, `dataEncipherment`, `keyAgreement`, `keyCertSign`, `cRLSign`) | `profile.key_usage` |
+| `leaf.extended-key-usage: [oid..]` | Every listed OID is among the extended key usages | `profile.extended_key_usage` |
+| `leaf.same-country-as-anchor: true` | Leaf and anchor both name a country (the subject's first `C` attribute that is text), and it is the same, compared exactly | `profile.country` |
+| `leaf.max-validity-days: n` | The leaf's notAfter is at most `n` days (1 to 36500) after its notBefore | `profile.validity` |
+| `leaf.crl-distribution-point: true` | The leaf names an http(s) CRL distribution point | `profile.crl_distribution_point` |
+| `max-intermediates: n` | At most `n` (0 to 9) CA certificates between the leaf and the anchor | `profile.path_length` |
+
+Each of these reads what the service's and the library's certificate parsers read alike, so that both reach the same
+decision from the same chain. There is no member for anything else of a certificate.
+
+How mechanisms apply:
+
+- **The first that matches governs.** Mechanisms are tried in the order they are listed; the first whose `for`
+  matches governs the question. A question that none matches is decided exactly as without mechanisms.
+- **A mechanism only tightens.** Everything built in keeps applying to a governed question: RFC 5280 validation, the
+  built-in certificate profile of the question, the anchor's `docTypes`, what binds a certificate to the question (the
+  DNS name of an `x509_san_dns` client identifier, `x509_hash`), DID relationships, identifier binding, the entity's
+  standing and authorizations. A mechanism adds requirements and chooses which anchors count; none of its members
+  switches a built-in check off. The built-in profile follows the question (its role and format: an mDL signer still
+  needs the mDL extended key usage), also when `x509.domain` names a domain of your own; see the table in
+  [X.509 chains](trust-methods.md#x509-chains).
+- **Nothing is ignored.** The service reads `trust.mechanisms` at startup and refuses to start on an unknown member
+  (member names are kebab-case, as everywhere under `trust.*`), an unknown value, a duplicate id, an empty list or
+  block, or a member that would never apply (an `x509` block when `keys` does not accept `x5c`, a `did` block when it
+  does not accept `did`). The message names the mechanism:
+  `Trust mechanism trust.mechanisms[0] ('national-id'): x509 is given, but keys does not accept x5c: it would never apply`.
+  The log names the mechanisms in force when it starts (`Trust mechanisms, tried in this order: [national-id]`), and
+  `GET /admin/v1/registry` lists their ids (`mechanisms`).
+
+| Code | Meaning |
+| --- | --- |
+| `mechanism.key_not_accepted` | The key is presented in a way the governing mechanism's `keys` does not list: `NOT_TRUSTED` |
+| `mechanism.did_method_not_accepted` | A DID key of a method the governing mechanism's `did.methods` does not list: `NOT_TRUSTED` |
+| `profile.leaf_is_ca`, `profile.key_usage`, `profile.extended_key_usage`, `profile.country`, `profile.validity`, `profile.crl_distribution_point`, `profile.path_length` | A member of `x509.profile` is not met (table above): `NOT_TRUSTED` |
+| `x509.revocation_unknown` | With `revocation: required`, an error for every client, not only one with `require-revocation-status` |
+| `x509.no_anchor` | No anchor of the governing domain issued the chain: `UNKNOWN`, also when the default domain lists its CA |
+
+**The snapshot format.** The mechanisms travel in the snapshot claim `mechanisms` (camelCase: `keyUsage`,
+`maxValidityDays`, ...), and a snapshot that carries them is `format: 5`. A service with none configured issues
+`format: 4` without the claim, exactly as before, so that deployments that do not use mechanisms keep working with the
+libraries they have. `/.well-known/trust-service` says which format the service issues (`snapshot_format`). A library
+that predates mechanisms refuses a format 5 snapshot ("Snapshot format 5 is not the format 4 this client reads: update
+the client or the service") and decides from pinned trust instead; one that knows them refuses a snapshot with a
+mechanism member or value it does not know, rather than apply part of a rule. **Update the clients before you
+configure the first mechanism.**
+
 ### Proxy, cache and outbound HTTP
 
 | Property | Default | Meaning |
@@ -378,6 +478,7 @@ await trust.status();
 | `service.keys` | required with `service` | `thumbprints` (RFC 7638) or `jwks` of the service's signing keys. `trustOnFirstUse: true` pins the first key seen: development only |
 | `pinned.anchors`, `pinned.entities` | none | Trust bundled with the app. Used only while no snapshot is usable; with a snapshot the service is the authority, and a pinned anchor does not override it. Pinned trust has no rules of its own: it is decided under the rules in force (`policy`). A pinned anchor's `constraints.crlUrls` say where its CA publishes its CRL, which is then fetched per `lookups.crl` as for an anchor of the snapshot |
 | `policy` | none | The app's own minimum rules: `{ requireRevocationStatus, strictAuthorization, requireSignedIssuerMetadata }`, each `true` or `false`, in force for every decision with or without a snapshot. Each rule in force is the stricter of this and the client profile of the last snapshot that verified, which stays in force when no snapshot is usable (also after a restart, with the same `storage`). An unknown key is an error. `status().rules` reports the rules in force |
+| `mechanisms` | none | The app's own [trust mechanisms](#trust-mechanisms), in the form of the snapshot claim (camelCase: `keyUsage`, `maxValidityDays`, ...), read as strictly: an unknown member or value is an error. In force only while no snapshot has ever verified (with the same `storage`): once one has, its mechanisms are the ones in force, also when it has none, and they stay in force for pinned trust when no snapshot is usable. Unlike the flags of `policy` they do not combine with the service's: an ordered list has no "stricter of the two". `status().rules.mechanisms` lists the mechanisms in force |
 | `lookups` | `'proxy'` with a service | `'proxy'`, `'direct'`, or per kind: `{ metadata, did, crl, statusLists, contexts, unknownParties }`. `crl` may also be `'none'`. `contexts`: JSON-LD contexts the snapshot does not carry, held either way to the digest the snapshot carries (one it does not know is `vouched: false`). `unknownParties: true` asks the service about parties absent from the snapshot (off by default: it tells the service which party) |
 | `issuerMetadata.signed` | `'off'` | `'verify'` uses signed issuer metadata when the issuer has it, `'require'` refuses issuers without it. A client profile with `require-signed-issuer-metadata`, or `policy.requireSignedIssuerMetadata`, forces `'require'` |
 | `snapshot.refreshMs`, `retryMs`, `graceMs` | 1 h, 30 s, 7 d | Refresh interval; wait after a failed refresh; how long an expired snapshot may still be used |

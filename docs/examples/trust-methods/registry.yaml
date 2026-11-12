@@ -19,6 +19,13 @@ entities:
     authorizations:
       - { format: ldp_vc, type: UniversityDegreeCredential }
 
+  # Found through its own CA, in the trust domain of the national-id mechanism (application.yml).
+  - id: utopia-nation
+    roles: [CREDENTIAL_ISSUER]
+    name: Utopia Nation
+    authorizations:
+      - { format: mso_mdoc, type: org.example.id.card }
+
   # Found through a name in its certificate: the CA below is shared by many verifiers.
   - id: verifier-inc
     roles: [VERIFIER]
@@ -46,3 +53,12 @@ anchors:
   - id: issuer-root
     domain: credential-issuer
     certificateLocation: conformance/pki/rsa-root.pem
+
+  # The national ID CA: an anchor of a domain of the operator's naming, which only the national-id mechanism counts.
+  - id: national-id-ca
+    domain: national-id
+    entity: utopia-nation
+    certificateLocation: conformance/pki/nid-ca.pem
+    constraints:
+      # conformance/pki/nid-ca.crl as base64: it revokes nothing.
+      crl: "MIH/MIGlAgEBMAoGCCqGSM49BAMCMEUxCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1VdG9waWEgTmF0aW9uMR4wHAYDVQQDDBVVdG9waWEgTmF0aW9uYWwgSUQgQ0EXDTI2MTExMjA0MTEyNFoXDTQ2MDExMTA0MTEyNFqgLzAtMB8GA1UdIwQYMBaAFLs/FVuJMfzXTOFPja6svS0VNl6qMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQCLVcwNu/o24W9fn6Pl20mKUjbyNa0Qk49wRXUIWIDeaAIhANj5AmhCficZ6Mc5bMNem9NuPFmvaWGdIbx/3yljWEzm"
