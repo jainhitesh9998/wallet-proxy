@@ -455,4 +455,34 @@ class MappedSourceProbesTest {
             }
         }
     }
+
+    // 5: PEM and DER edges ------------------------------------------------------------------------------------------
+
+    @Test
+    void item5_aCertificateTextHoldsCertificatesAndNothingElse() {
+        // The DS certificate (the revoked issuer's signing key) damaged or hidden next to one that reads: the issuer was
+        // listed with the other only, and its CA decided about the DS: TRUSTED.
+        String[] ds = MappedTesting.pem("ds").split("\n", -1);
+        ds[0] = "----begin certificate-----";
+        String damaged = String.join("\n", ds) + MappedTesting.pem("ds-nl");
+        byte[] nl = java.util.Base64.getDecoder().decode(der("ds-nl"));
+        byte[] dsDer = java.util.Base64.getDecoder().decode(der("ds"));
+        byte[] two = new byte[nl.length + dsDer.length];
+        System.arraycopy(nl, 0, two, 0, nl.length);
+        System.arraycopy(dsDer, 0, two, nl.length, dsDer.length);
+        Map<String, String> cases = new LinkedHashMap<>();
+        cases.put("a damaged BEGIN line next to a good block", damaged);
+        cases.put("text after the last block", MappedTesting.pem("ds-nl") + "\nnot a certificate\n");
+        cases.put("two certificates in one base64 DER", java.util.Base64.getEncoder().encodeToString(two));
+        cases.forEach((what, text) -> {
+            var r = revokedDmv(Map.of(), MappedSourceValidationTest.members("certificates", List.of(text)));
+            assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(what).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: ");
+        });
+        // Blocks and white space only, or one certificate in base64: read.
+        assertThat(revokedDmv(Map.of(), MappedSourceValidationTest.members("certificates", List.of("\n  " + MappedTesting.pem("ds") + "\n\n"
+                + MappedTesting.pem("ds-nl") + "  \n")))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        assertThat(revokedDmv(Map.of(), MappedSourceValidationTest.members("certificates", List.of(der("ds")))))
+                .isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+    }
 }

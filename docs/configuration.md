@@ -576,8 +576,10 @@ instant depends on where it was written). A member cannot be read either when:
   filter emptied it, or its items are `null`;
 - it is named in `required` and yields nothing. This is how a renamed member upstream is caught: a `valid_until` that
   became `validUntil` would otherwise read as "no expiry";
-- it holds a PEM text in which a `-----BEGIN` block does not yield a certificate (a damaged block next to a good one,
-  a key): the certificate it was would be bound to nobody;
+- it holds certificates as text that holds something else too: a PEM text in which a `-----BEGIN` block does not
+  yield a certificate (a damaged block next to a good one, a key), or anything but white space outside its blocks (a
+  BEGIN line written with four dashes or in lower case); or a base64 value that is not exactly one certificate (two
+  one after the other). The certificate it was would be bound to nobody;
 - a path of it selects more than 1000 nodes for the record (`null`s and values no translation knows count too), or it
   yields more than 1000 values (all the forms of the member, and the items of a nested `each`, together);
 - one of its values is longer than 8,192 characters, or it would take the record beyond 65,536 characters of mapped

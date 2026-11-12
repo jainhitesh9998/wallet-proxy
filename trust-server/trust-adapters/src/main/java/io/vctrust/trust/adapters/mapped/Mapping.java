@@ -677,15 +677,29 @@ final class Mapping {
             return v == null ? null : scalar(first(v, member, record, root), member);
         }
 
+        /** A PEM certificate block as the certificate parser reads one. */
+        private static final java.util.regex.Pattern PEM_BLOCK = java.util.regex.Pattern.compile(
+                "-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\\s]+?-----END CERTIFICATE-----");
+
         /**
-         * Certificates as text, held to what a PEM text says it holds: every {@code -----BEGIN} must yield a
-         * certificate. A damaged block next to a good one would otherwise be passed over, and the certificate it was
-         * (the party's signing key, say) would be bound to nobody.
+         * Certificates as text, held to what the text says it holds. A PEM text: every {@code -----BEGIN} yields a
+         * certificate, and outside its blocks there is white space only. A base64 value: exactly one certificate, and
+         * nothing after it. A damaged block next to a good one (a BEGIN line written with four dashes or in lower case,
+         * a block of something else), or a second certificate behind the first in one base64 value, would otherwise be
+         * passed over, and the certificate it was (the party's signing key, say) bound to nobody.
          */
         private static <T> T pem(T certificates, String member) {
             for (Object c : certificates instanceof List<?> l ? l : java.util.Collections.singletonList(certificates)) {
-                if (!(c instanceof String text) || !text.contains("-----BEGIN")) {
+                if (!(c instanceof String text)) {
                     continue;
+                }
+                if (!text.contains("-----BEGIN")) {
+                    oneCertificate(text, member);
+                    continue;
+                }
+                if (!PEM_BLOCK.matcher(text).replaceAll("").isBlank()) {
+                    throw new IllegalArgumentException(member + ": a PEM text holds something besides certificate blocks and white "
+                            + "space; every block must be a certificate");
                 }
                 int blocks = 0;
                 for (int at = text.indexOf("-----BEGIN"); at >= 0; at = text.indexOf("-----BEGIN", at + 1)) {
@@ -703,6 +717,26 @@ final class Mapping {
                 }
             }
             return certificates;
+        }
+
+        /** A certificate in base64 (or base64url) DER: one, with nothing after it. */
+        private static void oneCertificate(String text, String member) {
+            byte[] der;
+            java.security.cert.X509Certificate certificate;
+            try {
+                der = io.vctrust.trust.core.util.Base64Url.decodeLenient(text.replaceAll("\\s", ""));
+                certificate = io.vctrust.trust.core.x509.Certificates.fromDer(der);
+            } catch (RuntimeException e) {
+                return;   // not a certificate at all: the registry format says so, naming the member
+            }
+            try {
+                if (certificate.getEncoded().length != der.length) {
+                    throw new IllegalArgumentException(member + ": a base64 value holds more than one certificate, or something after "
+                            + "it; a base64 value is one certificate");
+                }
+            } catch (java.security.cert.CertificateEncodingException e) {
+                throw new IllegalArgumentException(member + ": a certificate that cannot be encoded again");
+            }
         }
 
         private List<String> texts(String member, Object record, Object root) {

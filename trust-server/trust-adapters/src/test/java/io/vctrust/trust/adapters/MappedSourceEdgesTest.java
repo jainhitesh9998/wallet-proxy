@@ -868,7 +868,7 @@ class MappedSourceEdgesTest {
         try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", boundMapping())))) {
             assertThat(decide(registry, MDL)).isNotEqualTo(Decision.TRUSTED);
             assertThat(state(manager, "partner").lastError()).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: "
-                    + "certificates: a PEM text with 2 BEGIN lines yields 1 certificate");
+                    + "certificates: a PEM text holds something besides certificate blocks and white space");   // fourth round, item 5
         }
         // Every block a certificate: read.
         serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates",
@@ -883,7 +883,7 @@ class MappedSourceEdgesTest {
         serveJson(ctx, d);
         var r = loadQuietly(source(ctx, props("mapping", m)));
         assertThat(r.anchors()).extracting(a -> a.id()).containsExactly("rp-ca");
-        assertThat(r.warnings()).singleElement().asString().contains("is skipped: certificate: a PEM text with 2 BEGIN lines yields 1 certificate");
+        assertThat(r.warnings()).singleElement().asString().contains("is skipped: certificate: a PEM text holds something besides certificate blocks");
     }
 
     @Test
