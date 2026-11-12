@@ -9,6 +9,7 @@ import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.core.spi.OnDemandResolver;
 import io.vctrust.trust.core.spi.TrustSource;
 import io.vctrust.trust.core.spi.TrustSourceException;
+import io.vctrust.trust.core.testing.TestPki;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -570,5 +571,62 @@ class MappedSourceAttacksTest {
                     + "status or validity; each keeps the strictest: status SUSPENDED, valid from " + MappedSourceRulesTest.NOW.minus(Duration.ofDays(1))
                     + ", valid until " + soon);
         }
+    }
+
+    // F7: in certificates mode any certificate under a pinned CA could sign the list --------------------------------
+
+    /**
+     * A certificate issued by {@code issuer} (self-signed when null), a CA or not, with the key usage bits given (no key
+     * usage extension when null): what TestPki does not make.
+     */
+    static TestPki.Issued certificate(String dn, TestPki.Issued issuer, boolean ca, Integer keyUsage) throws Exception {
+        java.security.KeyPair keys = TestPki.ecKey();
+        java.security.cert.X509Certificate issuerCert = issuer == null ? null : issuer.certificate();
+        var ext = new org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils();
+        var b = new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+                issuerCert == null ? new org.bouncycastle.asn1.x500.X500Name(dn)
+                        : org.bouncycastle.asn1.x500.X500Name.getInstance(issuerCert.getSubjectX500Principal().getEncoded()),
+                java.math.BigInteger.valueOf(System.nanoTime()), java.util.Date.from(MappedSourceRulesTest.NOW.minus(Duration.ofDays(1))),
+                java.util.Date.from(MappedSourceRulesTest.NOW.plus(Duration.ofDays(365))), new org.bouncycastle.asn1.x500.X500Name(dn), keys.getPublic());
+        b.addExtension(org.bouncycastle.asn1.x509.Extension.subjectKeyIdentifier, false, ext.createSubjectKeyIdentifier(keys.getPublic()));
+        b.addExtension(org.bouncycastle.asn1.x509.Extension.authorityKeyIdentifier, false, issuerCert == null
+                ? ext.createAuthorityKeyIdentifier(keys.getPublic()) : ext.createAuthorityKeyIdentifier(issuerCert));
+        if (ca) {
+            b.addExtension(org.bouncycastle.asn1.x509.Extension.basicConstraints, true, new org.bouncycastle.asn1.x509.BasicConstraints(0));
+        }
+        if (keyUsage != null) {
+            b.addExtension(org.bouncycastle.asn1.x509.Extension.keyUsage, true, new org.bouncycastle.asn1.x509.KeyUsage(keyUsage));
+        }
+        var signer = new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withECDSA")
+                .build(issuer == null ? keys.getPrivate() : issuer.keys().getPrivate());
+        return new TestPki.Issued(new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(b.build(signer)), keys);
+    }
+
+    @Test
+    void f7_theSignerMustBeAllowedToSignAndNoCaUnlessPinned() throws Exception {
+        int sign = org.bouncycastle.asn1.x509.KeyUsage.digitalSignature;
+        int caUsage = org.bouncycastle.asn1.x509.KeyUsage.keyCertSign | org.bouncycastle.asn1.x509.KeyUsage.cRLSign;
+        TestPki.Issued root = certificate("CN=Partner CA,C=UT", null, true, sign | caUsage);
+        TestContext ctx = ctx();
+        TrustSource s = source(ctx, props("format", "jws", "verify", Map.of("certificates",
+                List.of(io.vctrust.trust.core.x509.Certificates.toPem(root.certificate())))));
+        // A list signer: allowed.
+        TestPki.Issued listSigner = certificate("CN=Partner List Signer,C=UT", root, false, sign);
+        serveJws(ctx, MappedSourceRulesTest.signedWithChain(listSigner, listSigner, MappedSourceRulesTest.doc("a")));
+        assertThat(s.load().entities()).hasSize(1);
+        TestPki.Issued noKeyUsage = certificate("CN=Partner Signer Without Key Usage,C=UT", root, false, null);
+        serveJws(ctx, MappedSourceRulesTest.signedWithChain(noKeyUsage, noKeyUsage, MappedSourceRulesTest.doc("a")));
+        assertThat(s.load().entities()).hasSize(1);
+        // A TLS server's certificate from the same CA (key encipherment only) is not allowed to sign anything.
+        TestPki.Issued tls = certificate("CN=www.partner.example,C=UT", root, false, org.bouncycastle.asn1.x509.KeyUsage.keyEncipherment);
+        serveJws(ctx, MappedSourceRulesTest.signedWithChain(tls, tls, MappedSourceRulesTest.doc("a", "evil")));
+        assertThat(loadError(s)).contains("The list's signing certificate may not sign: its key usage does not include digitalSignature");
+        // A CA below the pinned one signs certificates, not lists, even when its key usage would allow a signature.
+        TestPki.Issued subCa = certificate("CN=Partner Sub CA,C=UT", root, true, sign | caUsage);
+        serveJws(ctx, MappedSourceRulesTest.signedWithChain(subCa, subCa, MappedSourceRulesTest.doc("a", "evil")));
+        assertThat(loadError(s)).contains("The list's signing certificate is a CA certificate that is not pinned");
+        // The pinned CA itself may sign, when its key usage allows it.
+        serveJws(ctx, MappedSourceRulesTest.signedWithChain(root, root, MappedSourceRulesTest.doc("a")));
+        assertThat(s.load().entities()).hasSize(1);
     }
 }

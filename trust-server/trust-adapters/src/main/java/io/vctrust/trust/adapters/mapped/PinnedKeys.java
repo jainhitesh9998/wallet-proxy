@@ -273,7 +273,25 @@ final class PinnedKeys {
         if (!pv.valid()) {
             throw new TrustSourceException("The list's signer does not validate to a pinned certificate: " + pv.issues());
         }
-        return List.of(chain.getFirst().getPublicKey());
+        X509Certificate signer = chain.getFirst();
+        allowedToSign(signer);
+        return List.of(signer.getPublicKey());
+    }
+
+    /**
+     * A certificate under a pinned CA may sign the list only if it is allowed to sign at all: with a key usage
+     * extension, that extension asserts {@code digitalSignature} (a TLS server's key-encipherment certificate from the
+     * same CA does not). A CA certificate signs certificates, not lists, unless it is itself pinned.
+     */
+    private void allowedToSign(X509Certificate signer) throws TrustSourceException {
+        boolean[] usage = signer.getKeyUsage();
+        if (usage != null && (usage.length == 0 || !usage[0])) {
+            throw new TrustSourceException("The list's signing certificate may not sign: its key usage does not include digitalSignature");
+        }
+        if (signer.getBasicConstraints() != -1 && !certificates.pinned().contains(signer)) {
+            throw new TrustSourceException("The list's signing certificate is a CA certificate that is not pinned; a CA signs "
+                    + "certificates, not lists");
+        }
     }
 
     /** A verifier only for a key of the algorithm's family, curve and strength. */
