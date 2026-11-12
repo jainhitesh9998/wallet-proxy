@@ -254,17 +254,20 @@ public class TrustCoreConfiguration {
                 props.getCache().getMetadataMaxTtl(), true, signerTrust);
     }
 
-    /** Per client, signed metadata counts only when its signer validates as X509Controller would validate it for that client. */
+    /**
+     * Per client, signed metadata counts only when its signer validates as X509Controller would validate it for that client.
+     * The checker is the evaluator's, also with revocation switched off: it then gives the signer an unknown status, which
+     * a client that requires a known one refuses, as its devices (which always check) refuse it.
+     */
     @Bean
     MetadataService metadataService(IssuerMetadataResolver resolver, TrustRegistry registry, TrustEvaluator evaluator,
                                     TrustProperties props, Clock clock, X509PathValidator validator, RevocationChecker revocation) {
-        RevocationChecker checker = props.getRevocation().isEnabled() ? revocation : null;
         MetadataService.ClientSignerTrust signerTrust = (chain, client) -> {
             List<TrustAnchor> anchors = registry.snapshot().anchors(TrustDomain.CREDENTIAL_ISSUER).stream()
                     .filter(a -> client.accepts(a.frameworkId())).toList();
             PathValidationResult r = validator.validate(chain, anchors, new X509PathValidator.Options(clock.instant(),
                     CertificateProfiles.forDomain(TrustDomain.CREDENTIAL_ISSUER), null, null)
-                    .withRevocation(checker, client.requireRevocationStatus()));
+                    .withRevocation(revocation, client.requireRevocationStatus()));
             return r.valid() ? null : r.issues().stream().filter(ValidationIssue::isError).map(ValidationIssue::message)
                     .reduce((x, y) -> x + "; " + y).orElse("no trusted anchor");
         };
