@@ -82,14 +82,8 @@ final class StrictJson {
      * keeps {@code 1e999999999} as the digit 1 and a scale, and so does every step here.
      */
     static boolean small(Number n) {
-        BigDecimal d;
-        if (n instanceof BigDecimal b) {
-            d = b;
-        } else if (n instanceof BigInteger i) {
-            d = new BigDecimal(i);
-        } else if (n instanceof Integer || n instanceof Long || n instanceof Short || n instanceof Byte) {
-            d = BigDecimal.valueOf(n.longValue());
-        } else {
+        BigDecimal d = decimal(n);
+        if (d == null) {
             return false;   // the parser makes no other kind of number; one it did make is not read
         }
         if (d.signum() == 0) {
@@ -98,5 +92,19 @@ final class StrictJson {
         BigDecimal s = d.stripTrailingZeros();
         long exponent = (long) s.precision() - s.scale() - 1;
         return s.precision() <= MAX_DIGITS && exponent >= -MAX_EXPONENT && exponent <= MAX_EXPONENT;
+    }
+
+    /** A number the parser makes (an integer of any size, or a decimal) exactly; null for any other kind. */
+    static BigDecimal decimal(Number n) {
+        if (n instanceof BigDecimal b) {
+            return b;
+        }
+        if (n instanceof BigInteger i) {
+            return new BigDecimal(i);
+        }
+        if (n instanceof Integer || n instanceof Long || n instanceof Short || n instanceof Byte) {
+            return BigDecimal.valueOf(n.longValue());
+        }
+        return null;
     }
 }

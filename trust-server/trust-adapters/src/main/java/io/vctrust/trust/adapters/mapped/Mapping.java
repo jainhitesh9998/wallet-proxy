@@ -5,9 +5,12 @@ import io.vctrust.trust.core.model.EntityStatus;
 import io.vctrust.trust.core.model.IdentifierType;
 import io.vctrust.trust.core.util.Enums;
 
+import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -32,8 +35,13 @@ final class Mapping {
     record Pages(Value next, int max) {
     }
 
-    /** Asking about one party: only identifiers of these types and prefixes, answered by an entity block. */
-    record Lookup(String url, Set<IdentifierType> types, List<String> prefixes, Block entity, Set<Integer> missStatus) {
+    /**
+     * Asking about one party: only identifiers of these types and prefixes, answered by an entity block.
+     *
+     * @param maxAge how long after its {@code iat} a signed answer without {@code exp} counts; null when not configured
+     */
+    record Lookup(String url, Set<IdentifierType> types, List<String> prefixes, Block entity, Set<Integer> missStatus,
+                  Duration maxAge) {
     }
 
     static final int DEFAULT_MAX_PAGES = 50;
@@ -90,7 +98,8 @@ final class Mapping {
     }
 
     private static Lookup lookup(Object raw) {
-        Map<String, Object> m = members(raw, "mapping.lookup", Set.of("url", "identifierTypes", "startsWith", "entity", "missStatus"));
+        Map<String, Object> m = members(raw, "mapping.lookup", Set.of("url", "identifierTypes", "startsWith", "entity", "missStatus",
+                "maxAge"));
         String url = m.get("url") instanceof String s ? s : null;
         if (url == null || !url.contains("{identifier}")) {
             throw new IllegalArgumentException("mapping.lookup.url must be a URL with {identifier} in it");
@@ -138,8 +147,19 @@ final class Mapping {
         } else {
             miss.add(404);
         }
+        Duration maxAge = null;
+        if (m.containsKey("maxAge")) {
+            try {
+                maxAge = Duration.parse(String.valueOf(m.get("maxAge")).trim());
+            } catch (DateTimeParseException e) {
+                maxAge = Duration.ZERO;
+            }
+            if (maxAge.isNegative() || maxAge.isZero()) {
+                throw new IllegalArgumentException("mapping.lookup.maxAge must be a duration such as PT24H, longer than none");
+            }
+        }
         return new Lookup(url, Set.copyOf(types), List.copyOf(prefixes), Block.entity(m.get("entity"), "mapping.lookup.entity", false),
-                Set.copyOf(miss));
+                Set.copyOf(miss), maxAge);
     }
 
     /** One block: what every match of {@code each} becomes. */
@@ -147,24 +167,31 @@ final class Mapping {
         final String where;
         final JsonPath each;
         final boolean entity;
+        /** Whether a document in which this block finds no record at all is still a list (else the load fails). */
+        final boolean allowEmpty;
         private final Map<String, Object> fields;
 
-        private Block(String where, JsonPath each, boolean entity, Map<String, Object> fields) {
+        private Block(String where, JsonPath each, boolean entity, boolean allowEmpty, Map<String, Object> fields) {
             this.where = where;
             this.each = each;
             this.entity = entity;
+            this.allowEmpty = allowEmpty;
             this.fields = fields;
         }
 
-        static final Set<String> ENTITY_MEMBERS = Set.of("each", "id", "roles", "name", "display", "identifiers", "certificates",
-                "authorizations", "status", "validFrom", "validUntil", "contexts", "attributes", "metadataPolicy", "framework");
-        static final Set<String> ANCHOR_MEMBERS = Set.of("each", "id", "domain", "certificate", "entity", "status", "docTypes",
-                "crlUrls", "crl", "framework");
+        static final Set<String> ENTITY_MEMBERS = Set.of("each", "allowEmpty", "id", "roles", "name", "display", "identifiers",
+                "certificates", "authorizations", "status", "validFrom", "validUntil", "contexts", "attributes", "metadataPolicy",
+                "framework");
+        static final Set<String> ANCHOR_MEMBERS = Set.of("each", "allowEmpty", "id", "domain", "certificate", "entity", "status",
+                "docTypes", "crlUrls", "crl", "framework");
 
         /** @param eachRequired false for a lookup's answer, where {@code each} defaults to the whole document */
         static Block entity(Object raw, String where, boolean eachRequired) {
             Map<String, Object> m = members(raw, where, ENTITY_MEMBERS);
             JsonPath each = each(m, where, eachRequired);
+            if (!eachRequired && m.containsKey("allowEmpty")) {
+                throw new IllegalArgumentException(where + ": allowEmpty applies to the blocks of entities and anchors");
+            }
             Map<String, Object> f = new LinkedHashMap<>();
             f.put("id", required(m, "id", where));
             f.put("roles", many(m.get("roles"), where + ".roles"));
@@ -187,7 +214,7 @@ final class Mapping {
             for (Item item : items(f.get("identifiers"))) {
                 check(item.members.get("type"), IdentifierType.class, "identifier type", where + ".identifiers.type");
             }
-            return new Block(where, each, true, f);
+            return new Block(where, each, true, flag(m, "allowEmpty", where), f);
         }
 
         static Block anchor(Object raw, String where) {
@@ -204,7 +231,7 @@ final class Mapping {
             f.put("crl", optional(m, "crl", where));
             f.put("framework", optional(m, "framework", where));
             check((Value) f.get("status"), EntityStatus.class, "status", where + ".status");
-            return new Block(where, each, false, f);
+            return new Block(where, each, false, flag(m, "allowEmpty", where), f);
         }
 
         private static JsonPath each(Map<String, Object> m, String where, boolean required) {
@@ -543,6 +570,18 @@ final class Mapping {
         throw new IllegalArgumentException(where + " must be a list that is not empty");
     }
 
+    /** A member that is true or false (Spring hands a configured boolean over as text); absent is false. */
+    static boolean flag(Map<String, Object> m, String key, String where) {
+        Object v = m.get(key);
+        if (v == null || Boolean.FALSE.equals(v) || "false".equals(v)) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(v) || "true".equals(v)) {
+            return true;
+        }
+        throw new IllegalArgumentException(where + "." + key + " must be true or false");
+    }
+
     static int positive(Object raw, String where) {
         try {
             int n = raw instanceof Number num ? Math.toIntExact(num.longValue()) : Integer.parseInt(String.valueOf(raw).trim());
@@ -553,6 +592,25 @@ final class Mapping {
             // fall through
         }
         throw new IllegalArgumentException(where + " must be a positive whole number");
+    }
+
+    /** The most seconds since the epoch a date is written with: the twelve digits its text form may have. */
+    private static final BigDecimal MAX_EPOCH_SECONDS = BigDecimal.valueOf(999_999_999_999L);
+
+    /**
+     * A number of seconds since the epoch as an instant: from 0 to 999,999,999,999 (the twelve digits a date's text
+     * form may have), else null. A fraction is cut off, unless {@code whole}, when a number with one is null too.
+     * Bounded whatever the number: its size is compared before anything is computed from it.
+     */
+    static Instant epochSeconds(Number n, boolean whole) {
+        BigDecimal d = StrictJson.decimal(n);
+        if (d == null || d.signum() < 0 || d.compareTo(MAX_EPOCH_SECONDS) > 0) {
+            return null;
+        }
+        if (whole && d.stripTrailingZeros().scale() > 0) {
+            return null;
+        }
+        return Instant.ofEpochSecond(d.longValue());
     }
 
     /** An ISO date-time or date, or seconds since the epoch (a number or a string of digits); null for anything else. */

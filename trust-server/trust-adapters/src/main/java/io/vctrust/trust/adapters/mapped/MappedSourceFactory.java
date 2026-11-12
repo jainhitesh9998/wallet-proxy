@@ -74,6 +74,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     static final int ON_DEMAND_MAX_ENTRIES = 5_000;
     /** A list issued further in the future than this would make every genuine list after it look older. */
     static final Duration CLOCK_SKEW = Duration.ofMinutes(5);
+    /** How long after its iat a signed lookup answer without exp counts, unless lookup.maxAge says otherwise. */
+    static final Duration DEFAULT_LOOKUP_MAX_AGE = Duration.ofHours(24);
     /** The identifiers the admin API accepts for an entry: an id from a document is held to the same rule. */
     private static final Pattern ENTRY_ID = Pattern.compile("[A-Za-z0-9._:@~-]{1,128}");
     private static final Pattern HEADER_NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
@@ -162,6 +164,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
         if (mapping.pages != null && (location == null || !ResourceLoader.isRemote(location))) {
             throw new IllegalArgumentException("mapping.pages needs an https location: the next pages are on its origin");
+        }
+        if (!jws && mapping.lookup != null && mapping.lookup.maxAge() != null) {
+            throw new IllegalArgumentException("mapping.lookup.maxAge applies to format: jws: it bounds how long after its iat "
+                    + "a signed answer counts");
         }
         if (jws && mapping.pages != null && (mapping.list == null || mapping.list.sequence() == null && mapping.list.issuedAt() == null)) {
             throw new IllegalArgumentException("format: jws with pages needs list.sequence or list.issuedAt mapped: each page is "
@@ -319,7 +325,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         page = ResourceLoader.isRemote(config.location()) ? fetch(URI.create(config.location()), now, warnings)
                                 : new Document(document(ctx.resources().load(config.location()), now, warnings), null);
                         first = mapped(page.root());
-                        facts = facts(first, now, warnings);
+                        facts = facts(first, page.root(), now, warnings);
                         if (page.uri() != null) {
                             visited.add(page.uri().toString());
                         }
@@ -463,17 +469,31 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             } catch (IllegalArgumentException e) {
                 throw new TrustSourceException("The document is " + e.getMessage());
             }
-            if (config.jws() && root instanceof Map<?, ?> claims) {
-                jwtClaims(claims, now, warnings);
+            if (config.jws()) {
+                // A payload that is not an object has no claims: none that verify.issuer asks for, either.
+                jwtClaims(root instanceof Map<?, ?> claims ? claims : Map.of(), now, warnings);
             }
             return root;
         }
 
         /**
          * A JWS whose payload is a JWT is held to its claims (RFC 7519 section 4.1): not after {@code exp}, not before
-         * {@code nbf}, and only when addressed to this service when it names an audience at all.
+         * {@code nbf}, only when addressed to this service when it names an audience at all, and only from the issuer
+         * {@code verify.issuer} names, when it names one. An {@code iat} must be a NumericDate too.
          */
         private void jwtClaims(Map<?, ?> claims, Instant now, Warnings warnings) throws TrustSourceException {
+            numericDate(claims, "iat");
+            String issuer = config.keys().issuer();
+            if (issuer != null) {
+                Object iss = claims.get("iss");
+                if (iss == null) {
+                    throw new TrustSourceException("The document names no issuer (iss); verify.issuer is '" + issuer + "'");
+                }
+                if (!issuer.equals(iss)) {
+                    throw new TrustSourceException("The document's issuer (iss) is " + Mapping.quote(iss) + ", not '" + issuer
+                            + "' (verify.issuer)");
+                }
+            }
             Instant exp = numericDate(claims, "exp");
             if (exp != null && now.isAfter(exp.plus(Duration.ofSeconds(60)))) {
                 if (!config.allowExpired()) {
@@ -502,14 +522,11 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (v == null) {
                 return null;
             }
-            if (!(v instanceof Number n)) {
+            Instant i = v instanceof Number n ? Mapping.epochSeconds(n, false) : null;
+            if (i == null) {
                 throw new TrustSourceException("The list's " + name + " is not a NumericDate");
             }
-            try {
-                return Instant.ofEpochSecond(n.longValue());
-            } catch (RuntimeException e) {
-                throw new TrustSourceException("The list's " + name + " is not a NumericDate");
-            }
+            return i;
         }
 
         private record Facts(String issuer, String sequence, Instant issuedAt, Instant nextUpdate) {
@@ -554,12 +571,19 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             return fact == null ? "nothing" : fact instanceof Instant i ? i.toString() : Mapping.quote(fact);
         }
 
-        /** Page 1's facts, held to what they say: not past the next update, not issued in the future. */
-        private Facts facts(Facts f, Instant now, Warnings warnings) throws TrustSourceException {
+        /**
+         * Page 1's facts, held to what they say: not past the next update, not issued in the future. When the mapping
+         * names no issue time, a signed list's own ({@code iat}) is the list's: a list older than the one held is then
+         * refused without any mapping.
+         */
+        private Facts facts(Facts f, Object root, Instant now, Warnings warnings) throws TrustSourceException {
             String issuer = f.issuer();
             String sequence = f.sequence();
             Instant issuedAt = f.issuedAt();
             Instant nextUpdate = f.nextUpdate();
+            if (issuedAt == null && config.jws() && root instanceof Map<?, ?> claims) {
+                issuedAt = numericDate(claims, "iat");
+            }
             if (nextUpdate != null && now.isAfter(nextUpdate)) {
                 if (!config.allowExpired()) {
                     throw new TrustSourceException("The list is past its next update " + nextUpdate
@@ -678,10 +702,17 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 return out;
             }
 
-            /** Records that all fail to map mean that the document's format has changed: the load fails. */
+            /**
+             * Records that all fail to map mean that the document's format has changed: the load fails. So does a block
+             * that finds no record in any page, unless it says {@code allowEmpty}: a document of another kind signed
+             * by the same key, or an empty answer, must not pass for a list that has emptied.
+             */
             void check(Warnings warnings) throws TrustSourceException {
                 if (records == 0) {
-                    warnings.add(block.where + ": the document has no record at " + block.each.text());
+                    if (!block.allowEmpty) {
+                        throw new TrustSourceException(block.where + ": the document has no record at " + block.each.text()
+                                + "; a block that finds none fails the load unless it says allowEmpty: true");
+                    }
                 } else if (mapped == 0) {
                     throw new TrustSourceException(block.where + ": none of the " + records + " records at " + block.each.text()
                             + " could be mapped; " + firstFailure);
@@ -747,6 +778,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     }
                     Warnings ignored = new Warnings();
                     Object root = document(r.body(), now, ignored);
+                    if (config.jws()) {
+                        fresh(root, now, l);
+                    }
                     Provenance provenance = Provenance.of(def.id(), TYPE, def.frameworkId(), publishedLocation(), now);
                     List<Object> records = l.entity().records(root);
                     if (records.size() > config.maxEntities()) {
@@ -768,6 +802,30 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             answers.put(identifier.key(), found, now.plus(found.isPresent() ? ON_DEMAND_TTL : ON_DEMAND_NEGATIVE_TTL));
             return found;
+        }
+
+        /**
+         * A signed answer says when it was made. With {@code exp}, that decides ({@link #jwtClaims}); without it, the
+         * answer counts for {@code lookup.maxAge} after its {@code iat}; with neither, an answer recorded once could
+         * be replayed for as long as the key is pinned, and is refused.
+         */
+        private void fresh(Object root, Instant now, Mapping.Lookup l) throws TrustSourceException {
+            Map<?, ?> claims = root instanceof Map<?, ?> m ? m : Map.of();
+            Instant exp = numericDate(claims, "exp");
+            Instant iat = numericDate(claims, "iat");
+            if (iat != null && iat.isAfter(now.plus(CLOCK_SKEW))) {
+                throw new TrustSourceException("The answer says it was issued at " + iat + ", in the future");
+            }
+            if (exp != null) {
+                return;
+            }
+            if (iat == null) {
+                throw new TrustSourceException("The answer states neither exp nor iat: how old it is cannot be told");
+            }
+            Duration maxAge = l.maxAge() == null ? DEFAULT_LOOKUP_MAX_AGE : l.maxAge();
+            if (now.isAfter(iat.plus(maxAge))) {
+                throw new TrustSourceException("The answer was issued at " + iat + ", more than " + maxAge + " ago (lookup.maxAge)");
+            }
         }
     }
 }

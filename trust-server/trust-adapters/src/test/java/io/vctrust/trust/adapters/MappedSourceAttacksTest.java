@@ -7,10 +7,12 @@ import io.vctrust.trust.core.registry.SourceState;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.core.spi.OnDemandResolver;
+import io.vctrust.trust.core.spi.TrustSource;
 import io.vctrust.trust.core.spi.TrustSourceException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,9 +27,9 @@ import static io.vctrust.trust.adapters.MappedTesting.jwks;
 import static io.vctrust.trust.adapters.MappedTesting.key;
 import static io.vctrust.trust.adapters.MappedTesting.manager;
 import static io.vctrust.trust.adapters.MappedTesting.sign;
-import static io.vctrust.trust.adapters.MappedTesting.utf8;
 import static io.vctrust.trust.adapters.MappedTesting.source;
 import static io.vctrust.trust.adapters.MappedTesting.state;
+import static io.vctrust.trust.adapters.MappedTesting.utf8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -162,5 +164,148 @@ class MappedSourceAttacksTest {
         assertThat(ctx.http.requests).isEmpty();
         assertThat(loadError(source(ctx, props("format", "jws", "verify", Map.of("jwks", jwks(k1)),
                 "mapping", pagedMapping(Map.of("issuedAt", "$.issued")))))).contains("Page 2 of the list says issuedAt");
+    }
+
+    // F3: nothing tied a signed document to what it should be; an empty document was a success -----------------------
+
+    /** The partner's mapping without list facts: nothing in the document but its records and its signature counts. */
+    static Map<String, Object> bare() {
+        Map<String, Object> m = MappedSourceRulesTest.mapping();
+        m.remove("list");
+        return m;
+    }
+
+    @Test
+    void f3_anotherDocumentOfTheSameSignerDoesNotEmptyTheSource() {
+        ECKey k1 = key("k1");
+        TestContext ctx = ctx();
+        TrustSource s = source(ctx, props("format", "jws", "verify", Map.of("jwks", jwks(k1)), "mapping", bare()));
+        serveJws(ctx, sign(k1, MappedSourceRulesTest.doc("a", "b")));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, s)) {
+            assertThat(registry.snapshot().entities()).hasSize(2);
+            // A lookup answer the partner signed with the same key, served at the list's location.
+            serveJws(ctx, sign(k1, Map.of("id", "x", "did", "did:example:x")));
+            assertThat(m.refresh("partner").lastError())
+                    .contains("mapping.entities[0]: the document has no record at $.issuers[*]").contains("allowEmpty");
+            assertThat(registry.snapshot().entities()).hasSize(2);
+            // Counted over all pages, a block that finds nothing loads when it says so.
+            Map<String, Object> mapping = bare();
+            ((Map<String, Object>) ((List<?>) mapping.get("entities")).getFirst()).put("allowEmpty", true);
+            serveJws(ctx, sign(k1, MappedSourceRulesTest.doc()));
+            try {
+                assertThat(source(ctx, props("format", "jws", "verify", Map.of("jwks", jwks(k1)), "mapping", mapping)).load().entities())
+                        .isEmpty();
+            } catch (TrustSourceException e) {
+                throw new AssertionError(e.getMessage());
+            }
+        }
+    }
+
+    @Test
+    void f3_allowEmptyIsABlockMemberAndAFlag() {
+        TestContext ctx = ctx();
+        serveJson(ctx, MappedSourceRulesTest.doc("a"));
+        Map<String, Object> mapping = MappedSourceRulesTest.mapping();
+        ((Map<String, Object>) ((List<?>) mapping.get("entities")).getFirst()).put("allowEmpty", "sometimes");
+        assertThat(loadError(source(ctx, props("mapping", mapping)))).contains("mapping.entities[0].allowEmpty must be true or false");
+        Map<String, Object> lookup = lookupOnly();
+        Map<String, Object> entity = new LinkedHashMap<>(Map.of("id", "$.id", "allowEmpty", true));
+        lookup.put("mapping", Map.of("lookup", Map.of("url", BASE + "{identifier}", "identifierTypes", List.of("DID"),
+                "startsWith", List.of("did:example:"), "entity", entity)));
+        assertThat(loadError(source(ctx, lookup))).contains("mapping.lookup.entity: allowEmpty applies to the blocks of entities and anchors");
+    }
+
+    @Test
+    void f3_withVerifyIssuerTheDocumentMustNameThatIssuer() throws Exception {
+        ECKey k1 = key("k1");
+        TestContext ctx = ctx();
+        TrustSource s = source(ctx, props("format", "jws", "verify", Map.of("jwks", jwks(k1), "issuer", "https://registry.partner.example")));
+        Map<String, Object> claims = new LinkedHashMap<>(MappedSourceRulesTest.doc("a"));
+        claims.put("iss", "https://registry.partner.example");
+        serveJws(ctx, sign(k1, claims));
+        assertThat(s.load().entities()).hasSize(1);
+        claims.put("iss", "https://sandbox.partner.example");
+        serveJws(ctx, sign(k1, claims));
+        assertThat(loadError(s)).contains("The document's issuer (iss) is 'https://sandbox.partner.example', "
+                + "not 'https://registry.partner.example' (verify.issuer)");
+        claims.remove("iss");
+        serveJws(ctx, sign(k1, claims));
+        assertThat(loadError(s)).contains("The document names no issuer (iss); verify.issuer is 'https://registry.partner.example'");
+        // A lookup answer too.
+        Map<String, Object> p = lookupOnly();
+        p.put("format", "jws");
+        p.put("verify", Map.of("jwks", jwks(k1), "issuer", "https://registry.partner.example"));
+        OnDemandResolver r = (OnDemandResolver) source(ctx, p);
+        long iat = MappedSourceRulesTest.NOW.getEpochSecond();
+        ctx.http.respond(BASE + "did%3Aexample%3Ab", 200, "application/jwt", utf8(sign(k1, Map.of("id", "b", "did", "did:example:b",
+                "iat", iat, "iss", "https://sandbox.partner.example"))));
+        assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:b"))).hasMessageContaining("verify.issuer");
+        ctx.http.respond(BASE + "did%3Aexample%3Ac", 200, "application/jwt", utf8(sign(k1, Map.of("id", "c", "did", "did:example:c",
+                "iat", iat, "iss", "https://registry.partner.example"))));
+        assertThat(r.resolve(Identifier.did("did:example:c"))).isPresent();
+    }
+
+    @Test
+    void f3_aSignedListsIatIsItsIssueTimeWhenTheMappingNamesNone() {
+        ECKey k1 = key("k1");
+        TestContext ctx = ctx();
+        TrustSource s = source(ctx, props("format", "jws", "verify", Map.of("jwks", jwks(k1)), "mapping", bare()));
+        Map<String, Object> current = new LinkedHashMap<>(MappedSourceRulesTest.doc("a"));
+        current.put("iat", MappedSourceRulesTest.NOW.minus(Duration.ofHours(1)).getEpochSecond());
+        Map<String, Object> older = new LinkedHashMap<>(MappedSourceRulesTest.doc("a", "withdrawn"));
+        older.put("iat", MappedSourceRulesTest.NOW.minus(Duration.ofDays(3)).getEpochSecond());
+        serveJws(ctx, sign(k1, current));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, s)) {
+            assertThat(state(m, "partner").listInfo().issuedAt()).isEqualTo(MappedSourceRulesTest.NOW.minus(Duration.ofHours(1)));
+            // The list from before "withdrawn" was taken off, signed by the same key, served again.
+            serveJws(ctx, sign(k1, older));
+            assertThat(m.refresh("partner").lastError()).contains("older than the one already loaded");
+            assertThat(registry.snapshot().entities()).extracting(e -> e.id()).containsExactly("partner:a");
+        }
+        current.put("iat", MappedSourceRulesTest.NOW.plus(Duration.ofDays(1)).getEpochSecond());
+        serveJws(ctx, sign(k1, current));
+        assertThat(loadError(s)).contains("in the future");
+        current.put("iat", "yesterday");
+        serveJws(ctx, sign(k1, current));
+        assertThat(loadError(s)).contains("The list's iat is not a NumericDate");
+    }
+
+    @Test
+    void f3_aSignedLookupAnswerMustSayWhenItWasMade() throws Exception {
+        ECKey k1 = key("k1");
+        TestContext ctx = ctx();
+        Map<String, Object> p = lookupOnly();
+        p.put("format", "jws");
+        p.put("verify", Map.of("jwks", jwks(k1)));
+        OnDemandResolver r = (OnDemandResolver) source(ctx, p);
+        long now = MappedSourceRulesTest.NOW.getEpochSecond();
+        // An answer recorded once, and replayed for as long as the key is pinned.
+        ctx.http.respond(BASE + "did%3Aexample%3Aa", 200, "application/jwt", utf8(sign(k1, Map.of("id", "a", "did", "did:example:a"))));
+        assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:a"))).isInstanceOf(TrustSourceException.class)
+                .hasMessageContaining("The answer states neither exp nor iat");
+        ctx.http.respond(BASE + "did%3Aexample%3Ab", 200, "application/jwt", utf8(sign(k1, Map.of("id", "b", "did", "did:example:b",
+                "iat", now - Duration.ofHours(25).toSeconds()))));
+        assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:b"))).hasMessageContaining("more than PT24H ago (lookup.maxAge)");
+        ctx.http.respond(BASE + "did%3Aexample%3Ac", 200, "application/jwt", utf8(sign(k1, Map.of("id", "c", "did", "did:example:c",
+                "iat", now - Duration.ofHours(23).toSeconds()))));
+        assertThat(r.resolve(Identifier.did("did:example:c"))).isPresent();
+        // With exp, exp decides.
+        ctx.http.respond(BASE + "did%3Aexample%3Ad", 200, "application/jwt", utf8(sign(k1, Map.of("id", "d", "did", "did:example:d",
+                "iat", now - Duration.ofDays(30).toSeconds(), "exp", now + 60))));
+        assertThat(r.resolve(Identifier.did("did:example:d"))).isPresent();
+        ctx.http.respond(BASE + "did%3Aexample%3Ae", 200, "application/jwt", utf8(sign(k1, Map.of("id", "e", "did", "did:example:e",
+                "iat", now + Duration.ofDays(1).toSeconds()))));
+        assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:e"))).hasMessageContaining("in the future");
+
+        // lookup.maxAge sets the bound; it applies to signed answers only.
+        Map<String, Object> hour = lookupOnly("maxAge", "PT1H");
+        hour.put("format", "jws");
+        hour.put("verify", Map.of("jwks", jwks(k1)));
+        assertThatThrownBy(() -> ((OnDemandResolver) source(ctx, hour)).resolve(Identifier.did("did:example:c")))
+                .hasMessageContaining("more than PT1H ago (lookup.maxAge)");
+        assertThat(loadError(source(ctx, lookupOnly("maxAge", "PT1H")))).contains("mapping.lookup.maxAge applies to format: jws");
+        assertThat(loadError(source(ctx, lookupOnly("maxAge", "a day")))).contains("mapping.lookup.maxAge must be a duration such as PT24H");
     }
 }

@@ -49,7 +49,8 @@ final class PinnedKeys {
 
     static final Set<JWSAlgorithm> ALGORITHMS = Set.of(JWSAlgorithm.ES256, JWSAlgorithm.ES384, JWSAlgorithm.ES512,
             JWSAlgorithm.PS256, JWSAlgorithm.PS384, JWSAlgorithm.PS512, JWSAlgorithm.RS256, JWSAlgorithm.RS384, JWSAlgorithm.RS512);
-    static final Set<String> MEMBERS = Set.of("jwks", "jwksLocation", "certificates", "certificateLocation", "typ", "audience");
+    static final Set<String> MEMBERS = Set.of("jwks", "jwksLocation", "certificates", "certificateLocation", "typ", "audience",
+            "issuer");
     private static final Pattern COMPACT = Pattern.compile("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+");
     private static final int MAX_CHAIN = 10;
     private static final int MIN_RSA_BITS = 2048;
@@ -58,17 +59,19 @@ final class PinnedKeys {
     private final SignerVerification certificates;
     private final String typ;
     private final String audience;
+    private final String issuer;
 
-    private PinnedKeys(List<JWK> keys, SignerVerification certificates, String typ, String audience) {
+    private PinnedKeys(List<JWK> keys, SignerVerification certificates, String typ, String audience, String issuer) {
         this.keys = keys;
         this.certificates = certificates;
         this.typ = typ;
         this.audience = audience;
+        this.issuer = issuer;
     }
 
     /** No keys: for {@code format: json}, or a JWS list loaded with {@code allowUnverified}. */
     static PinnedKeys none() {
-        return new PinnedKeys(null, null, null, null);
+        return new PinnedKeys(null, null, null, null, null);
     }
 
     static PinnedKeys read(Map<String, Object> verify, ResourceLoader loader) throws IOException {
@@ -83,8 +86,9 @@ final class PinnedKeys {
         }
         String typ = optionalText(verify, "typ");
         String audience = optionalText(verify, "audience");
+        String issuer = optionalText(verify, "issuer");
         if (given.isEmpty()) {
-            return new PinnedKeys(null, null, typ, audience);
+            return new PinnedKeys(null, null, typ, audience, issuer);
         }
         String which = given.getFirst();
         Object raw = verify.get(which);
@@ -93,7 +97,7 @@ final class PinnedKeys {
                 String json = which.equals("jwks")
                         ? (raw instanceof Map<?, ?> ? Json.write(raw) : String.valueOf(raw))
                         : new String(local(loader, String.valueOf(raw), "verify.jwksLocation"), StandardCharsets.UTF_8);
-                return new PinnedKeys(jwks(json, "verify." + which), null, typ, audience);
+                return new PinnedKeys(jwks(json, "verify." + which), null, typ, audience, issuer);
             }
             default -> {
                 List<X509Certificate> certs = new ArrayList<>();
@@ -107,7 +111,7 @@ final class PinnedKeys {
                 if (certs.isEmpty()) {
                     throw new IllegalArgumentException("verify." + which + " holds no certificate");
                 }
-                return new PinnedKeys(null, SignerVerification.of(certs), typ, audience);
+                return new PinnedKeys(null, SignerVerification.of(certs), typ, audience, issuer);
             }
         }
     }
@@ -161,6 +165,11 @@ final class PinnedKeys {
     /** The audience this service has at the list's issuer ({@code verify.audience}), or null. */
     String audience() {
         return audience;
+    }
+
+    /** The {@code iss} every signed document must name ({@code verify.issuer}), or null. */
+    String issuer() {
+        return issuer;
     }
 
     /**

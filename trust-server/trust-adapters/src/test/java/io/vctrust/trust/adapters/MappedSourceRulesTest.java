@@ -496,9 +496,15 @@ class MappedSourceRulesTest {
                     + "record 1 is skipped: Entity without id");
             assertThat(registry.snapshot().entities()).extracting(TrustedEntity::id).containsExactlyInAnyOrder("partner:a", "partner:b");
         }
-        // A block that finds no record at all is not a failure, and is said.
+        // A block that finds no record at all fails too, unless it says that a list without any is a list.
         serveJson(ctx, doc(3, NOW.plus(Duration.ofDays(7))));
-        assertThat(s.load().warnings()).contains("mapping.entities[0]: the document has no record at $.issuers[*]");
+        assertThat(loadError(s)).contains("mapping.entities[0]: the document has no record at $.issuers[*]; "
+                + "a block that finds none fails the load unless it says allowEmpty: true");
+        Map<String, Object> m = mapping();
+        ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("allowEmpty", true);
+        SourceLoadResult empty = source(ctx, props("mapping", m)).load();
+        assertThat(empty.entities()).isEmpty();
+        assertThat(empty.warnings()).isEmpty();
     }
 
     // Rule 7 ----------------------------------------------------------------------------------------------------
@@ -612,9 +618,12 @@ class MappedSourceRulesTest {
         p.put("format", "jws");
         p.put("verify", Map.of("jwks", jwks(k1)));
         OnDemandResolver r = (OnDemandResolver) source(ctx, p);
-        ctx.http.respond(BASE + "did%3Aexample%3Ab", 200, "application/jwt", utf8(sign(k1, Map.of("id", "b", "did", "did:example:b"))));
+        // A signed answer says when it was made (MappedSourceAttacksTest.f3_aSignedLookupAnswerMustSayWhenItWasMade).
+        long iat = NOW.getEpochSecond();
+        ctx.http.respond(BASE + "did%3Aexample%3Ab", 200, "application/jwt", utf8(sign(k1, Map.of("id", "b", "did", "did:example:b", "iat", iat))));
         assertThat(r.resolve(Identifier.did("did:example:b"))).isPresent();
-        ctx.http.respond(BASE + "did%3Aexample%3Ac", 200, "application/jwt", utf8(sign(key("k1"), Map.of("id", "c", "did", "did:example:c"))));
+        ctx.http.respond(BASE + "did%3Aexample%3Ac", 200, "application/jwt", utf8(sign(key("k1"), Map.of("id", "c", "did", "did:example:c",
+                "iat", iat))));
         assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:c"))).hasMessageContaining("does not verify");
     }
 
