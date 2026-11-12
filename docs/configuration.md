@@ -807,8 +807,12 @@ In a second terminal, at the repository root:
 
 ```sh
 curl -s -H 'Authorization: Bearer ops-key' localhost:8096/admin/v1/sources \
-  | jq '.[] | {id, type, lastError, entityCount, anchorCount, listInfo, warnings}'
+  | jq '.[] | {id, type, lastError, entityCount, anchorCount, listInfo, warnings}
+        | .listInfo.details |= (to_entries | sort_by(.key) | from_entries)'
 ```
+
+The service writes the members of `listInfo.details` in no fixed order (it can differ from one start to the next);
+`jq` sorts them here.
 
 ```json
 {
