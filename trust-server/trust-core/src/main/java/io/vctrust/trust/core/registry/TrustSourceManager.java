@@ -180,7 +180,11 @@ public class TrustSourceManager implements AutoCloseable {
         return frameworkIds.stream().filter(f -> !f.equals(framework) && id.endsWith("@" + f)).findFirst();
     }
 
-    /** Asks on-demand capable sources to resolve an identifier missing from the pre-loaded registry. */
+    /**
+     * Asks on-demand capable sources to resolve an identifier missing from the pre-loaded registry. An answer is merged
+     * with the entity the registry lists under its id in the answering source's framework, when there is one
+     * ({@link #heldToTheRegistry}).
+     */
     public Optional<TrustedEntity> resolveOnDemand(Identifier identifier, Predicate<String> acceptsFramework) {
         for (TrustSource s : sources.values()) {
             if (!s.definition().enabled() || !(s instanceof OnDemandResolver r) || !r.canResolve(identifier)) {
@@ -192,7 +196,8 @@ public class TrustSourceManager implements AutoCloseable {
             try {
                 Optional<TrustedEntity> e = r.resolve(identifier);
                 if (e.isPresent()) {
-                    return e.map(found -> inFramework(found, found.id(), s.definition().frameworkId()));
+                    String framework = s.definition().frameworkId();
+                    return e.map(found -> heldToTheRegistry(inFramework(found, found.id(), framework), framework));
                 }
             } catch (TrustSourceException e) {
                 // The identifier is the asker's, the message may quote the registry's answer.
@@ -201,6 +206,38 @@ public class TrustSourceManager implements AutoCloseable {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * An answer fetched on demand, merged with the entity the registry lists under its id in its framework, when there
+     * is one, as two entries of one id are merged ({@link RegistrySnapshot#merge}): the most restrictive status
+     * standing, valid only where both are, and naming no role when either withdraws the party for every role. Taken as
+     * it is, the answer would stand beside the registry's entry instead: a party another source of the framework
+     * withdraws (with no identifier, or other ones) would be trusted by an identifier only the answer gives it. The
+     * merged entity is the registry's, under the name the registry lists it by.
+     */
+    private TrustedEntity heldToTheRegistry(TrustedEntity answer, String framework) {
+        return listed(answer.id(), framework).map(entry -> RegistrySnapshot.merge(entry, answer)).orElse(answer);
+    }
+
+    /**
+     * The entity the registry lists for the id {@code id} of {@code framework}, compared as {@link #rebuild} places it:
+     * under {@code id} when that is free and no other framework's name; under {@code <id>@<framework>} when another
+     * framework has {@code id}, or {@code id} ends in another framework's name. An entity of another framework is never
+     * this framework's.
+     */
+    private Optional<TrustedEntity> listed(String id, String framework) {
+        RegistrySnapshot snapshot = registry.snapshot();
+        if (fallbackNameOf(id, framework).isEmpty()) {
+            Optional<TrustedEntity> at = snapshot.entity(id);
+            if (at.isEmpty()) {
+                return Optional.empty();
+            }
+            if (Objects.equals(at.get().frameworkId(), framework)) {
+                return at;
+            }
+        }
+        return snapshot.entity(id + "@" + framework).filter(e -> Objects.equals(e.frameworkId(), framework));
     }
 
     private void loadQuietly(TrustSource s) {

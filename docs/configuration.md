@@ -231,7 +231,11 @@ status counts, and the merged entity is valid only where every entry is (the lat
 `validUntil` stated), so that an entry saying the registration ended is not outweighed by another that states no
 end. An entry that names no role and whose status is not `ACTIVE` withdraws the party whatever it is asked about,
 so the merged entity then names no role either: given the other entry's roles, it would be left out of a question
-of another role, and the chain to the CA would decide. An id that an entity of another framework already has is listed as `<id>@<framework>`
+of another role, and the chain to the CA would decide. An answer a source gives on demand (an `openid-federation` or
+`ebsi-tir` source, a `mapped` source's `lookup`) is merged the same way with the entity the registry lists under the
+answer's id in that source's framework, where the registry lists it (`<id>@<framework>` included); an answer of an id
+the framework does not list is taken as it is. Taken alone, an answer would let a party that another source of the
+framework withdraws be trusted by an identifier only the answer gives it. An id that an entity of another framework already has is listed as `<id>@<framework>`
 instead. A name `<id>@<framework>` (the id of a
 configured framework, or of one a source loads into) belongs to that framework, so the name an entry falls back to is
 always free. An entity of another framework written with such an id does not get it: it is listed under the name it
@@ -616,8 +620,14 @@ What then happens depends on the record:
   show escaped). A URL, a DID with `%3A`, a name with spaces or letters outside ASCII, an email address and a base64
   key identifier are kept. So another source of the framework names a mapped party, or owns a mapped CA, by the id as
   the list writes it: a `static` registry that withdraws `https://dmv.utopia.example` withdraws the party the mapped
-  list has under that id (the two are one entry, merged by the registry, the stricter status standing), and a mapped
+  list has under that id, both the record of the list (the two are one entry, merged by the registry, the stricter
+  status standing) and a lookup answer of that id (merged with the registry's entry the same way, see *Lookups are
+  bound to the question* below); and a mapped
   CA whose `entity` is `Utopia DMV` belongs to the entity `Utopia DMV` of whichever source of the framework lists it.
+  A mapped record merges into another source's entry of the same id as any two entries do (roles, identifiers,
+  certificates and authorizations are combined, the stricter status standing), so a `static` entry does not limit what
+  the mapped list adds to it: an entry authorized for the mDL only and a mapped record of its id authorized for the PID
+  make one party authorized for both.
   When no source of the framework lists the id a CA's `entity` names, the CA is not loaded, and the source's state
   says so ([Frameworks and sources](#frameworks-and-sources)). An id that ends in `@` and another framework's id
   (`acme@other`) is the registry's to place, under the source's framework (`acme@other@national`). The admin API's
@@ -741,7 +751,12 @@ configuration is read.
   them all. When the answer's id is one that the source's last loaded list also holds (a party asked about by an
   identifier the list does not give it), the stricter status and validity of the two stand, as the registry merges two
   entries of one id: a party the list revokes is not trusted by its other identifiers. This holds for a kept answer as
-  soon as a list is loaded; a list older than the one loaded, which the registry refuses, does not count. Answers are
+  soon as a list is loaded; a list older than the one loaded, which the registry refuses, does not count. The registry
+  then merges every answer it hands out with its own entry of the answer's id in the source's framework, as it lists
+  that id (`<id>@<framework>` when another framework has the id), as two entries of one id are merged
+  ([Frameworks and sources](#frameworks-and-sources)): a party that another source of the framework withdraws (a
+  `static` entry `REVOKED`, with no identifier at all) is not trusted by an identifier only the answer gives it, and
+  a withdrawal that names no role leaves the answer without one. Answers are
   kept for 10 minutes, misses for 1 minute and failures for 30 seconds, at most 5000 of them
   holding at most 16,777,216 characters of mapped text in all (the least recently used go first when either bound is
   reached; expired ones are dropped as new ones come). A `missStatus` is a miss; any other failure is an error. With
