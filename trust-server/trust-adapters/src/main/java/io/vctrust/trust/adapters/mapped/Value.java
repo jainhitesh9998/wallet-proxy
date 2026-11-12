@@ -93,7 +93,15 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
     private static Map<String, Object> table(Object raw) {
         Map<String, Object> table = new LinkedHashMap<>();
         if (raw instanceof Map<?, ?> m) {
-            m.forEach((k, v) -> table.put(String.valueOf(k), scalar(v, "values." + k)));
+            m.forEach((k, v) -> {
+                if (v instanceof Map<?, ?>) {
+                    // What Spring makes of a key with dots in it, such as a URI: it is split into nested keys.
+                    throw new IllegalArgumentException("values." + k + " is not a single value: a key with characters other than "
+                            + "letters, digits, - and _ does not survive Spring's property binding; write it in brackets "
+                            + "(\"[https://...]\"), or give values as a list of {when, then} pairs");
+                }
+                table.put(String.valueOf(k), scalar(v, "values." + k));
+            });
         } else if (raw instanceof List<?> l) {
             for (Object o : l) {
                 if (!(o instanceof Map<?, ?> pair) || pair.size() != 2 || !pair.containsKey("when") || !pair.containsKey("then")) {

@@ -1,0 +1,62 @@
+# MappedSourceEndToEndTest: a service whose only source is a mapped one, configured here, inline, as an operator
+# would write it in application.yml. ${mapped-it.*} are set by the test (the port of its stand-in registry, a token).
+trust:
+  service:
+    issuer: https://trust.test
+  http:
+    allow-private-networks: true
+    http-allowed-hosts: [localhost]
+  revocation:
+    fetch-anchor-crls: false
+  auth:
+    rate-limit:
+      enabled: false
+  clients:
+    - id: wallet
+      api-key: mapped-wallet-key
+      frameworks: [partner]
+  frameworks:
+    - { id: partner, name: Partner registry }
+  sources:
+    - id: partner
+      type: mapped
+      framework: partner
+      refresh: PT1H
+      properties:
+        location: ${mapped-it.base}/v1/issuers
+        headers:
+          Authorization: Bearer ${mapped-it.token}
+        mapping:
+          list:
+            issuer: $.publisher
+            sequence: $.version
+            issuedAt: $.issued
+            nextUpdate: $.next_update
+          pages:
+            next: $.links.next
+          entities:
+            - each: $.issuers[?@.enabled == true && @.kind != 'test']
+              id: { template: "partner:{$.id}" }
+              roles: [CREDENTIAL_ISSUER]
+              name: $.display.name
+              identifiers:
+                - { type: URL, value: $.credential_issuer }
+              authorizations:
+                - { each: "$.credentials[*]", format: $.format, type: $.type }
+              status:
+                path: $.state
+                values: { active: ACTIVE, suspended: SUSPENDED }
+                default: REVOKED
+              validUntil: $.valid_until
+              attributes: { country: $.country, publisher: ^.publisher }
+          anchors:
+            - each: $.authorities[*]
+              id: $.kid
+              # A URI cannot be a Spring property key: translated with {when, then} pairs.
+              domain:
+                path: $.kind
+                values:
+                  - { when: "https://partner.example/kinds/iaca", then: mdoc-iaca }
+              certificate: $.certificate
+              entity: { template: "partner:{$.issuer_id}" }
+              docTypes: $.doctypes[*]
