@@ -22,6 +22,7 @@ API: [`docs/openapi.json`](../docs/openapi.json), or `/swagger-ui.html` on a run
 | `GET /api/v1/proxy/issuer-metadata?issuer=` | OpenID4VCI issuer and authorization server metadata, signed for the client |
 | `GET /api/v1/proxy/did/{did}` | DID resolution, signed for the client |
 | `GET /api/v1/proxy/crl?url=`, `/api/v1/proxy/status-list?uri=` | CRL and status list relays (signed by their own issuers) |
+| `GET /api/v1/proxy/context?url=` | JSON-LD context relay, byte for byte; neither signed nor vouched for (the device checks the digest its snapshot carries) |
 | `GET /api/v1/frameworks`, `/issuers`, `/verifiers`, `/entities/lookup` | The registry as the client may see it; on-demand lookup of unlisted parties |
 | `POST /api/v1/evaluate` | The service's own decision, for verifier backends; the reference the client library is checked against |
 | `/admin/v1/**` | Sources, registry, anchor CRLs, managed entities and anchors, caches (admin clients) |

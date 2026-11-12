@@ -24,6 +24,7 @@ public class ServiceDescription {
     private final TrustSourceManager sources;
     private final DidResolver didResolver;
     private final TrustProperties.Revocation revocation;
+    private final TrustProperties.Cache cache;
     private final TrustProperties.Auth auth;
     private final boolean anonymous;
 
@@ -34,6 +35,7 @@ public class ServiceDescription {
         this.sources = sources;
         this.didResolver = didResolver;
         this.revocation = props.getRevocation();
+        this.cache = props.getCache();
         this.auth = props.getAuth();
         this.anonymous = props.getAnonymous().isEnabled();
     }
@@ -47,6 +49,11 @@ public class ServiceDescription {
         endpoints.put("proxy_did", base + "/api/v1/proxy/did/{did}");
         endpoints.put("proxy_crl", base + "/api/v1/proxy/crl");
         endpoints.put("proxy_status_list", base + "/api/v1/proxy/status-list");
+        // Listed while it answers: the CRL and status list relays say whether they are on under "revocation", contexts
+        // have no such group.
+        if (cache.isRelayContexts()) {
+            endpoints.put("proxy_context", base + "/api/v1/proxy/context");
+        }
         endpoints.put("issuers", base + "/api/v1/issuers");
         endpoints.put("verifiers", base + "/api/v1/verifiers");
         endpoints.put("frameworks", base + "/api/v1/frameworks");

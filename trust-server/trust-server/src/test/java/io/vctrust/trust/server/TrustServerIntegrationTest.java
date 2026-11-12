@@ -51,6 +51,10 @@ class TrustServerIntegrationTest {
     static Path dataDir;
 
     static final String CONTEXT = "{\"@context\":{\"degree\":\"https://vocab.example/degree\"}}";
+    /** A context as a host might write it: spacing, key order and escapes a re-serialization would not keep. */
+    static final byte[] RELAYED_CONTEXT = "{ \"@context\" : {\n  \"name\": \"https://schema.org/name\",\n  \"caf\\u00e9\": \"https://vocab.example/café\" },\n  \"@version\": 1.1 }\n"
+            .getBytes(StandardCharsets.UTF_8);
+    static final java.util.concurrent.atomic.AtomicInteger RELAYED_CONTEXT_FETCHES = new java.util.concurrent.atomic.AtomicInteger();
     /** The URI the second registry is publicly known by: it is read from a file, and published under this name. */
     static final String REGISTRY_B_PUBLIC_URI = "https://lists.trust.test/registry-b.yaml";
 
@@ -84,6 +88,16 @@ class TrustServerIntegrationTest {
             raw("/status/not-a-list.json", "application/json", "{\"internal\":\"what an admin console might say\"}".getBytes(StandardCharsets.UTF_8));
             raw("/contexts/degree/v1", "application/ld+json", CONTEXT.getBytes(StandardCharsets.UTF_8));
             raw("/contexts/pinned/v1", "application/ld+json", CONTEXT.getBytes(StandardCharsets.UTF_8));
+            UPSTREAM.createContext("/contexts/relayed/v1", ex -> {
+                RELAYED_CONTEXT_FETCHES.incrementAndGet();
+                ex.getResponseHeaders().add("Content-Type", "application/json");
+                ex.sendResponseHeaders(200, RELAYED_CONTEXT.length);
+                ex.getResponseBody().write(RELAYED_CONTEXT);
+                ex.close();
+            });
+            raw("/contexts/not-a-context.json", "application/ld+json", "{\"internal\":\"what an admin console might say\"}".getBytes(StandardCharsets.UTF_8));
+            raw("/contexts/not-json", "application/ld+json", "<html>what an admin console might say</html>".getBytes(StandardCharsets.UTF_8));
+            raw("/contexts/oversized", "application/ld+json", ("{\"@context\":{},\"pad\":\"" + "x".repeat(1024 * 1024) + "\"}").getBytes(StandardCharsets.UTF_8));
             UPSTREAM.start();
         } catch (IOException | java.security.cert.CRLException e) {
             throw new IllegalStateException(e);
@@ -208,6 +222,8 @@ class TrustServerIntegrationTest {
     TrustSourceManager sources;
     @Autowired
     CrlService crls;
+    @Autowired
+    io.vctrust.trust.server.config.TrustProperties props;
 
     final HttpClient http = HttpClient.newHttpClient();
 
@@ -627,6 +643,63 @@ class TrustServerIntegrationTest {
                 .containsEntry("crl_proxy", true).containsEntry("status_list_proxy", true);
         assertThat(d.get("snapshot_format")).isEqualTo(4);
         assertThat(d.get("ready")).isEqualTo(true);
+    }
+
+    @Test
+    void contextRelay() throws Exception {
+        String url = UPSTREAM_BASE + "/contexts/relayed/v1";
+        String path = "/api/v1/proxy/context?url=" + java.net.URLEncoder.encode(url, StandardCharsets.UTF_8);
+        int before = RELAYED_CONTEXT_FETCHES.get();
+        var ctx = getBytes(path, "key-a", "Accept", "application/ld+json");
+        assertThat(ctx.statusCode()).isEqualTo(200);
+        assertThat(ctx.headers().firstValue("Content-Type").orElse("")).startsWith("application/ld+json");
+        assertThat(ctx.headers().firstValue("Cache-Control").orElse("")).matches("max-age=\\d+").isNotEqualTo("max-age=0");
+        // Byte for byte as the host served it: the device compares the digest, so a re-serialized document would not count.
+        assertThat(ctx.body()).isEqualTo(RELAYED_CONTEXT);
+        // Held in the cache: the second request does not reach the host.
+        assertThat(getBytes(path, "key-a").body()).isEqualTo(RELAYED_CONTEXT);
+        assertThat(RELAYED_CONTEXT_FETCHES.get() - before).isEqualTo(1);
+
+        // Only a JSON-LD context is passed on, whatever the content type says: the relay reads nothing else for a caller.
+        for (String other : List.of("/contexts/not-a-context.json", "/contexts/not-json", "/contexts/oversized")) {
+            var refused = get("/api/v1/proxy/context?url=" + UPSTREAM_BASE + other, "key-a", "Accept", "application/ld+json");
+            assertThat(refused.statusCode()).as(other).isEqualTo(502);
+            assertThat(refused.headers().firstValue("Content-Type").orElse("")).as(other).startsWith("application/problem+json");
+            assertThat(json(refused).get("code")).as(other).isEqualTo("invalid_context");
+            assertThat(refused.body()).as(other).doesNotContain("admin console");
+        }
+        var missing = get("/api/v1/proxy/context?url=" + UPSTREAM_BASE + "/contexts/nowhere", "key-a");
+        assertThat(missing.statusCode()).isEqualTo(502);
+        assertThat(json(missing).get("code")).isEqualTo("upstream_unavailable");
+
+        // The same URL rules as every relay: http(s) only, and plain http only for the hosts the operator allows.
+        var ftp = get("/api/v1/proxy/context?url=ftp://contexts.example/v1", "key-a");
+        assertThat(ftp.statusCode()).isEqualTo(400);
+        assertThat(json(ftp).get("code")).isEqualTo("invalid_request");
+        String plainHttpBase = UPSTREAM_BASE.replace("localhost", "127.0.0.1"); // not in http-allowed-hosts
+        var plainHttp = get("/api/v1/proxy/context?url=" + plainHttpBase + "/contexts/relayed/v1", "key-a");
+        assertThat(plainHttp.statusCode()).isEqualTo(400);
+        assertThat(json(plainHttp).get("code")).isEqualTo("invalid_request");
+        assertThat(json(plainHttp).get("detail").toString()).contains("Only https");
+        assertThat(RELAYED_CONTEXT_FETCHES.get() - before).isEqualTo(1);
+
+        // Like every relay, it answers authenticated clients only.
+        assertThat(get(path, null).statusCode()).isEqualTo(401);
+        assertThat(get(path, "wrong").statusCode()).isEqualTo(401);
+
+        var d = json(get("/.well-known/trust-service", null));
+        assertThat(((Map<?, ?>) d.get("endpoints")).get("proxy_context")).isEqualTo("https://trust.test/api/v1/proxy/context");
+
+        // Switched off, it is not there.
+        props.getCache().setRelayContexts(false);
+        try {
+            var off = get(path, "key-a");
+            assertThat(off.statusCode()).isEqualTo(404);
+            assertThat(json(off).get("code")).isEqualTo("not_found");
+            assertThat(((Map<?, ?>) json(get("/.well-known/trust-service", null)).get("endpoints")).containsKey("proxy_context")).isFalse();
+        } finally {
+            props.getCache().setRelayContexts(true);
+        }
     }
 
     @Test

@@ -71,6 +71,7 @@ trust:
     metadata-max-ttl: PT1H
     did-ttl: PT15M
     context-ttl: PT24H
+    relay-contexts: true                        # serve /api/v1/proxy/context: contexts a snapshot does not carry
     negative-ttl: PT30S
     stale-if-error: PT24H
     max-bytes: 33554432

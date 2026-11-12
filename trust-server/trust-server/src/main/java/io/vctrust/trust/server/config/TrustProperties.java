@@ -165,6 +165,8 @@ public class TrustProperties {
         private Duration didTtl = Duration.ofMinutes(15);
         /** JSON-LD contexts are meant to be immutable; a changed one is logged. */
         private Duration contextTtl = Duration.ofHours(24);
+        /** Serve {@code /api/v1/proxy/context}: contexts a snapshot does not carry, relayed from this cache. */
+        private boolean relayContexts = true;
         /** How long a failure is remembered, and how long a failed refresh is not retried. */
         private Duration negativeTtl = Duration.ofSeconds(30);
         /** How long a stale entry may be served when the upstream is unavailable. */
@@ -191,6 +193,8 @@ public class TrustProperties {
 
         public Duration getContextTtl() { return contextTtl; }
         public void setContextTtl(Duration v) { this.contextTtl = v; }
+        public boolean isRelayContexts() { return relayContexts; }
+        public void setRelayContexts(boolean v) { this.relayContexts = v; }
         public long getMaxBytes() { return maxBytes; }
         public void setMaxBytes(long v) { this.maxBytes = v; }
         public int getMaxDocumentBytes() { return maxDocumentBytes; }

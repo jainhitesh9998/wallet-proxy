@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -37,6 +38,9 @@ import java.util.concurrent.TimeoutException;
  * <p>An operator can pin a context's digest ({@code contexts: [{url, sha256}]} on an entity). A pinned context whose
  * content no longer matches is not shipped; the pin still is, so a wallet that fetches the context itself can refuse
  * it. An unpinned context that changes is shipped as it now is, and the change is logged.
+ *
+ * <p>A context the snapshot does not carry, or carries by its digest only, a wallet asks the context relay for
+ * ({@link ContextRelay}), which answers from the same cache.
  */
 public class ContextService {
 
@@ -54,7 +58,15 @@ public class ContextService {
     public record Context(String sha256, Map<String, Object> document, int bytes) {
     }
 
-    private record Fetched(String sha256, Map<String, Object> document, int bytes) {
+    /** A context document as its host served it, for the relay, and the instant the copy held expires. */
+    public record Relayed(byte[] body, Instant expiresAt) {
+    }
+
+    /** @param body the document as served: the digest is of these bytes, and the relay passes them on unchanged */
+    private record Fetched(String sha256, Map<String, Object> document, byte[] body) {
+        int bytes() {
+            return body.length;
+        }
     }
 
     private final HttpFetcher http;
@@ -153,6 +165,23 @@ public class ContextService {
         return new Context(f.sha256(), f.document(), f.bytes());
     }
 
+    /**
+     * The context at {@code url} for the relay, from the same cache the snapshots are built from: the bytes its host
+     * served, never a re-serialization, because a device compares their digest with the one its snapshot carries.
+     * Only a JSON object with an {@code @context} member within {@code max-document-bytes} is held; anything else
+     * fails with an {@link IllegalArgumentException}.
+     */
+    public Relayed relay(String url) throws IOException {
+        try {
+            ResourceCache.Hit<Fetched> hit = cache.get(url, () -> fetch(url), x -> cfg.getContextTtl());
+            return new Relayed(hit.value().body(), hit.expiresAt());
+        } catch (IOException | RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
     private Fetched fetch(String url) throws IOException {
         HttpFetcher.Response r = http.fetchOk(HttpFetcher.Request.get(URI.create(url), "application/ld+json, application/json;q=0.9"));
         if (r.body().length > cfg.getMaxDocumentBytes()) {
@@ -167,7 +196,7 @@ public class ContextService {
         if (!document.containsKey("@context")) {
             throw new IllegalArgumentException("Not a JSON-LD context document: no @context");
         }
-        return new Fetched(Base64.getUrlEncoder().withoutPadding().encodeToString(Hashes.sha256(r.body())), document, r.body().length);
+        return new Fetched(Base64.getUrlEncoder().withoutPadding().encodeToString(Hashes.sha256(r.body())), document, r.body());
     }
 
     public void clear() {

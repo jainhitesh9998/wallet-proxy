@@ -2,6 +2,7 @@ package io.vctrust.trust.server.api;
 
 import io.vctrust.trust.core.did.DidResolutionResult;
 import io.vctrust.trust.core.policy.ClientProfile;
+import io.vctrust.trust.server.service.ContextRelay;
 import io.vctrust.trust.server.service.CrlRelay;
 import io.vctrust.trust.server.service.DidService;
 import io.vctrust.trust.server.service.MetadataService;
@@ -26,6 +27,8 @@ import java.time.Duration;
  *     snapshot.</li>
  * <li>{@code crl} and {@code status-list}: objects signed by their issuer, passed through byte for byte; the client
  *     verifies them, so the proxy need not be trusted for them.</li>
+ * <li>{@code context}: JSON-LD context documents, passed through byte for byte; the client compares their digest with
+ *     the one its snapshot carries, and nothing else makes one count.</li>
  * </ul>
  *
  * Every call tells the service which party a client is dealing with; clients that must not reveal that fetch from
@@ -36,19 +39,22 @@ import java.time.Duration;
 public class ProxyController {
 
     static final MediaType PKIX_CRL = MediaType.parseMediaType("application/pkix-crl");
+    static final MediaType LD_JSON = MediaType.parseMediaType("application/ld+json");
 
     private final MetadataService metadata;
     private final DidService dids;
     private final CrlRelay crls;
     private final StatusListRelay statusLists;
+    private final ContextRelay contexts;
     private final ResponseSigner signer;
 
     public ProxyController(MetadataService metadata, DidService dids, CrlRelay crls, StatusListRelay statusLists,
-                           ResponseSigner signer) {
+                           ContextRelay contexts, ResponseSigner signer) {
         this.metadata = metadata;
         this.dids = dids;
         this.crls = crls;
         this.statusLists = statusLists;
+        this.contexts = contexts;
         this.signer = signer;
     }
 
@@ -87,5 +93,12 @@ public class ProxyController {
         StatusListRelay.Relayed r = statusLists.fetch(uri, req.getHeader("Accept"));
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(r.contentType()))
                 .cacheControl(CacheControl.maxAge(r.maxAge()).cachePrivate()).body(r.body());
+    }
+
+    /** The JSON-LD context at {@code url}, byte for byte as its host served it. */
+    @GetMapping("/context")
+    public ResponseEntity<byte[]> context(ClientProfile client, @RequestParam String url) {
+        ContextRelay.Relayed r = contexts.relay(url);
+        return ResponseEntity.ok().contentType(LD_JSON).cacheControl(CacheControl.maxAge(r.maxAge())).body(r.body());
     }
 }

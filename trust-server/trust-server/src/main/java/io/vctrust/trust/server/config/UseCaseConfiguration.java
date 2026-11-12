@@ -7,6 +7,7 @@ import io.vctrust.trust.core.spi.ResourceLoader;
 import io.vctrust.trust.server.managed.ManagedEntityStore;
 import io.vctrust.trust.server.security.ClientRegistry;
 import io.vctrust.trust.server.service.AdministrationService;
+import io.vctrust.trust.server.service.ContextRelay;
 import io.vctrust.trust.server.service.ContextService;
 import io.vctrust.trust.server.service.CrlRelay;
 import io.vctrust.trust.server.service.CrlService;
@@ -53,6 +54,11 @@ public class UseCaseConfiguration {
     @Bean
     CrlRelay crlRelay(CrlService crls, TrustProperties props, Clock clock) {
         return new CrlRelay(crls, props.getRevocation(), clock);
+    }
+
+    @Bean
+    ContextRelay contextRelay(ContextService contexts, TrustProperties props, Clock clock) {
+        return new ContextRelay(contexts, props.getCache(), clock);
     }
 
     @Bean

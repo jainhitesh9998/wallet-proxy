@@ -5,11 +5,12 @@
  * service never learns which credentials, issuers or verifiers the user deals with: the client contacts it to
  * refresh the snapshot and nothing else, unless a lookup below is routed through its proxy.
  *
- * Documents a counterparty would otherwise be asked for (issuer metadata, DID documents, CRLs, status lists) come
- * through the service's proxy first, and from the counterparty by the standard mechanism when the proxy cannot
- * serve them ({@code lookups: 'proxy'}, the default), or always from the counterparty ({@code 'direct'}). A proxied
- * document is either signed by its own issuer and verified here (CRLs, status lists, signed issuer metadata), or
- * signed by the service and verified with the pinned service keys (issuer metadata, DID documents).
+ * Documents a counterparty would otherwise be asked for (issuer metadata, DID documents, CRLs, status lists, JSON-LD
+ * contexts) come through the service's proxy first, and from the counterparty by the standard mechanism when the
+ * proxy cannot serve them ({@code lookups: 'proxy'}, the default), or always from the counterparty ({@code 'direct'}).
+ * A proxied document is either signed by its own issuer and verified here (CRLs, status lists, signed issuer
+ * metadata), signed by the service and verified with the pinned service keys (issuer metadata, DID documents), or
+ * held to the digest the snapshot carries (JSON-LD contexts).
  *
  * Without a usable snapshot the client decides from the trust pinned in the app, and says so in every decision; it
  * never answers TRUSTED without verified data. The rules do not lapse with the data: the app's own minimum and the
@@ -73,6 +74,8 @@ export interface LookupPolicy {
   crl?: LookupVia | 'none';
   /** Credential status lists. */
   statusLists?: LookupVia;
+  /** JSON-LD context documents the snapshot does not carry; held either way to the digest the snapshot carries. */
+  contexts?: LookupVia;
   /** Ask the service about parties absent from the snapshot (registries too large to ship: OpenID Federation, EBSI). */
   unknownParties?: boolean;
 }
@@ -184,9 +187,11 @@ export class TrustClient {
       requireSecureUrl(service.url, 'The trust service', insecureHosts);
     }
     const via: LookupVia = service ? 'proxy' : 'direct';
-    const l = typeof config.lookups === 'string' ? { metadata: config.lookups, did: config.lookups, crl: config.lookups, statusLists: config.lookups }
+    const l: LookupPolicy = typeof config.lookups === 'string'
+      ? { metadata: config.lookups, did: config.lookups, crl: config.lookups, statusLists: config.lookups, contexts: config.lookups }
       : config.lookups ?? {};
-    this.lookups = { metadata: l.metadata ?? via, did: l.did ?? via, crl: l.crl ?? via, statusLists: l.statusLists ?? via, unknownParties: l.unknownParties ?? false };
+    this.lookups = { metadata: l.metadata ?? via, did: l.did ?? via, crl: l.crl ?? via, statusLists: l.statusLists ?? via,
+      contexts: l.contexts ?? via, unknownParties: l.unknownParties ?? false };
     const store = config.storage ?? new MemoryCacheStore();
     this.serviceStatus = service ? 'unknown' : 'unconfigured';
     this.transport = service ? new HttpTransport({
@@ -382,9 +387,10 @@ export class TrustClient {
 
   /**
    * A JSON-LD context document. Contexts decide what a Data Integrity signature covers, so the ones the listed
-   * parties use travel in the snapshot with their digests. One the snapshot does not ship is fetched from its host
-   * and checked against the snapshot's digest when there is one; a context the snapshot does not know at all is
-   * returned with {@code vouched: false}, for the caller to refuse or to flag.
+   * parties use travel in the snapshot with their digests. One the snapshot does not ship is looked up per
+   * {@code lookups.contexts} (the service's relay, then its own URL) and must have the snapshot's digest when there is
+   * one; a context the snapshot does not know at all is returned with {@code vouched: false}, whichever way it came,
+   * for the caller to refuse or to flag.
    */
   context(url: string): Promise<ContextDocument> {
     return this.contexts.get(url);

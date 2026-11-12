@@ -60,7 +60,7 @@ test-ecosystem (reference issuer, verifier)  ──►  third-party implementati
 | Credential status lists (Token Status List, Bitstring Status List) | Through the proxy | The list's own URI |
 | DID documents | In the snapshot for listed DIDs; through the proxy for others | The DID method (`did:web` over https; `did:key` and `did:jwk` are computed locally) |
 | Issuer and authorization server metadata | Through the proxy | Discovery at the issuer |
-| JSON-LD contexts | In the snapshot, or their digest | The context's URL, reported as not vouched for |
+| JSON-LD contexts | In the snapshot for the listed parties; through the proxy for others, held to the digest the snapshot carries | The context's URL. Either way, a context the snapshot has no digest for is reported as not vouched for |
 
 Whatever is relayed is verified on the device: a CRL against the CA that issued it, a status list against its signer,
 everything else against the pinned key of the service. OCSP is not used. How each of these is configured and

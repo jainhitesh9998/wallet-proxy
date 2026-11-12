@@ -14,7 +14,7 @@ and the protocol, and so does what an operator has to list:
 | [Status list](#credential-status-lists) | Credentials: Token Status List (SD-JWT VC, mdoc), Bitstring Status List (W3C) | Nothing per list; optionally who else may sign lists | The list's signature and signer, then the credential's entry | The list's own URI |
 | [DID](#dids) | W3C credentials with Data Integrity proofs; verifiers named by a DID | The DID, as an identifier of an entity | The key is in the DID document, under the right relationship | `did:key` and `did:jwk` on the device; `did:web` at its host |
 | [Identifier and issuer metadata](#identifiers-and-issuer-metadata) | A credential offer, before any key is seen | The issuer's URL, as an identifier | A registry lookup; metadata signed by the service | Discovery at the issuer |
-| [JSON-LD context](#json-ld-contexts) | Data Integrity proofs | The contexts an issuer's credentials use | The digest of each context document | The context's URL, reported as not vouched for |
+| [JSON-LD context](#json-ld-contexts) | Data Integrity proofs | The contexts an issuer's credentials use | The digest of each context document | The context's URL, held to the digest in the snapshot it holds; one the snapshot does not know is reported as not vouched for |
 
 Two more sections cover what these rest on: [where anchors and entities come from](#where-anchors-and-entities-come-from)
 (a hand-written registry, the admin API, ETSI lists, a VICAL, OpenID Federation, EBSI) and
@@ -474,9 +474,24 @@ An `oid4vci-discovery` source adds the contexts that a listed issuer's metadata 
 context and puts it into the snapshot (`contexts`): the document itself up to `snapshot-max-context-bytes` in
 total, past that its digest only.
 
-On the device, `trust.context(url)` returns the document from the snapshot; one that the snapshot knows by digest
-only is fetched from its URL and must have that digest; one the snapshot does not know at all is fetched and
-returned with `vouched: false`, which the wallet core reports as a warning on the credential.
+The service also relays contexts: `GET /api/v1/proxy/context?url=<https URL>` answers with the document byte for
+byte as its host served it (`application/ld+json`), from the same cache, kept for `trust.cache.context-ttl`. The relay
+neither signs nor vouches: a context counts on the device only by the digest its snapshot carries. It passes on only
+a JSON object with an `@context` member no larger than `trust.cache.max-document-bytes` (1 MiB), so that it is not a
+way to read other documents from where the service stands; anything else is `502 invalid_context`, a host that does
+not answer or answers with an error `502 upstream_unavailable`, a URL that is not https (or plain http to a host in
+`http-allowed-hosts`) or that leads to an internal address `400 invalid_request`. `trust.cache.relay-contexts: false`
+switches it off (`404`).
+
+On the device, `trust.context(url)` returns the document from the snapshot. One the snapshot knows by digest only,
+or does not know at all, is looked up per `lookups.contexts`: through the relay, and from its own URL when the relay
+cannot serve or answers with something that does not count (`'proxy'`, the default with a service), or from its
+URL only (`'direct'`). What a route hands over counts when it is a JSON object with `@context`, at most 1 MiB, and,
+when the snapshot knows the context, has exactly the snapshot's digest. A relayed document with another digest is
+not used: the URL itself is asked, and if that has another digest too, the lookup fails (`TrustIntegrityError`).
+`source` says where the document came from (`snapshot`, `proxy`, `direct`, `fallback`, `cache`). A context the
+snapshot does not know is returned with `vouched: false` whichever way it came, which the wallet core reports as a
+warning on the credential.
 
 ## Where anchors and entities come from
 
@@ -542,7 +557,7 @@ Document Signer that names no distribution point at all.
 | Status lists | `trust.revocation.relay-status-lists`, `status-list-default-ttl`, `status-list-max-ttl`, `max-status-list-bytes`; anchors of domain `status-list` | | `lookups.statusLists` |
 | DIDs | Entity identifiers; `trust.service.snapshot-did-documents` and its limits; `trust.did.*`; `trust.cache.did-ttl` | | `lookups.did` |
 | Identifiers, issuer metadata | Entity identifiers, `metadataPolicy`; `trust.cache.metadata-*` | `allow-unregistered-metadata`, `require-signed-issuer-metadata` | `lookups.metadata`, `issuerMetadata.signed`, `policy.requireSignedIssuerMetadata` |
-| JSON-LD contexts | Entity `contexts`, `oid4vci-discovery` sources; `trust.service.snapshot-max-context-bytes`; `trust.cache.context-ttl` | | |
+| JSON-LD contexts | Entity `contexts`, `oid4vci-discovery` sources; `trust.service.snapshot-max-context-bytes`; `trust.cache.context-ttl`, `relay-contexts` | | `lookups.contexts` |
 | Unknown parties | `openid-federation`, `ebsi-tir` sources | | `lookups.unknownParties` |
 
 The service properties are described in [configuration.md](configuration.md#trust-service), the library options in

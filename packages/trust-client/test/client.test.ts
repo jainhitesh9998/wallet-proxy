@@ -390,19 +390,92 @@ describe('JSON-LD contexts', () => {
     expect(calls.some((x) => x.includes('issuer.example'))).toBe(false);
   });
 
-  it('fetched from the host, must match the digest the snapshot carries', async () => {
+  const ld = (body: Uint8Array<ArrayBuffer> | string) => new Response(body, { headers: { 'Content-Type': 'application/ld+json' } });
+  const relay = `${BASE}/api/v1/proxy/context`;
+  /** A snapshot that knows the context by its digest only. */
+  const knownByDigest = async () => {
     const sha256 = await digest();
-    const host = { [URL_]: () => new Response(bytes, { headers: { 'Content-Type': 'application/ld+json' } }) };
-    const ok = await client(fakeFetch({ ...snapshotRoute(() => ({ contexts: { [URL_]: { sha256 } } })), ...host }).fetch).context(URL_);
+    return snapshotRoute(() => ({ contexts: { [URL_]: { sha256 } } }));
+  };
+  const toHost = (calls: string[]) => calls.filter((x) => x.startsWith(`GET ${URL_}`));
+  const toRelay = (calls: string[]) => calls.filter((x) => x.startsWith(`GET ${relay}`));
+
+  it("fetched from the host with lookups 'direct', must match the digest the snapshot carries", async () => {
+    const sha256 = await digest();
+    const host = { [URL_]: () => ld(bytes) };
+    const { fetch, calls } = fakeFetch({ ...snapshotRoute(() => ({ contexts: { [URL_]: { sha256 } } })), ...host, [relay]: () => ld(bytes) });
+    const ok = await client(fetch, { lookups: { contexts: 'direct' } }).context(URL_);
     expect(ok).toMatchObject({ source: 'direct', vouched: true, sha256 });
-    const swapped = client(fakeFetch({ ...snapshotRoute(() => ({ contexts: { [URL_]: { sha256: 'another-digest' } } })), ...host }).fetch);
+    expect(toRelay(calls)).toEqual([]);
+    const swapped = client(fakeFetch({ ...snapshotRoute(() => ({ contexts: { [URL_]: { sha256: 'another-digest' } } })), ...host }).fetch,
+      { lookups: { contexts: 'direct' } });
     await expect(swapped.context(URL_)).rejects.toBeInstanceOf(TrustIntegrityError);
   });
 
-  it('one the snapshot does not know is returned as not vouched for', async () => {
-    const { fetch } = fakeFetch({ ...snapshotRoute(), [URL_]: () => new Response(bytes, { headers: { 'Content-Type': 'application/ld+json' } }) });
-    expect(await client(fetch).context(URL_)).toMatchObject({ source: 'direct', vouched: false });
+  it("one the snapshot does not know is returned as not vouched for (lookups 'direct')", async () => {
+    const { fetch, calls } = fakeFetch({ ...snapshotRoute(), [URL_]: () => ld(bytes), [relay]: () => ld(bytes) });
+    expect(await client(fetch, { lookups: 'direct' }).context(URL_)).toMatchObject({ source: 'direct', vouched: false });
+    expect(calls.some((x) => x.includes('/api/v1/proxy/'))).toBe(false);
     await expect(client(fetch).context('http://issuer.example/contexts/v1')).rejects.toThrow(/https/);
+  });
+
+  it('go through the relay first, never to their host while it serves; vouched only with the digest of the snapshot', async () => {
+    // The snapshot knows the digest: the relayed bytes are held to it.
+    const known = fakeFetch({ ...(await knownByDigest()), [relay]: () => ld(bytes), [URL_]: () => ld(bytes) });
+    const c = client(known.fetch);
+    expect(await c.context(URL_)).toEqual({ document, sha256: await digest(), source: 'proxy', vouched: true });
+    expect(toRelay(known.calls)).toEqual([`GET ${relay}?url=${encodeURIComponent(URL_)}`]);
+    expect(toHost(known.calls)).toEqual([]);
+    expect(await c.context(URL_)).toMatchObject({ source: 'cache', vouched: true });
+    expect(toRelay(known.calls)).toHaveLength(1);
+
+    // The snapshot does not know it: relayed all the same, and not vouched for, from the relay or the cache.
+    const unknown = fakeFetch({ ...snapshotRoute(), [relay]: () => ld(bytes), [URL_]: () => ld(bytes) });
+    const u = client(unknown.fetch);
+    expect(await u.context(URL_)).toEqual({ document, sha256: await digest(), source: 'proxy', vouched: false });
+    expect(await u.context(URL_)).toMatchObject({ source: 'cache', vouched: false });
+    expect(toHost(unknown.calls)).toEqual([]);
+  });
+
+  it('are fetched from their URL when the relay cannot serve, or answers with something that does not count', async () => {
+    const other = new TextEncoder().encode(JSON.stringify({ '@context': { degree: 'https://evil.example/degree' } }));
+    // [case, the relay's answer, whether the snapshot knows the digest]. The shape and size cases are asked about a
+    // context the snapshot does not know, so that nothing but the rule under test can refuse them.
+    const cases: Array<[string, () => Response, boolean]> = [
+      ['down', down, true],
+      ['down, not known', down, false],
+      ['switched off', () => json({ code: 'not_found', detail: 'The JSON-LD context relay is disabled', status: 404 }, 404), true],
+      ['the host failed it', () => json({ code: 'upstream_unavailable', detail: 'unavailable', status: 502 }, 502), true],
+      ['another document than the snapshot vouches for', () => ld(other), true],
+      ['not a context', () => ld(JSON.stringify({ internal: true })), false],
+      ['a list', () => ld(JSON.stringify([{ '@context': {} }])), false],
+      ['not JSON', () => ld('<html>sign in</html>'), false],
+      ['larger than a context may be', () => ld(JSON.stringify({ '@context': {}, pad: 'x'.repeat(1024 * 1024) })), false],
+    ];
+    for (const [name, answer, known] of cases) {
+      const { fetch, calls } = fakeFetch({ ...(known ? await knownByDigest() : snapshotRoute()), [relay]: answer, [URL_]: () => ld(bytes) });
+      expect(await client(fetch).context(URL_), name).toEqual({ document, sha256: await digest(), source: 'fallback', vouched: known });
+      expect(toRelay(calls), name).toHaveLength(1);
+      expect(toHost(calls), name).toHaveLength(1);
+    }
+  });
+
+  it('fail with the integrity error when the relay and the host both have another document than the snapshot vouches for', async () => {
+    const other = new TextEncoder().encode(JSON.stringify({ '@context': { degree: 'https://evil.example/degree' } }));
+    const { fetch, calls } = fakeFetch({ ...(await knownByDigest()), [relay]: () => ld(other), [URL_]: () => ld(other) });
+    const c = client(fetch);
+    await expect(c.context(URL_)).rejects.toBeInstanceOf(TrustIntegrityError);
+    expect([toRelay(calls).length, toHost(calls).length]).toEqual([1, 1]);
+    // Nothing of it was kept: a later lookup asks again.
+    await expect(c.context(URL_)).rejects.toBeInstanceOf(TrustIntegrityError);
+  });
+
+  it('without a service go to their URL', async () => {
+    const { fetch, calls } = fakeFetch({ [URL_]: () => ld(bytes) });
+    const c = createTrustClient({ http: { fetch, retries: 0 } });
+    expect(c.lookups.contexts).toBe('direct');
+    expect(await c.context(URL_)).toMatchObject({ source: 'direct', vouched: false });
+    expect(calls).toEqual([`GET ${URL_}`]);
   });
 });
 

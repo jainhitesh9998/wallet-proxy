@@ -183,7 +183,7 @@ printers of platforms differ.
 | DID document | In the snapshot for listed DIDs; `GET /api/v1/proxy/did/{did}` for others | Snapshot signature; signed response bound to the DID | The DID method itself (`did:web` over https; `did:key` and `did:jwk` are computed locally) |
 | CRL | In the snapshot for anchors; `GET /api/v1/proxy/crl?url=` for others | The CRL's signature, checked against the issuing CA | Where the CA publishes: the distribution point a certificate names, or for an anchor its `crlUrls` (a root's own distribution point when it lists none) |
 | Credential status list | `GET /api/v1/proxy/status-list?uri=` | The list's own signature and signer (Token Status List, Bitstring Status List) | The list's URI |
-| JSON-LD context | In the snapshot, or its digest | Snapshot signature; SHA-256 of the fetched document | The context's https URL, reported as not vouched for |
+| JSON-LD context | In the snapshot for the contexts of listed parties (past a size limit, their digest only); `GET /api/v1/proxy/context?url=` for the others, byte for byte | Snapshot signature; the SHA-256 of a relayed or fetched document must be the snapshot's digest. The relay neither signs nor vouches: a context the snapshot has no digest for is reported as not vouched for, whichever way it came | The context's https URL |
 | Unknown party (registries too large to ship) | `GET /api/v1/entities/lookup` (off by default) | Signed by the service; must name the identifier asked about | none: the party stays unknown |
 
 Each kind can be switched to `direct` in the library (a proxied lookup tells the service which party the user is
@@ -259,7 +259,8 @@ the operator allows, and for CRLs, which are signed), no private, loopback, link
 address (checked on the address the socket then connects to), redirects re-checked hop by hop, response size and
 total time capped, and the caps end the fetch instead of reading on. Errors say that a host could not be reached,
 not how or at which address. The relays pass on only what they are for: a CRL that parses as one, a document with
-the shape of a status list, validated issuer metadata, a DID document whose `id` is the DID. A `did:web` names a
+the shape of a status list, validated issuer metadata, a DID document whose `id` is the DID, a JSON object with an
+`@context` member no larger than a context may be (byte for byte, since the device checks its digest). A `did:web` names a
 host and plain path segments, nothing a URL parser could read as another resource. What one OpenID Federation
 lookup may fetch is bounded.
 
