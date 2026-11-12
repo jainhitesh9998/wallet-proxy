@@ -579,7 +579,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         }
                         for (Object record : records) {
                             Object mapped = mapAnchor(block, record, page.root(), provenance, text, ids);
-                            if (mapped instanceof Skipped s && !s.certificates().isEmpty()) {
+                            if (mapped instanceof Skipped s && (!s.certificates().isEmpty() || !s.complete())) {
                                 unread.add(new Unread(anchorTallies[b].records + 1, s));
                             }
                             anchorTallies[b].count(mapped, warnings);
@@ -1354,7 +1354,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          * row of a CA that another row lists active left the CA trusted.
          */
         private static Skipped skipped(Mapping.Block block, String id, String reason, Map<String, Object> entry, String certificateText) {
-            List<java.security.cert.X509Certificate> certificates = Mapping.everyCertificate(certificateText);
+            Mapping.Held certificates = Mapping.everyCertificate(certificateText);
             String domain = null;
             if (entry.get("domain") instanceof String d) {
                 try {
@@ -1363,15 +1363,16 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     // a domain that cannot be read could be any: the certificate alone is compared
                 }
             }
-            return new Skipped(block, id, reason, certificates, domain);
+            return new Skipped(block, id, reason, certificates.certificates(), certificates.complete(), domain);
         }
 
         /**
          * A record that is skipped, and why. For an anchor record, the certificates it names (empty when none can be
-         * read) and its domain (null when it cannot be read).
+         * read), whether its certificate text could be read completely for them, and its domain (null when it cannot be
+         * read).
          */
         private record Skipped(Mapping.Block block, String id, String reason, List<java.security.cert.X509Certificate> certificates,
-                               String domain) {
+                               boolean complete, String domain) {
             /** The reason may quote the document unquoted (the registry format's parser names what it refuses): escaped. */
             Skipped {
                 reason = reason == null ? "it cannot be read" : Mapping.escape(reason);
@@ -1387,18 +1388,25 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          * cannot be read cannot be said to agree. A CA listed active as {@code row-1} and, by {@code row-7}, in a way
          * the mapping cannot read (a withdrawal in an unknown status, doctypes in another shape) would otherwise be
          * trusted through {@code row-1}: the load fails, naming both. A skipped record whose domain cannot be read is
-         * compared by its certificate alone.
+         * compared by its certificate alone. A skipped record whose certificate text could not be read completely (base64
+         * lines beside its blocks that would cost too much to try, {@link Mapping#everyCertificate}) could be about any
+         * certificate: the load fails, naming it. Lines written to use up the tries before the IACA would otherwise keep
+         * a withdrawn {@code row-7} from ever meeting {@code row-1}.
          */
         private static void unread(List<TrustAnchor> listed, List<Unread> unread) throws TrustSourceException {
             for (Unread u : unread) {
+                String record = u.number() + " of " + u.record().block().where
+                        + (u.record().id() == null ? "" : " (id " + Mapping.quote(u.record().id()) + ")");
                 for (TrustAnchor a : listed) {
                     if (u.record().certificates().contains(a.certificate())
                             && (u.record().domain() == null || u.record().domain().equals(a.domain().name()))) {
-                        throw new TrustSourceException("Anchor " + Mapping.quote(a.id()) + " and record " + u.number() + " of "
-                                + u.record().block().where + (u.record().id() == null ? "" : " (id " + Mapping.quote(u.record().id()) + ")")
-                                + " have the same certificate in domain " + a.domain().name() + ", and the record cannot be read: which "
-                                + "one holds cannot be told");
+                        throw new TrustSourceException("Anchor " + Mapping.quote(a.id()) + " and record " + record + " have the same "
+                                + "certificate in domain " + a.domain().name() + ", and the record cannot be read: which one holds cannot be told");
                     }
+                }
+                if (!u.record().complete()) {
+                    throw new TrustSourceException("Record " + record + " cannot be read, nor can its certificate text be read completely: "
+                            + "which certificate it is about cannot be told");
                 }
             }
         }

@@ -172,12 +172,126 @@ class MappedSourceFollowUpsTest {
     @Test
     void item3_linesThatStartMoreRangesThanCanBeTriedCannotBeRead() {
         // Each line starts a range of 16 lines to try as a certificate: written so, the most a certificate text may hold
-        // would cost the square of its length. Up to four times the run's characters are tried; beyond, it is refused.
+        // would cost the square of its length. Up to four times the value's base64 characters are tried; beyond, it is
+        // refused.
         var r = revokedWith(block(derOf("ds-nl")) + headers(64));
         assertThat(r.getValue()).isNotEqualTo(Decision.TRUSTED);
         assertThat(r.getKey()).startsWith(UNTRIED);
         // A few such ranges are tried, and hold no certificate: text that explains the block.
         assertThat(revokedWith(block(derOf("ds")) + headers(17))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+    }
+
+    // 3, after review: what a certificate text may cost, and certificates that end partway through a line --------------
+
+    /** {@code head}, then {@code line} over and over with {@code between} after every hundred, up to 1,048,576 characters. */
+    static String padded(String head, String line, String between) {
+        StringBuilder b = new StringBuilder(head);
+        for (int n = 1; b.length() + line.length() + between.length() <= 1_048_576; n++) {
+            b.append(line);
+            if (n % 100 == 0) {
+                b.append(between);
+            }
+        }
+        return b.toString();
+    }
+
+    @Test
+    void item3_linesThatCallTheCertificateParserInVainOverAndOverCannotBeReadAndCostLittle() {
+        // MAA is a SEQUENCE of two bytes: each line one call of the certificate parser, which costs far more than the
+        // three characters it reads. Tried all, they loaded after seconds (and the revoked issuer, bound to ds-nl only,
+        // was trusted through its DS). The tries are counted for the whole value, not for each run of lines.
+        Map<String, String> texts = new LinkedHashMap<>();
+        texts.put("MAA lines", padded(block(derOf("ds-nl")), "MAA\n", ""));
+        texts.put("MAA lines, CRLF", padded(block(derOf("ds-nl")).replace("\n", "\r\n"), "MAA\r\n", ""));
+        texts.put("MAA lines, a line of other text after every hundred", padded(block(derOf("ds-nl")), "MAA\n", "page break\n"));
+        texts.forEach((what, text) -> {
+            assertThat(text.length()).as(what).isBetween(1_048_000, 1_048_576);
+            long fastest = Long.MAX_VALUE;
+            for (int round = 0; round < 3 && fastest >= 500; round++) {
+                long began = System.nanoTime();
+                var r = revokedWith(text);
+                fastest = Math.min(fastest, (System.nanoTime() - began) / 1_000_000);
+                assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
+                assertThat(r.getKey()).as(what).startsWith(UNTRIED);
+            }
+            assertThat(fastest).as(what + ": milliseconds to load and decide").isLessThan(500);
+        });
+    }
+
+    /** DER certificates (or bytes) one after the other, as one stream of base64 in lines of 64 characters. */
+    static String joined(byte[]... ders) {
+        java.io.ByteArrayOutputStream all = new java.io.ByteArrayOutputStream();
+        for (byte[] d : ders) {
+            all.writeBytes(d);
+        }
+        return Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(all.toByteArray()) + "\n";
+    }
+
+    @Test
+    void item3_aBareCertificateThatEndsPartwayThroughALineCannotBeRead() {
+        Map<String, String> hidden = new LinkedHashMap<>();
+        // The first certificate ends partway through a line: its range was not tried, and the stream was passed over.
+        hidden.put("a block, then the RP CA and the DS as one stream", block(derOf("ds-nl")) + joined(derOf("rp-ca"), derOf("ds")));
+        hidden.put("a block, then the DS and other bytes as one stream", block(derOf("ds-nl")) + joined(derOf("ds"), new byte[10]));
+        String lines = bare("ds");
+        hidden.put("a block, then the DS with characters after its last line", block(derOf("ds-nl"))
+                + lines.substring(0, lines.length() - 1) + "AAAA\n");
+        hidden.forEach((what, text) -> {
+            var r = revokedWith(text);
+            assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(what).startsWith(BARE);
+        });
+        // A withdrawn CA row written so is about the IACA, first in the stream or after another certificate: the load
+        // fails, naming both rows. It was read as ds-nl, and the IACA was trusted through row-1.
+        for (String text : List.of(block(derOf("ds-nl")) + joined(derOf("iaca"), derOf("rp-ca")),
+                block(derOf("ds-nl")) + joined(derOf("rp-ca"), derOf("iaca")))) {
+            var tied = rows(text);
+            try (TrustSourceManager m = tied.getValue()) {
+                assertThat(state(m, "partner").lastError()).isEqualTo(sameCertificate("mdoc-iaca"));
+                assertThat(MappedSourceValidationTest.decide(tied.getKey(), MDL)).isNotEqualTo(Decision.TRUSTED);
+            }
+        }
+    }
+
+    @Test
+    void item3_textBesideTheBlocksThatHoldsNoCertificateIsPassedOver() throws Exception {
+        java.security.cert.X509Certificate ds = io.vctrust.trust.core.x509.Certificates.fromDer(derOf("ds"));
+        byte[] hash = java.security.MessageDigest.getInstance("SHA-256").digest(derOf("ds"));
+        String hex = java.util.HexFormat.of().formatHex(hash);
+        byte[] key = ds.getPublicKey().getEncoded();
+        byte[] noise = new byte[225];
+        new java.util.Random(20261112).nextBytes(noise);
+        Map<String, String> honest = new LinkedHashMap<>();
+        honest.put("labels of capitals", "MASTER\nMAIN\nMOBILE\nMINISTRY\nMDL\n");
+        honest.put("a SHA-256 in base64", Base64.getEncoder().encodeToString(hash) + "\n");
+        honest.put("a SHA-256 in base64url", Base64.getUrlEncoder().withoutPadding().encodeToString(hash) + "\n");
+        honest.put("a SHA-256 in hex", hex + "\n" + hex.toUpperCase(java.util.Locale.ROOT) + "\n");
+        honest.put("a fingerprint with colons", "SHA256 Fingerprint=" + java.util.HexFormat.ofDelimiter(":").withUpperCase().formatHex(hash) + "\n");
+        honest.put("serial numbers", ds.getSerialNumber().toString(16) + "\n" + ds.getSerialNumber() + "\nserial="
+                + ds.getSerialNumber().toString(16).toUpperCase(java.util.Locale.ROOT) + "\n");
+        honest.put("a bare public key on one line", Base64.getEncoder().encodeToString(key) + "\n");
+        honest.put("a bare public key in lines of 64", Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(key) + "\n");
+        honest.put("a line of 300 random base64 characters", Base64.getEncoder().encodeToString(noise) + "\n");
+        honest.forEach((what, text) -> {
+            assertThat(revokedWith(text + MappedTesting.pem("ds"))).as(what).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+            assertThat(revokedWith(MappedTesting.pem("ds") + text)).as(what + ", after the block")
+                    .isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        });
+    }
+
+    static final String UNTRIED_ROW = "Record 2 of mapping.anchors[0] (id 'row-7') cannot be read, nor can its certificate text be read "
+            + "completely: which certificate it is about cannot be told";
+
+    @Test
+    void item3_aSkippedCaRowWhoseTextCouldNotBeTriedCompletelyFailsTheLoad() {
+        // Lines that use up the tries before the IACA: the row was skipped, the IACA never compared with row-1, and trusted.
+        for (String padding : List.of(headers(64), "MAA\n".repeat(1100))) {
+            var tied = rows(block(derOf("ds-nl")) + padding + bare("iaca"));
+            try (TrustSourceManager m = tied.getValue()) {
+                assertThat(state(m, "partner").lastError()).isEqualTo(UNTRIED_ROW);
+                assertThat(MappedSourceValidationTest.decide(tied.getKey(), MDL)).isNotEqualTo(Decision.TRUSTED);
+            }
+        }
     }
 
     // 4: a CA row skipped for its certificate text still says which certificates it is about ---------------------------

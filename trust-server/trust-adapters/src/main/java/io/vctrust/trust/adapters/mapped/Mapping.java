@@ -750,49 +750,84 @@ final class Mapping {
         /** A line of base64 characters only, of either alphabet, padded or not. */
         private static final java.util.regex.Pattern BASE64_LINE = java.util.regex.Pattern.compile("[A-Za-z0-9+/_=-]+");
 
-        /** How many times the characters of its run the ranges tried that hold no certificate may read together. */
+        /** How many times the base64 characters of a value the tries that find no certificate may read together. */
         private static final int TRIED = 4;
+
+        /** How many times the certificate parser may be called in vain for one value: a call costs far more than its bytes. */
+        private static final int TRIED_PARSES = 1024;
 
         /**
          * The certificates that the text outside the blocks of a PEM text holds without their armor, added to
          * {@code into}. In a run of lines that consist only of base64 characters (blank lines, and where a block was, do
-         * not end it), a certificate is the bytes decoded from one line of the run to the same or a later line, when they
-         * parse as one X.509 certificate. Passed over as text that explains the blocks, such a certificate was bound to
-         * nobody (a revoked party whose text is one good block and a second certificate as bare base64 lines was bound to
-         * the first only), and it is found whatever base64 line stands beside it: a word ({@code A}), a {@code subject=}
-         * line without spaces. A run in which no range is a certificate is text that explains the blocks, a label of
-         * capitals in it too ({@code MASTER} decodes to 0x30, as DER does, and was read as DER). Lines with anything else
-         * in them ({@code subject=} with spaces, "Bag Attributes") end a run.
+         * not end it), a certificate starts at the start of a line, ends anywhere in the run (at the end of a line, or
+         * partway through one: the stream {@code DER(a)‖DER(b)} written in lines of 64), and is what the bytes decoded from
+         * there parse as; the certificates that follow it in those bytes, one after another, are found too. Passed over as
+         * text that explains the blocks, such a certificate was bound to nobody (a revoked party whose text is one good
+         * block and a second certificate as bare base64 lines was bound to the first only), and it is found whatever base64
+         * line stands beside it: a word ({@code A}), a {@code subject=} line without spaces, characters after its last
+         * line. A run in which no line starts a certificate is text that explains the blocks, a label of capitals in it
+         * too ({@code MASTER} decodes to 0x30, as DER does, and was read as DER). Lines with anything else in them
+         * ({@code subject=} with spaces, "Bag Attributes") end a run.
          *
-         * <p>Each line is tried once, as the start of the range that its first bytes state: a DER SEQUENCE states its
-         * length, and so the line it ends at; one that would end inside a line, past the run or that states no length
-         * is no certificate. The lines of a certificate found are not tried again. The ranges tried that hold none may
-         * read {@link #TRIED} times the run's characters together, and no more: lines that each start a long range would
-         * otherwise cost the square of the text (up to {@link Mapping#MAX_CERTIFICATE_TEXT} characters).
+         * <p>Each line is tried once, over the length that its first bytes state: a DER SEQUENCE states its length; one
+         * that would run past the run or that states no length is no certificate. The lines that start inside the
+         * certificates found are not tried again. What one value may cost is counted for the whole value, all its runs
+         * together: the tries that find no certificate may read {@link #TRIED} times its base64 characters, and call the
+         * certificate parser {@link #TRIED_PARSES} times. Lines that each start a long range would otherwise cost the
+         * square of the text (up to {@link Mapping#MAX_CERTIFICATE_TEXT} characters), and lines of {@code MAA} (each a
+         * SEQUENCE of two bytes) one call of the parser for every four characters: seconds for one value.
          *
-         * @return whether every range was tried; false when the rest was not, a certificate among it or not
+         * @return whether every line was tried; false when the rest was not, a certificate among it or not
          */
         static boolean bareDer(CharSequence outside, List<byte[]> into) {
+            List<List<String>> runs = new ArrayList<>();
             List<String> run = new ArrayList<>();
+            long characters = 0;
             for (String line : outside.toString().split("\r\n|\r|\n", -1)) {
                 String l = line.strip();
-                if (l.isEmpty() || BASE64_LINE.matcher(l).matches()) {
-                    // A blank line does not part the lines of a certificate: two runs, neither one by itself.
-                    if (!l.isEmpty()) {
-                        run.add(l);
-                    }
-                    continue;
+                if (l.isEmpty()) {
+                    continue;   // a blank line does not part the lines of a certificate: two runs, neither one by itself
                 }
-                if (!bareDer(run, into)) {
+                if (BASE64_LINE.matcher(l).matches()) {
+                    run.add(l);
+                    characters += l.length();
+                } else if (!run.isEmpty()) {
+                    runs.add(run);
+                    run = new ArrayList<>();
+                }
+            }
+            if (!run.isEmpty()) {
+                runs.add(run);
+            }
+            Tries tries = new Tries(TRIED * characters, TRIED_PARSES);
+            for (List<String> r : runs) {
+                if (!bareDer(r, into, tries)) {
                     return false;
                 }
-                run.clear();
             }
-            return bareDer(run, into);
+            return true;
+        }
+
+        /** What the tries of one value that find no certificate may still read, and how many more there may be. */
+        private static final class Tries {
+            private long characters;
+            private int parses;
+
+            Tries(long characters, int parses) {
+                this.characters = characters;
+                this.parses = parses;
+            }
+
+            /** A try that found no certificate, of so many characters: whether the value may still cost it. */
+            boolean inVain(long read) {
+                characters -= read;
+                parses--;
+                return characters >= 0 && parses >= 0;
+            }
         }
 
         /** The certificates in one run of base64 lines ({@link #bareDer(CharSequence, List)}). */
-        private static boolean bareDer(List<String> run, List<byte[]> into) {
+        private static boolean bareDer(List<String> run, List<byte[]> into, Tries tries) {
             // The run as the lenient decoder reads it, '=' dropped and one alphabet; line i starts at character start[i].
             StringBuilder text = new StringBuilder();
             int[] start = new int[run.size() + 1];
@@ -805,45 +840,68 @@ final class Mapping {
                 }
             }
             start[run.size()] = text.length();
-            long budget = (long) TRIED * text.length();
-            for (int i = 0; i < run.size(); i++) {
-                long bytes = sequenceLength(text, start[i]);
-                long end = bytes < 0 || start[i] == start[i + 1] ? -1 : start[i] + (4 * bytes + 2) / 3;   // unpadded base64
-                int next = end < 0 || end > text.length() ? -1 : java.util.Arrays.binarySearch(start, i + 1, start.length, (int) end);
-                if (next < 0) {
+            int i = 0;
+            while (i < run.size()) {
+                int from = start[i];
+                long at = 0;   // the bytes from line i that the certificates found hold, one after another
+                while (from < start[i + 1]) {
+                    long length = sequenceLength(text, from, at);
+                    long end = length < 0 ? -1 : from + (4 * (at + length) + 2) / 3;   // where its characters end, unpadded
+                    if (end < 0 || end > text.length()) {
+                        break;
+                    }
+                    // As long as the SEQUENCE it starts, and no longer: the parser reads all of it, as one certificate or none.
+                    byte[] der = bytes(text, from, at, at + length);
+                    boolean certificate;
+                    try {
+                        io.vctrust.trust.core.x509.Certificates.fromDer(der);
+                        certificate = true;
+                    } catch (RuntimeException e) {
+                        certificate = false;
+                    }
+                    if (!certificate) {
+                        if (!tries.inVain(end - from - at / 3 * 4)) {
+                            return false;
+                        }
+                        break;
+                    }
+                    into.add(der);
+                    at += length;
+                }
+                if (at == 0) {
+                    i++;
                     continue;
                 }
-                // As long as the SEQUENCE it starts, and no longer: the parser reads all of it, as one certificate or none.
-                byte[] der = java.util.Base64.getUrlDecoder().decode(text.substring(start[i], (int) end));
-                boolean certificate;
-                try {
-                    io.vctrust.trust.core.x509.Certificates.fromDer(der);
-                    certificate = true;
-                } catch (RuntimeException e) {
-                    certificate = false;
-                }
-                if (certificate) {
-                    into.add(der);
-                    i = next - 1;   // its lines are not tried again
-                } else if ((budget -= end - start[i]) < 0) {
-                    return false;
-                }
+                // The next line that starts where the certificates found end, or after: the lines inside them are theirs.
+                int next = java.util.Arrays.binarySearch(start, i + 1, start.length, (int) (from + (4 * at + 2) / 3));
+                i = next >= 0 ? next : -next - 1;
             }
             return true;
         }
 
         /**
-         * The length in bytes, header included, of the DER SEQUENCE that the base64 characters of {@code text} from
-         * {@code from} start, or -1 when they start none (another tag, an indefinite length, which DER has not).
+         * Bytes {@code a} to {@code b} of what the base64 characters of {@code text} from {@code from} decode to, or as
+         * many of them as there are.
          */
-        private static long sequenceLength(CharSequence text, int from) {
-            int n = Math.min(8, text.length() - from);   // 8 characters: 6 bytes, a tag and at most 4 bytes of length
-            n -= n % 4 == 1 ? 1 : 0;
-            if (n < 3) {
-                return -1;
+        private static byte[] bytes(CharSequence text, int from, long a, long b) {
+            long first = from + a / 3 * 4;   // the group of four characters that holds byte a
+            long last = Math.min(text.length(), from + (4 * b + 2) / 3);
+            last -= (last - first) % 4 == 1 ? 1 : 0;
+            if (last <= first) {
+                return new byte[0];
             }
-            byte[] h = java.util.Base64.getUrlDecoder().decode(text.subSequence(from, from + n).toString());
-            if (h[0] != 0x30) {
+            byte[] d = java.util.Base64.getUrlDecoder().decode(text.subSequence((int) first, (int) last).toString());
+            return java.util.Arrays.copyOfRange(d, (int) Math.min(a % 3, d.length), d.length);
+        }
+
+        /**
+         * The length in bytes, header included, of the DER SEQUENCE at byte {@code at} of what the base64 characters of
+         * {@code text} from {@code from} decode to, or -1 when none starts there (another tag, an indefinite length,
+         * which DER has not).
+         */
+        private static long sequenceLength(CharSequence text, int from, long at) {
+            byte[] h = bytes(text, from, at, at + 6);   // a tag, then its length in at most 5 bytes
+            if (h.length < 2 || h[0] != 0x30) {
                 return -1;
             }
             int first = h[1] & 0xff;
@@ -1416,16 +1474,19 @@ final class Mapping {
      * records that can: the body of each PEM block, and each certificate written beside the blocks as bare base64 lines
      * ({@link Block#bareDer(CharSequence, List)}, the same that make the text unreadable as a value), or the whole text
      * as base64 when it has no armor, each read as DER certificates one after another for as long as they are
-     * certificates. A record skipped because its block holds two certificates
-     * ({@code [IACA‖other]}), or a certificate followed by other bytes, is about each certificate it holds: read as
-     * none, a withdrawn row of a CA that another row lists active left the CA trusted through that row.
+     * certificates. A record skipped because its block holds two certificates ({@code [IACA‖other]}), or a certificate
+     * followed by other bytes, is about each certificate it holds: read as none, a withdrawn row of a CA that another
+     * row lists active left the CA trusted through that row. A text whose base64 lines beside the blocks could not all be
+     * tried, for what they would cost, is not read completely ({@link Held#complete}): lines written to use up the
+     * tries before the IACA hid it from the comparison.
      */
-    static List<java.security.cert.X509Certificate> everyCertificate(String text) {
+    static Held everyCertificate(String text) {
         List<java.security.cert.X509Certificate> out = new ArrayList<>();
         if (text == null) {
-            return out;
+            return new Held(out, true);
         }
         List<byte[]> ders = new ArrayList<>();
+        boolean complete = true;
         if (text.contains("-----")) {
             java.util.regex.Matcher block = Block.PEM_BLOCK.matcher(text);
             StringBuilder outside = new StringBuilder();
@@ -1440,8 +1501,7 @@ final class Mapping {
                 at = block.end();
             }
             outside.append(text, at, text.length());
-            // What could be tried: a text with more ranges than that could not be read as a value either.
-            Block.bareDer(outside, ders);
+            complete = Block.bareDer(outside, ders);
         } else {
             try {
                 ders.add(io.vctrust.trust.core.util.Base64Url.decodeLenient(text.replaceAll("\\s", "")));
@@ -1464,7 +1524,14 @@ final class Mapping {
                 at += length;
             }
         }
-        return out;
+        return new Held(out, complete);
+    }
+
+    /**
+     * The certificates a certificate text holds ({@link #everyCertificate}), and whether all of it could be read for
+     * them: when not, which certificates it is about cannot be told.
+     */
+    record Held(List<java.security.cert.X509Certificate> certificates, boolean complete) {
     }
 
     /**

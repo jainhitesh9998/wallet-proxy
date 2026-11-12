@@ -597,16 +597,19 @@ instant depends on where it was written). A member cannot be read either when:
   certificate followed by other bytes), and outside the blocks a line that holds `-----` cannot be read: a damaged
   armor line (a BEGIN line written with four dashes or in lower case, a block that never ends) or a block with another
   label than `CERTIFICATE` (a key, `TRUSTED CERTIFICATE`). Nor can lines outside the blocks that consist only of
-  base64 characters (a blank line among them does not part them) when they decode to an X.509 certificate from one of
-  them to the same or a later one: a certificate written beside the blocks without its armor, which would be bound to
-  nobody, whatever base64 line stands next to it (`A`, `subject=/C=UT/CN=DS`). Each line is tried once, as the start
-  of a certificate as long as its first bytes state; lines written so that the tries would read more than four times
-  their own length cannot be read either. A certificate whose base64 shares a line with other text, or is broken by a
-  line of other text, is not found: write every certificate of a PEM text in a block of its own. Any other line
-  outside the blocks is text that explains them, as tools write it (`subject=` and `issuer=` lines, `Bag Attributes`,
-  a byte-order mark, a word, a label such as `MASTER` that decodes to `0x30`), and is passed over. Any other text is a
-  base64 value, and must be exactly one certificate (not two one after the other). The certificate it was would
-  otherwise be read as the first, or passed over, and bound to nobody;
+  base64 characters (a blank line among them does not part them) when what they decode to from the start of one of
+  them is an X.509 certificate, ending at the end of a line or partway through one: a certificate written beside the
+  blocks without its armor, which would be bound to nobody, whatever base64 line or characters stand next to it (`A`,
+  `subject=/C=UT/CN=DS`, a second certificate in the same stream, which is read too). Each line is tried once, as the
+  start of a certificate as long as its first bytes state; base64 lines written so that trying them would read more
+  than four times their length, or call the certificate parser in vain more than 1,024 times (lines of `MAA`, each a
+  SEQUENCE of two bytes), cannot be read either: they would cost seconds for one value. A certificate whose base64
+  starts partway through a line, or is broken by a line of other text, is not found: write every certificate of a PEM
+  text in a block of its own. Any other line outside the blocks is text that explains them, as tools write it
+  (`subject=` and `issuer=` lines, `Bag Attributes`, a byte-order mark, a word, a label such as `MASTER` that decodes
+  to `0x30`, a hash or a serial number), and is passed over. Any other text is a base64 value, and must be exactly one
+  certificate (not two one after the other). The certificate it was would otherwise be read as the first, or passed
+  over, and bound to nobody;
 - a path of it selects more than 1000 nodes for the record (`null`s and values no translation knows count too), or it
   yields more than 1000 values (all the forms of the member, and the items of a nested `each`, together);
 - one of its values is longer than 8,192 characters, or it would take the record beyond 65,536 characters of mapped
@@ -665,7 +668,10 @@ What then happens depends on the record:
   two records about one certificate must agree, and one that cannot be read cannot be said to. Every certificate the
   text holds counts, read leniently: a block or a base64 value that holds two certificates (`[IACA‖other]`) or a
   certificate followed by other bytes, and a certificate written as bare base64 lines beside a block. A withdrawn
-  `row-7` written so would otherwise leave the CA that `row-1` lists active trusted.
+  `row-7` written so would otherwise leave the CA that `row-1` lists active trusted. Nor is it skipped when its text
+  could not be read completely (base64 lines beside its blocks that would cost too much to try, as above): the load
+  fails, naming it, since which certificate it is about cannot be told; lines written to use up the tries before the
+  IACA would otherwise keep it from ever meeting `row-1`.
 
 A block none of whose records could be read completely fails the load: the format has probably changed, and the last
 good content is better than suspending everyone. A lookup answer about the identifier asked that cannot be read
