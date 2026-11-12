@@ -63,9 +63,12 @@ final class Mapping {
      * What one record yields: its entry in the registry format, with every member that could be read, the members that
      * could not, each with why (in the order the record was read), the text that only describes the party and was too
      * long to keep ({@link #DESCRIPTIVE}), each with why, and what the entry weighs against the load's budget
-     * ({@code limits.text}): its nodes and the characters of its text ({@link Weight}).
+     * ({@code limits.text}): its nodes and the characters of its text ({@link Weight}). For an anchor record,
+     * {@code certificateText} is the text its {@code certificate} found, whether or not it could be read as one
+     * certificate (null when it found none, or no text): a record that is skipped for it still says which certificates
+     * it is about ({@link #everyCertificate}).
      */
-    record Mapped(Map<String, Object> entry, Map<String, String> unusable, List<String> leftOut, long weight) {
+    record Mapped(Map<String, Object> entry, Map<String, String> unusable, List<String> leftOut, long weight, String certificateText) {
     }
 
     /**
@@ -488,6 +491,7 @@ final class Mapping {
          */
         Mapped map(Object record, Object root) {
             Reader r = new Reader();
+            String[] certificateText = new String[1];
             if (entity) {
                 // What identifies the record first: what it says about whom matters most.
                 r.read("id", () -> text("id", record, root));
@@ -507,7 +511,11 @@ final class Mapping {
             } else {
                 r.read("id", () -> text("id", record, root));
                 r.read("domain", () -> text("domain", record, root));
-                r.read("certificate", () -> pem(text("certificate", record, root), "certificate"));
+                r.read("certificate", () -> {
+                    // Kept as found, for a record skipped because it is not one certificate (MappedSourceFactory.skipped).
+                    certificateText[0] = text("certificate", record, root);
+                    return pem(certificateText[0], "certificate");
+                });
                 r.read("entity", () -> text("entity", record, root));
                 r.read("status", () -> text("status", record, root));
                 r.read("docTypes", () -> docTypes(record, root));
@@ -543,7 +551,8 @@ final class Mapping {
                     out.put("constraints", constraints);
                 }
             }
-            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable), List.copyOf(r.leftOut), r.weight.units());
+            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable), List.copyOf(r.leftOut), r.weight.units(),
+                    certificateText[0]);
         }
 
         /**
@@ -1288,6 +1297,60 @@ final class Mapping {
             i += n;
         }
         return out == null ? s : out.toString();
+    }
+
+    /**
+     * Every certificate a certificate text holds, read leniently, for comparing a record that cannot be read with the
+     * records that can: the body of each PEM block, and each run of base64 lines beside the blocks that decodes to DER
+     * ({@link Block#bareDer}), or the whole text as base64 when it has no armor, each read as DER certificates one after
+     * another for as long as they are certificates. A record skipped because its block holds two certificates
+     * ({@code [IACA‖other]}), or a certificate followed by other bytes, is about each certificate it holds: read as
+     * none, a withdrawn row of a CA that another row lists active left the CA trusted through that row.
+     */
+    static List<java.security.cert.X509Certificate> everyCertificate(String text) {
+        List<java.security.cert.X509Certificate> out = new ArrayList<>();
+        if (text == null) {
+            return out;
+        }
+        List<byte[]> ders = new ArrayList<>();
+        if (text.contains("-----")) {
+            java.util.regex.Matcher block = Block.PEM_BLOCK.matcher(text);
+            StringBuilder outside = new StringBuilder();
+            int at = 0;
+            while (block.find()) {
+                outside.append(text, at, block.start()).append('\n');
+                try {
+                    ders.add(java.util.Base64.getMimeDecoder().decode(block.group(1)));
+                } catch (IllegalArgumentException e) {
+                    // a body that is not base64 holds no certificate
+                }
+                at = block.end();
+            }
+            outside.append(text, at, text.length());
+            ders.addAll(Block.bareDer(outside));
+        } else {
+            try {
+                ders.add(io.vctrust.trust.core.util.Base64Url.decodeLenient(text.replaceAll("\\s", "")));
+            } catch (RuntimeException e) {
+                // not base64: no certificate
+            }
+        }
+        for (byte[] der : ders) {
+            int at = 0;
+            while (at < der.length) {
+                java.security.cert.X509Certificate c;
+                int length;
+                try {
+                    c = io.vctrust.trust.core.x509.Certificates.fromDer(java.util.Arrays.copyOfRange(der, at, der.length));
+                    length = c.getEncoded().length;
+                } catch (RuntimeException | java.security.cert.CertificateEncodingException e) {
+                    break;   // what follows is no certificate
+                }
+                out.add(c);
+                at += length;
+            }
+        }
+        return out;
     }
 
     /**

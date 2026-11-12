@@ -651,10 +651,12 @@ What then happens depends on the record:
   its certificate chains to, and a chain to an anchor is trusted also without an entity. An entity record has three
   outcomes only: listed as the document states it, listed not in good standing, or the load fails.
 - **An anchor** that cannot be read completely, or lacks its `domain` or `certificate`, **is skipped** with a
-  warning: leaving an anchor out removes trust. Unless its certificate can be read and another
-  record of the load lists the same certificate in the same domain (in any domain, when its own cannot be read):
-  then the load fails, naming both, since two records about one certificate must agree, and one that cannot be read
-  cannot be said to.
+  warning: leaving an anchor out removes trust. Unless a certificate in its text is one that another record of the
+  load lists in the same domain (in any domain, when its own cannot be read): then the load fails, naming both, since
+  two records about one certificate must agree, and one that cannot be read cannot be said to. Every certificate the
+  text holds counts, read leniently: a block or a base64 value that holds two certificates (`[IACA‖other]`) or a
+  certificate followed by other bytes, and a certificate written as bare base64 lines beside a block. A withdrawn
+  `row-7` written so would otherwise leave the CA that `row-1` lists active trusted.
 
 A block none of whose records could be read completely fails the load: the format has probably changed, and the last
 good content is better than suspending everyone. A lookup answer about the identifier asked that cannot be read

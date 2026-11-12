@@ -279,12 +279,22 @@ class MappedSourceRoundFiveTest {
         assertThat(revokedWith(block(derOf("ds")))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
         assertThat(revokedWith(block(derOf("ds-nl")) + block(derOf("ds")))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
         // An anchor's certificate likewise: the record is skipped (it was placed as the IACA, its first certificate).
-        var tied = withIaca(block(derOf("iaca"), derOf("rp-ca")));
+        var tied = withIaca(block(derOf("iaca"), derOf("ds-nl")));
         try (TrustSourceManager m = tied.getValue()) {
             assertThat(tied.getKey().snapshot().allAnchors()).extracting(a -> a.id()).containsExactly("rp-access-ca");
             assertThat(state(m, "partner").warnings()).singleElement().asString().startsWith("mapping.anchors[0]: record 1 (id 'utopia-iaca') "
                     + "is skipped: certificate: a PEM block holds more than one certificate");
             assertThat(MappedSourceValidationTest.decide(tied.getKey(), MDL)).isNotEqualTo(Decision.TRUSTED);
+        }
+        // When a certificate the skipped record holds is one another record lists (the CA of verifiers beside it), the two
+        // records are about one certificate and cannot be said to agree: the load fails (the follow-ups after the mapped
+        // source was published read every certificate of a skipped record; this case was skipped before).
+        var listed = withIaca(block(derOf("iaca"), derOf("rp-ca")));
+        try (TrustSourceManager m = listed.getValue()) {
+            assertThat(listed.getKey().snapshot().allAnchors()).isEmpty();
+            assertThat(state(m, "partner").lastError()).isEqualTo("Anchor 'rp-access-ca' and record 1 of mapping.anchors[0] (id "
+                    + "'utopia-iaca') have the same certificate in domain mdoc-iaca, and the record cannot be read: which one holds cannot be told");
+            assertThat(MappedSourceValidationTest.decide(listed.getKey(), MDL)).isNotEqualTo(Decision.TRUSTED);
         }
     }
 

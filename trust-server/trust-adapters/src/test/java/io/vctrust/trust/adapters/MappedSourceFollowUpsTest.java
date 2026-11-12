@@ -80,4 +80,38 @@ class MappedSourceFollowUpsTest {
             assertThat(tied.getKey().snapshot().allAnchors()).extracting(a -> a.id()).doesNotContain("row-7");
         }
     }
+
+    // 4: a CA row skipped for its certificate text still says which certificates it is about ---------------------------
+
+    static String sameCertificate(String in) {
+        return "Anchor 'row-1' and record 2 of mapping.anchors[0] (id 'row-7') have the same certificate in domain " + in
+                + ", and the record cannot be read: which one holds cannot be told";
+    }
+
+    @Test
+    void item4_aSkippedRowOfACertificateAnotherRowListsFailsTheLoad() {
+        Map<String, String> written = new LinkedHashMap<>();
+        written.put("one block, the IACA and another certificate", block(derOf("iaca"), derOf("ds-nl")));
+        written.put("one block, another certificate and the IACA", block(derOf("ds-nl"), derOf("iaca")));
+        written.put("one block, the IACA and other bytes", block(derOf("iaca"), new byte[100]));
+        written.put("base64 of the IACA and another certificate", Base64.getEncoder().encodeToString(
+                java.nio.ByteBuffer.allocate(derOf("iaca").length + derOf("ds-nl").length).put(derOf("iaca")).put(derOf("ds-nl")).array()));
+        written.put("a block, then the IACA as bare base64 lines", block(derOf("ds-nl")) + bare("iaca"));
+        written.forEach((what, text) -> {
+            var r = rows(text);
+            try (TrustSourceManager m = r.getValue()) {
+                // Skipped and naming no certificate, row-7 did not meet row-1: the IACA was TRUSTED through it.
+                assertThat(MappedSourceValidationTest.decide(r.getKey(), MDL)).as(what).isNotEqualTo(Decision.TRUSTED);
+                assertThat(state(m, "partner").lastError()).as(what).isEqualTo(sameCertificate("mdoc-iaca"));
+            }
+        });
+        // A row skipped for certificates no other row lists is skipped as before, and the IACA's row decides.
+        var other = rows(block(derOf("ds-nl"), derOf("rp-ca")));
+        try (TrustSourceManager m = other.getValue()) {
+            assertThat(state(m, "partner").lastError()).isNull();
+            assertThat(state(m, "partner").warnings()).singleElement().asString().startsWith("mapping.anchors[0]: record 2 (id 'row-7') "
+                    + "is skipped: certificate: a PEM block holds more than one certificate");
+            assertThat(MappedSourceValidationTest.decide(other.getKey(), MDL)).isEqualTo(Decision.TRUSTED);
+        }
+    }
 }

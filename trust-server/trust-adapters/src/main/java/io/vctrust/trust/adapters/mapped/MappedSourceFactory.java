@@ -1294,29 +1294,29 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             String id = entry.get("id") instanceof String s ? s : null;
             if (!m.unusable().isEmpty()) {
-                return skipped(block, id, String.join("; ", m.unusable().values()), entry);
+                return skipped(block, id, String.join("; ", m.unusable().values()), entry, m.certificateText());
             }
             try {
                 List<TrustAnchor> parsed = TrustedEntityParser.anchors(entry, def.frameworkId(), provenance, NO_FILES);
                 if (parsed.size() != 1) {
-                    return skipped(block, id, "its certificate holds " + parsed.size() + " certificates; an anchor is one", entry);
+                    return skipped(block, id, "its certificate holds " + parsed.size() + " certificates; an anchor is one", entry,
+                            m.certificateText());
                 }
                 return parsed.getFirst();
             } catch (Exception e) {
-                return skipped(block, id, message(e), entry);
+                return skipped(block, id, message(e), entry, m.certificateText());
             }
         }
 
-        /** A skipped anchor record, with the certificates and the domain it names as far as they can be read. */
-        private static Skipped skipped(Mapping.Block block, String id, String reason, Map<String, Object> entry) {
-            List<java.security.cert.X509Certificate> certificates = List.of();
-            if (entry.get("certificate") instanceof String text) {
-                try {
-                    certificates = AdapterSupport.parseCertificateText(text);
-                } catch (RuntimeException e) {
-                    // a certificate that cannot be read names no CA that another record could list
-                }
-            }
+        /**
+         * A skipped anchor record, with the certificates and the domain it names as far as they can be read. The
+         * certificates are read from the text the record's certificate found, whether or not it is one certificate:
+         * every certificate in it, leniently ({@link Mapping#everyCertificate}). A record skipped for holding two
+         * certificates, or a certificate and other bytes, said which certificate it was about no longer, and a withdrawn
+         * row of a CA that another row lists active left the CA trusted.
+         */
+        private static Skipped skipped(Mapping.Block block, String id, String reason, Map<String, Object> entry, String certificateText) {
+            List<java.security.cert.X509Certificate> certificates = Mapping.everyCertificate(certificateText);
             String domain = null;
             if (entry.get("domain") instanceof String d) {
                 try {
