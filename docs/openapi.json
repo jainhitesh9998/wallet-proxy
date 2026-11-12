@@ -687,6 +687,37 @@
     ]
    }
   },
+  "/api/v1/proxy/context": {
+   "get": {
+    "operationId": "context",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "url",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "*/*": {
+        "schema": {
+         "format": "byte",
+         "type": "string"
+        }
+       }
+      },
+      "description": "OK"
+     }
+    },
+    "tags": [
+     "proxy-controller"
+    ]
+   }
+  },
   "/api/v1/proxy/crl": {
    "get": {
     "operationId": "crl",
