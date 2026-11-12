@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { createPrivateKey, createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { deflateSync, gzipSync } from 'node:zlib';
-import { createTrustClient } from '../src/index.js';
-import { bytes, checkBitstringStatus, checkTokenStatus, parseCertificate } from '../src/primitives.js';
+import { createTrustClient, type TrustClientConfig } from '../src/index.js';
+import { bytes, checkBitstringStatus, checkTokenStatus, jwkThumbprint, parseCertificate } from '../src/primitives.js';
 import { MAX_STATUS_LIST_AGE_MS, MIN_BITSTRING_ENTRIES } from '../src/status/status.js';
+import { down, es256Key, fakeFetch, json, signJwt } from './helpers.js';
 
 const PKI = new URL('../../../conformance/pki/', import.meta.url);
 const pemBody = (n: string) => readFileSync(new URL(`${n}.pem`, PKI), 'utf8').replace(/-----[^-]+-----/g, '').replace(/\s/g, '');
@@ -82,6 +83,73 @@ describe('Token Status List (JWT)', () => {
     await trust2.checkTokenStatus({ idx: 1, uri: other }, { signerX5c: dsChain });
     await trust2.checkTokenStatus({ idx: 1, uri: other }, { signerX5c: dsChain });
     expect(calls).toBe(2);                                           // untrusted signer: not cached
+  });
+});
+
+describe("Token Status List: a signer issued under the credential's trust anchor", () => {
+  const BASE = 'https://trust.example';
+  const serviceKey = es256Key();
+  const serviceJwk = { ...serviceKey.jwk, kty: 'EC', kid: 'svc-1', alg: 'ES256' };
+  const IACA = { id: 'iaca', domain: 'mdoc-iaca', frameworkId: 'utopia', status: 'ACTIVE', constraints: {}, certificate: pemBody('iaca') };
+  /** The IACA's CRL: it revokes ds-revoked and puts ds-hold on hold; every other Document Signer of the IACA is good. */
+  const IACA_CRL = readFileSync(new URL('iaca.crl', PKI)).toString('base64');
+  const mdl = { credentialFormat: 'mso_mdoc', credentialType: 'org.iso.18013.5.1.mDL' };
+
+  /**
+   * The status of index 0 (VALID in the list) of a credential signed by ds-crldp, whose status list {@code signer} signed:
+   * the service lists the IACA (with its CRL in the snapshot, or without it) under a client profile that requires a known
+   * revocation status or not. No CRL is downloaded: without the snapshot's, a signer's status is unknown.
+   */
+  async function statusSignedBy(signer: string, opts: { crl: boolean; strict: boolean; app?: Partial<TrustClientConfig> }) {
+    const now = Math.floor(Date.now() / 1000);
+    const snapshot = signJwt({ alg: 'ES256', typ: 'trust-snapshot+jwt', kid: 'svc-1' }, { iss: BASE, aud: 'wallet', iat: now, exp: now + 3600, format: 4,
+      policy: { frameworks: ['utopia'], strictAuthorization: false, requireRevocationStatus: opts.strict, requireSignedIssuerMetadata: false },
+      frameworks: [{ id: 'utopia', name: 'Utopia' }], entities: [], anchors: [IACA], crls: opts.crl ? [{ issuer: 'iaca', crl: IACA_CRL }] : [] },
+    serviceKey.privateKey);
+    const { fetch } = fakeFetch({
+      [`${BASE}/api/v1/snapshot`]: () => new Response(snapshot, { headers: { 'Content-Type': 'application/jwt' } }),
+      [`${BASE}/.well-known/jwks.json`]: () => json({ keys: [serviceJwk] }),
+      [URI]: () => new Response(statusJwt({ signer }), { headers: { 'Content-Type': 'application/statuslist+jwt' } }),
+    }, down);
+    const trust = createTrustClient({ service: { url: BASE, clientId: 'wallet', keys: { thumbprints: [jwkThumbprint(serviceJwk)] } },
+      lookups: { statusLists: 'direct', crl: 'none' }, http: { fetch, retries: 0 }, ...opts.app });
+    const credential = [pemBody('ds-crldp')];
+    const decision = await trust.evaluate({ role: 'issuer', subject: { x5c: credential }, context: mdl });
+    expect(decision.evidence?.x509?.anchorFound).toBe(true);
+    return trust.checkTokenStatus({ idx: 0, uri: URI }, { signerX5c: credential, decision });
+  }
+
+  it('is never valid when the signer is revoked', async () => {
+    const s = await statusSignedBy('ds-revoked', { crl: true, strict: false });
+    expect(s.status).toBe('unknown');
+    expect(s.detail).toMatch(/signer not trusted.*revoked/);
+  });
+
+  it('is never valid when the signer is on hold', async () => {
+    const s = await statusSignedBy('ds-hold', { crl: true, strict: false });
+    expect(s.status).toBe('unknown');
+    expect(s.detail).toMatch(/signer not trusted.*on hold/);
+  });
+
+  it('is unknown when the signer\'s revocation status is unknown and the rules in force require one', async () => {
+    for (const [name, opts] of [['the client profile', { crl: false, strict: true }],
+      ["the app's own minimum", { crl: false, strict: false, app: { policy: { requireRevocationStatus: true } } }]] as const) {
+      const s = await statusSignedBy('ds', opts);
+      expect(s.status, name).toBe('unknown');
+      expect(s.detail, name).toMatch(/signer not trusted.*[Rr]evocation status .* is unknown/);
+    }
+  });
+
+  it('is read when the signer\'s revocation status is unknown under lenient rules', async () => {
+    expect(await statusSignedBy('ds', { crl: false, strict: false })).toMatchObject({ status: 'valid', value: 0,
+      detail: expect.stringMatching(/issued under the credential's trust anchor/) });
+  });
+
+  it('is read when the signer is good', async () => {
+    for (const strict of [false, true]) {
+      expect(await statusSignedBy('ds', { crl: true, strict })).toMatchObject({ status: 'valid', value: 0,
+        detail: expect.stringMatching(/issued under the credential's trust anchor/) });
+    }
   });
 });
 

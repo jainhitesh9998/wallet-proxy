@@ -14,7 +14,7 @@ import { decodeJws, verifyJws } from '../jose/jws.js';
 import type { PathValidationResult, TrustDecision } from '../types.js';
 import { base64Encode, base64UrlDecode, utf8Decode } from '../util/bytes.js';
 import { parseCertificate } from '../x509/certificate.js';
-import { validateCertificateChain } from '../x509/validate.js';
+import { validateCertificateChain, type LocalAnchor } from '../x509/validate.js';
 
 export interface StatusResult {
   status: 'valid' | 'revoked' | 'suspended' | 'unknown';
@@ -56,6 +56,13 @@ export interface StatusContext {
   fetchList: StatusListFetcher;
   /** validates a list signer's chain in a trust domain (the trust client's validateChain) */
   validateChain?: (chain: string[], domain: string) => Promise<PathValidationResult>;
+  /**
+   * Validates a list signer's chain under the trust anchor the credential's chain validated to, as every chain on the
+   * device is validated: revocation included, with the CRLs at hand, the CRL lookups and the rules in force (the trust
+   * client supplies it, over validateChainOnDevice). Without it a signer is not accepted through that anchor, since its
+   * revocation status cannot be established.
+   */
+  validateUnderAnchor?: (chain: string[], anchor: LocalAnchor, time?: Date) => Promise<PathValidationResult>;
   /** the credential's signing certificate chain (x5c / x5chain), leaf first, base64 DER */
   signerX5c?: string[];
   /** the credential's signing key, for lists signed without a certificate by the same key */
@@ -205,27 +212,41 @@ function parseCwt(body: Uint8Array): ParsedTokenList {
 /**
  * Who may sign a credential's status list: the credential's own signer, a certificate issued under the trust
  * anchor the credential validated to, or a status list provider trusted in its own right ('status-list' domain).
+ *
+ * A certificate under the credential's anchor is validated like every other chain on the device, revocation included
+ * (StatusContext.validateUnderAnchor): a revoked or suspended signer could otherwise still say "valid" of a revoked
+ * credential, and an unknown signer status is refused when the rules in force require a known one.
  */
 async function signerTrust(chain: string[], ctx: StatusContext): Promise<{ ok: boolean; detail: string }> {
   if (ctx.signerX5c?.[0] && ctx.signerX5c[0] === chain[0]) return { ok: true, detail: 'the credential signer' };
-  const anchor = anchorCertificate(ctx.decision);
+  const anchor = credentialAnchor(ctx.decision);
+  let refused: string | undefined;
   if (anchor) {
-    const r = validateCertificateChain(chain, [{ certificate: parseCertificate(anchor), domain: 'status-list' }], { time: ctx.now });
-    if (r.valid) return { ok: true, detail: `issued under the credential's trust anchor ${String((r.anchor?.certificate as { subject?: string } | undefined)?.subject ?? '')}`.trim() };
+    // Without a validator that can check revocation, the signer's status cannot be established: as a rule that requires it.
+    const r = ctx.validateUnderAnchor ? await ctx.validateUnderAnchor(chain, anchor, ctx.now).catch(() => null)
+      : validateCertificateChain(chain, [anchor], { time: ctx.now, revocation: { crls: [], require: true } });
+    if (r?.valid) return { ok: true, detail: `issued under the credential's trust anchor ${anchor.certificate.subject}`.trim() };
+    refused = r?.issues.find((i) => i.severity === 'ERROR')?.message;
   }
   const subject = parseCertificate(chain[0]!).subject;
   if (ctx.validateChain) {
     const r = await ctx.validateChain(chain, 'status-list').catch(() => null);
     if (r?.valid) return { ok: true, detail: 'a trusted status list provider' };
   }
-  return { ok: false, detail: subject };
+  return { ok: false, detail: refused ? `${subject} (${refused})` : subject };
 }
 
-function anchorCertificate(d?: TrustDecision | null): string | undefined {
-  const c = (d?.evidence?.x509?.anchor as { certificate?: unknown } | undefined)?.certificate;
-  if (typeof c === 'string') return c;
-  const nested = (c as { certificate?: unknown } | undefined)?.certificate;
-  return typeof nested === 'string' ? nested : undefined;
+/**
+ * The trust anchor the credential's chain validated to, as its decision describes it: the certificate, and the record's
+ * status and constraints (among them where its CA publishes its CRL, crlUrls).
+ */
+function credentialAnchor(d?: TrustDecision | null): LocalAnchor | undefined {
+  const a = d?.evidence?.x509?.anchor as { certificate?: unknown; status?: unknown; constraints?: unknown } | undefined;
+  const c = a?.certificate;
+  const der = typeof c === 'string' ? c : (c as { certificate?: unknown } | undefined)?.certificate;
+  if (typeof der !== 'string') return undefined;
+  return { certificate: parseCertificate(der), domain: 'status-list', status: typeof a?.status === 'string' ? a.status : undefined,
+    constraints: a?.constraints && typeof a.constraints === 'object' ? a.constraints as Record<string, unknown> : {} };
 }
 
 // ---- W3C Bitstring Status List -------------------------------------------------------------------------------

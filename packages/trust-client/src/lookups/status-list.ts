@@ -18,12 +18,16 @@ export interface FetchedStatusList {
 }
 
 /** What a status check needs to know about the credential; the trust client supplies fetching and chain validation. */
-export type StatusCheckOptions = Omit<StatusContext, 'fetchList' | 'validateChain'>;
+export type StatusCheckOptions = Omit<StatusContext, 'fetchList' | 'validateChain' | 'validateUnderAnchor'>;
 
 export class StatusListLookup {
-  /** @param validateChain path validation of a list signer's chain in a trust domain */
+  /**
+   * @param validateChain path validation of a list signer's chain in a trust domain
+   * @param validateUnderAnchor path validation of a list signer's chain under the credential's trust anchor, revocation included
+   */
   constructor(private readonly ctx: LookupContext,
-              private readonly validateChain: (chain: string[], domain: string) => Promise<PathValidationResult>) {}
+              private readonly validateChain: (chain: string[], domain: string) => Promise<PathValidationResult>,
+              private readonly validateUnderAnchor: NonNullable<StatusContext['validateUnderAnchor']>) {}
 
   async checkToken(ref: TokenStatusReference, opts: StatusCheckOptions & { form?: 'jwt' | 'cwt' }): Promise<StatusResult> {
     const { form, ...credential } = opts;
@@ -38,7 +42,7 @@ export class StatusListLookup {
   /** Runs a check over the cached list when fresh, else over a fetched one; a list that verified is kept for its ttl. */
   private async check(uri: string, opts: StatusCheckOptions, check: (ctx: StatusContext) => Promise<StatusResult>): Promise<StatusResult> {
     const { ctx } = this;
-    const base = { ...opts, validateChain: this.validateChain };
+    const base = { ...opts, validateChain: this.validateChain, validateUnderAnchor: this.validateUnderAnchor };
     const key = `status:${uri}`;
     const cached = uri ? await ctx.cache.get<{ body: string; contentType: string }>(key) : null;
     if (cached?.fresh) {

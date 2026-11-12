@@ -346,7 +346,11 @@ first, then the list's URI) or `'direct'`.
 2. Checks **who signed it**. Accepted are: the credential's own signing certificate; a certificate issued under
    the trust anchor the credential's chain validated to; a certificate that validates in the `status-list` domain
    (a status provider trusted in its own right: list its CA as an anchor of that domain); or, for a list without a
-   certificate, the credential's own signing key.
+   certificate, the credential's own signing key. A certificate under the credential's anchor is validated like every
+   other chain on the device, revocation included (the CRLs in the snapshot, then the lookups of [CRLs](#crls)): a
+   signer that is revoked or on hold does not count, and neither does one whose status is unknown when the rules in
+   force require a known one (`require-revocation-status`, or the app's `policy.requireRevocationStatus`). The status
+   is then `unknown`, never `valid`.
 3. Checks that the list is the one named (`sub` equals the URI) and current: not expired, not issued in the future.
    A list that states no expiry is accepted for seven days after it was issued.
 4. Reads the entry: `0` valid, `1` revoked, `2` suspended; another value is application specific and reported as
