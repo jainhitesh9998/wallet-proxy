@@ -5331,6 +5331,425 @@
           "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK\n"
         }
       }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pin-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_CERT:pt94h8dk9f6nFF7fCg4SuqwnEgcjpCw6KLMkiz3_R_4"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pin-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_CERT:pt94h8dk9f6nFF7fCg4SuqwnEgcjpCw6KLMkiz3_R_4"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        }
+      },
+      "name" : "Document Signer under the registered IACA, pinned by a revoked entity: what is bound to the certificate itself speaks before the IACA's entity",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB9zCCAZ2gAwIBAgIJAOwMKFNICEQ7MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMFExCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMS0wKwYDVQQDDCRVdG9waWEgRFMgcGlubmVkIGJ5IGEgcmV2b2tlZCBlbnRpdHkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATTTxK5hseqYvQY9Ksj51CUosvb+9BsZs9BiEB6yN5kVmHFaDj1CGSHsfZGgGZ62UlYuU6iTWMJFptrT/CrhBhfo3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBTcP2Wp4fU4rosPhgVKnIjnjbIxyDAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiAJR6qDr7S/H5mbgjt+vN8zMFE1PfUNTkvU8T6X80HyJQIhANSz0uGiMZlB6Ox+/Chi1vONV9cA/7WQ2JMluCyOeFis"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pin-suspended",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_CERT:SsIEz2VUfjgr6KMIJcMsBFDuaiZD3jht3v641B-toeU"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pin-suspended",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_CERT:SsIEz2VUfjgr6KMIJcMsBFDuaiZD3jht3v641B-toeU"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        }
+      },
+      "name" : "Document Signer under the registered IACA, pinned by a suspended entity",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB+TCCAZ+gAwIBAgIJAOwMKFNICEQ8MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMFMxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMS8wLQYDVQQDDCZVdG9waWEgRFMgcGlubmVkIGJ5IGEgc3VzcGVuZGVkIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABL96TgPUHSy53Axk4H9CRZVvAFqsNUAVTqQ6RYxzkWzZrcbB5vMwZ2IDblX3vWbe5saVbjZdSIspDWNO0AyskVqjdzB1MAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQEB/wQLMAkGByiBjF0FAQIwHQYDVR0OBBYEFOdINZuo0kjZpVvAcTpif4MGCFXnMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGCCqGSM49BAMCA0gAMEUCIQDpj6eKJzXKAofIxYykLUY7GuoVqBPV6TVUxF7LCCSN1QIgQ+KnMlinzRJEk/IsiZPwqC2L41OjGmDV32EY6l/vlpQ="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pin-ended",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_CERT:eCNnOpqon_nsP0tDEoshkNuH7rR5Yj_Eycb-vooANho"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pin-ended",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_CERT:eCNnOpqon_nsP0tDEoshkNuH7rR5Yj_Eycb-vooANho"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        }
+      },
+      "name" : "Document Signer under the registered IACA, pinned by an entity whose registration has ended",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICCjCCAa+gAwIBAgIJAOwMKFNICEQ9MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMGMxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMT8wPQYDVQQDDDZVdG9waWEgRFMgcGlubmVkIGJ5IGFuIGVudGl0eSB3aG9zZSByZWdpc3RyYXRpb24gZW5kZWQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQu1Uh3z2g6mgK14sCsIJw7zFgpqSGmAZrZHvJqs9BuWGfrGVXgdwkm3Zb4eh1YtRhwNdUjuWPpNxFN7uLKe+KOo3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBSge9K4tFG0tVqNcgM8am+EHcVedDAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNJADBGAiEAoQKBkoerUz77VslNDU2Zv1JVWIYtUMzSJUM+nmapHLoCIQCUPDCwdQ0aQGzF/2Dy3vmnpQ0iu0QFx8egFLOh+D20SA=="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-dmv",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_CERT:PN3RCaY2ZFdkwe0KUD2CogpVMJGw4vuPdrbVFTQvTI0",
+            "X509_CERT:PN3RCaY2ZFdkwe0KUD2CogpVMJGw4vuPdrbVFTQvTI0"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-dmv",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv",
+            "X509_CERT:PN3RCaY2ZFdkwe0KUD2CogpVMJGw4vuPdrbVFTQvTI0",
+            "X509_CERT:PN3RCaY2ZFdkwe0KUD2CogpVMJGw4vuPdrbVFTQvTI0"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        }
+      },
+      "name" : "Document Signer under the registered IACA, pinned by a revoked and by an active entity: the list says it is active, and the IACA's entity is meant",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICBjCCAaugAwIBAgIJAOwMKFNICEQ+MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMTswOQYDVQQDDDJVdG9waWEgRFMgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABFQU/5dCBPH6PHINXvcne79bZt9A5govQlGg9LyiNPni6rA4Q6wQMT/3O07KEoZOK01xqmjXru4tcfnS23TAb/SjdzB1MAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQEB/wQLMAkGByiBjF0FAQIwHQYDVR0OBBYEFIYzcf515TFGQze32n2KOSY3VE2FMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGCCqGSM49BAMCA0kAMEYCIQC7WzX63lmP4u4llwDvp8T89sw1ksaKtx7ZTgKoGum2hQIhAMslDztXRw3c9KekrncAJMAlNMo1jvkTkntyfmhcaw1E"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-shared-pin-active",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:xMdKDjulfiGs932f7FTMda5PBH7Tgd_w3FGOcQm9jOg",
+            "X509_CERT:xMdKDjulfiGs932f7FTMda5PBH7Tgd_w3FGOcQm9jOg"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-shared-pin-active",
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:xMdKDjulfiGs932f7FTMda5PBH7Tgd_w3FGOcQm9jOg",
+            "X509_CERT:xMdKDjulfiGs932f7FTMda5PBH7Tgd_w3FGOcQm9jOg"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "chain under a shared anchor, pinned by a revoked and by an active issuer: the active one is meant",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIB7TCCAZSgAwIBAgIJAJcPiZZRKwQiMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1QaW5uZWQgSXNzdWVyMTgwNgYDVQQDDC9TaWduZXIgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABII3Z3A6pV898DKyTrLhofDh/J4EOS/aBy0dqv3ZdR2me3v/dezrjI0W6r/X2FTyhWxD+y5tgqtF5dcg/zGsGWKjYDBeMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQviKcU28X4IJ9kOO6W6MErErBSZTAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAKBggqhkjOPQQDAgNHADBEAiBDRnMu99OSGVVSVaU5yFwgNT+HUiaa1cARITR/1dMYvgIgRWSopIsxNZRLuwWqoaYjuMwqVgP/Cr38bymZg77McSM="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-named-pin-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:named-pinned.vectors.example",
+            "X509_CERT:4_01TW8MnASmWxRCaH466W9DN5ySFwDg5B1F8cWJ0Ws"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-named-pin-revoked",
+          "errors" : [
+            "entity.status",
+            "x509.revocation_unknown"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:4_01TW8MnASmWxRCaH466W9DN5ySFwDg5B1F8cWJ0Ws"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "chain under a shared anchor: an active issuer registered by the certificate's DNS name, and a revoked one that pins the certificate",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICBTCCAaugAwIBAgIJAJcPiZZRKwQjMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMEsxCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxOYW1lZCBJc3N1ZXIxJTAjBgNVBAMMHG5hbWVkLXBpbm5lZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR0t7VvDD5mOA1KE/U+vgCM1EQNIJugzsTX6AvE3uSBhI/XrD9jmOmvI9EpTR63hk2DT42BseefeLWuT0w4OscGo4GKMIGHMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBRbQVf+rVx6Vt5jxRMHv+3zHxwtozAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAnBgNVHREEIDAeghxuYW1lZC1waW5uZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0gAMEUCICaSxar+ZhKvbhHrBb9qKqF8a58wp9eBwzRQ4/TJ5tteAiEAzvbsLOeQFuY/2HwSwN21K3hxqGnzWMb6pWO62OdR80w="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-hashed-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:named-hashed.vectors.example",
+            "X509_SHA256:WZWeHph0LUxwoxzOxCG_tLIf2b-omd2MkTVFdmKTSIo"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-hashed-revoked",
+          "errors" : [
+            "entity.status",
+            "x509.revocation_unknown"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:WZWeHph0LUxwoxzOxCG_tLIf2b-omd2MkTVFdmKTSIo"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "chain under a shared anchor: an active issuer registered by the certificate's DNS name, and a revoked one that names the certificate's hash",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICBDCCAaugAwIBAgIJAJcPiZZRKwQkMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMEsxCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxOYW1lZCBJc3N1ZXIxJTAjBgNVBAMMHG5hbWVkLWhhc2hlZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARWBwN1sE8z4AtG7TI6yfUJ+VN7jK+10u6G0X8wfcGDdmqTASubsHTTAoKfTstjq0GAmsv1xg4Vvg6w9J2UxiKOo4GKMIGHMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBRFRc470FsJW+veTfKnMYEV+CZJWDAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAnBgNVHREEIDAeghxuYW1lZC1oYXNoZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0cAMEQCIDr07IJH0rYKrcY4FnqMYQCNrrp0Zr6cuUpqE0/ANugDAiA/PPDDjnVhnup7RHUBwgIqK+XeLTs6kg32aQmkhxhMfQ=="
+          ]
+        }
+      }
     }
   ],
   "description" : "Generated by EvaluationVectorsTest from cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",
@@ -5791,6 +6210,161 @@
         },
         {
           "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Active, registered by the DNS name of a signer a revoked entity names by its hash"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-hashed-active",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "named-hashed.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, names by its hash a signer whose DNS name an active entity is registered by"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-hashed-revoked",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "WZWeHph0LUxwoxzOxCG_tLIf2b-omd2MkTVFdmKTSIo"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Active, registered by the DNS name of a signer a revoked entity pins"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-named-active",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "named-pinned.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "mMJXQHf5cPPBSF_CAUDUcXnTRHE",
+              "ca" : false,
+              "certificate" : "MIICBTCCAaugAwIBAgIJAJcPiZZRKwQjMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMEsxCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxOYW1lZCBJc3N1ZXIxJTAjBgNVBAMMHG5hbWVkLXBpbm5lZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR0t7VvDD5mOA1KE/U+vgCM1EQNIJugzsTX6AvE3uSBhI/XrD9jmOmvI9EpTR63hk2DT42BseefeLWuT0w4OscGo4GKMIGHMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBRbQVf+rVx6Vt5jxRMHv+3zHxwtozAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAnBgNVHREEIDAeghxuYW1lZC1waW5uZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0gAMEUCICaSxar+ZhKvbhHrBb9qKqF8a58wp9eBwzRQ4/TJ5tteAiEAzvbsLOeQFuY/2HwSwN21K3hxqGnzWMb6pWO62OdR80w=",
+              "dnsNames" : [
+                "named-pinned.vectors.example"
+              ],
+              "issuer" : "CN=RP Access CA,O=Registrar,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "970f8996512b0423",
+              "sha256" : "4_01TW8MnASmWxRCaH466W9DN5ySFwDg5B1F8cWJ0Ws",
+              "subject" : "CN=named-pinned.vectors.example,O=Named Issuer,C=UT",
+              "subjectKeyIdentifier" : "W0FX_q1celbeY8UTB7_t8x8cLaM"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, pins a signer whose DNS name an active entity is registered by"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-named-pin-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
           "authorizations" : [ ],
           "certificates" : [ ],
           "display" : [
@@ -5819,6 +6393,237 @@
             "CREDENTIAL_ISSUER"
           ],
           "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIICBjCCAaugAwIBAgIJAOwMKFNICEQ+MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMTswOQYDVQQDDDJVdG9waWEgRFMgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABFQU/5dCBPH6PHINXvcne79bZt9A5govQlGg9LyiNPni6rA4Q6wQMT/3O07KEoZOK01xqmjXru4tcfnS23TAb/SjdzB1MAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQEB/wQLMAkGByiBjF0FAQIwHQYDVR0OBBYEFIYzcf515TFGQze32n2KOSY3VE2FMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGCCqGSM49BAMCA0kAMEYCIQC7WzX63lmP4u4llwDvp8T89sw1ksaKtx7ZTgKoGum2hQIhAMslDztXRw3c9KekrncAJMAlNMo1jvkTkntyfmhcaw1E",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443e",
+              "sha256" : "PN3RCaY2ZFdkwe0KUD2CogpVMJGw4vuPdrbVFTQvTI0",
+              "subject" : "CN=Utopia DS pinned by a revoked and an active entity,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "hjNx_nXlMUZDN7fafYo5JjdUTYU"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Active, pins a Document Signer a revoked entity pins too"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-both-active",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIICBjCCAaugAwIBAgIJAOwMKFNICEQ+MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMTswOQYDVQQDDDJVdG9waWEgRFMgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABFQU/5dCBPH6PHINXvcne79bZt9A5govQlGg9LyiNPni6rA4Q6wQMT/3O07KEoZOK01xqmjXru4tcfnS23TAb/SjdzB1MAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQEB/wQLMAkGByiBjF0FAQIwHQYDVR0OBBYEFIYzcf515TFGQze32n2KOSY3VE2FMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGCCqGSM49BAMCA0kAMEYCIQC7WzX63lmP4u4llwDvp8T89sw1ksaKtx7ZTgKoGum2hQIhAMslDztXRw3c9KekrncAJMAlNMo1jvkTkntyfmhcaw1E",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443e",
+              "sha256" : "PN3RCaY2ZFdkwe0KUD2CogpVMJGw4vuPdrbVFTQvTI0",
+              "subject" : "CN=Utopia DS pinned by a revoked and an active entity,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "hjNx_nXlMUZDN7fafYo5JjdUTYU"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, pins a Document Signer an active entity pins too"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-both-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIICCjCCAa+gAwIBAgIJAOwMKFNICEQ9MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMGMxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMT8wPQYDVQQDDDZVdG9waWEgRFMgcGlubmVkIGJ5IGFuIGVudGl0eSB3aG9zZSByZWdpc3RyYXRpb24gZW5kZWQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQu1Uh3z2g6mgK14sCsIJw7zFgpqSGmAZrZHvJqs9BuWGfrGVXgdwkm3Zb4eh1YtRhwNdUjuWPpNxFN7uLKe+KOo3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBSge9K4tFG0tVqNcgM8am+EHcVedDAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNJADBGAiEAoQKBkoerUz77VslNDU2Zv1JVWIYtUMzSJUM+nmapHLoCIQCUPDCwdQ0aQGzF/2Dy3vmnpQ0iu0QFx8egFLOh+D20SA==",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443d",
+              "sha256" : "eCNnOpqon_nsP0tDEoshkNuH7rR5Yj_Eycb-vooANho",
+              "subject" : "CN=Utopia DS pinned by an entity whose registration ended,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "oHvSuLRRtLVajXIDPGpvhB3FXnQ"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Registration ended, pins a Document Signer of the registered IACA"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-ended",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE",
+          "validUntil" : "2020-01-01T00:00:00Z"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIIB9zCCAZ2gAwIBAgIJAOwMKFNICEQ7MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMFExCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMS0wKwYDVQQDDCRVdG9waWEgRFMgcGlubmVkIGJ5IGEgcmV2b2tlZCBlbnRpdHkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATTTxK5hseqYvQY9Ksj51CUosvb+9BsZs9BiEB6yN5kVmHFaDj1CGSHsfZGgGZ62UlYuU6iTWMJFptrT/CrhBhfo3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBTcP2Wp4fU4rosPhgVKnIjnjbIxyDAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiAJR6qDr7S/H5mbgjt+vN8zMFE1PfUNTkvU8T6X80HyJQIhANSz0uGiMZlB6Ox+/Chi1vONV9cA/7WQ2JMluCyOeFis",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443b",
+              "sha256" : "pt94h8dk9f6nFF7fCg4SuqwnEgcjpCw6KLMkiz3_R_4",
+              "subject" : "CN=Utopia DS pinned by a revoked entity,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "3D9lqeH1OK6LD4YFSpyI542yMcg"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, pins a Document Signer of the registered IACA"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIIB+TCCAZ+gAwIBAgIJAOwMKFNICEQ8MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMFMxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMS8wLQYDVQQDDCZVdG9waWEgRFMgcGlubmVkIGJ5IGEgc3VzcGVuZGVkIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABL96TgPUHSy53Axk4H9CRZVvAFqsNUAVTqQ6RYxzkWzZrcbB5vMwZ2IDblX3vWbe5saVbjZdSIspDWNO0AyskVqjdzB1MAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQEB/wQLMAkGByiBjF0FAQIwHQYDVR0OBBYEFOdINZuo0kjZpVvAcTpif4MGCFXnMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGCCqGSM49BAMCA0gAMEUCIQDpj6eKJzXKAofIxYykLUY7GuoVqBPV6TVUxF7LCCSN1QIgQ+KnMlinzRJEk/IsiZPwqC2L41OjGmDV32EY6l/vlpQ=",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443c",
+              "sha256" : "SsIEz2VUfjgr6KMIJcMsBFDuaiZD3jht3v641B-toeU",
+              "subject" : "CN=Utopia DS pinned by a suspended entity,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "50g1m6jSSNmlW8BxOmJ_gwYIVec"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Suspended, pins a Document Signer of the registered IACA"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-suspended",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "SUSPENDED"
         },
         {
           "attributes" : { },
@@ -5985,6 +6790,96 @@
             "CREDENTIAL_ISSUER"
           ],
           "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "mMJXQHf5cPPBSF_CAUDUcXnTRHE",
+              "ca" : false,
+              "certificate" : "MIIB7TCCAZSgAwIBAgIJAJcPiZZRKwQiMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1QaW5uZWQgSXNzdWVyMTgwNgYDVQQDDC9TaWduZXIgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABII3Z3A6pV898DKyTrLhofDh/J4EOS/aBy0dqv3ZdR2me3v/dezrjI0W6r/X2FTyhWxD+y5tgqtF5dcg/zGsGWKjYDBeMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQviKcU28X4IJ9kOO6W6MErErBSZTAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAKBggqhkjOPQQDAgNHADBEAiBDRnMu99OSGVVSVaU5yFwgNT+HUiaa1cARITR/1dMYvgIgRWSopIsxNZRLuwWqoaYjuMwqVgP/Cr38bymZg77McSM=",
+              "dnsNames" : [ ],
+              "issuer" : "CN=RP Access CA,O=Registrar,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "970f8996512b0422",
+              "sha256" : "xMdKDjulfiGs932f7FTMda5PBH7Tgd_w3FGOcQm9jOg",
+              "subject" : "CN=Signer pinned by a revoked and an active entity,O=Pinned Issuer,C=UT",
+              "subjectKeyIdentifier" : "L4inFNvF-CCfZDjulujBKxKwUmU"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Active, pins a signer under the shared anchor a revoked entity pins too"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-shared-pin-active",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "mMJXQHf5cPPBSF_CAUDUcXnTRHE",
+              "ca" : false,
+              "certificate" : "MIIB7TCCAZSgAwIBAgIJAJcPiZZRKwQiMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1QaW5uZWQgSXNzdWVyMTgwNgYDVQQDDC9TaWduZXIgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABII3Z3A6pV898DKyTrLhofDh/J4EOS/aBy0dqv3ZdR2me3v/dezrjI0W6r/X2FTyhWxD+y5tgqtF5dcg/zGsGWKjYDBeMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQviKcU28X4IJ9kOO6W6MErErBSZTAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAKBggqhkjOPQQDAgNHADBEAiBDRnMu99OSGVVSVaU5yFwgNT+HUiaa1cARITR/1dMYvgIgRWSopIsxNZRLuwWqoaYjuMwqVgP/Cr38bymZg77McSM=",
+              "dnsNames" : [ ],
+              "issuer" : "CN=RP Access CA,O=Registrar,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "970f8996512b0422",
+              "sha256" : "xMdKDjulfiGs932f7FTMda5PBH7Tgd_w3FGOcQm9jOg",
+              "subject" : "CN=Signer pinned by a revoked and an active entity,O=Pinned Issuer,C=UT",
+              "subjectKeyIdentifier" : "L4inFNvF-CCfZDjulujBKxKwUmU"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, pins a signer under the shared anchor an active entity pins too"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-shared-pin-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
         },
         {
           "attributes" : { },
@@ -6553,6 +7448,161 @@
         },
         {
           "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Active, registered by the DNS name of a signer a revoked entity names by its hash"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-hashed-active",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "named-hashed.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, names by its hash a signer whose DNS name an active entity is registered by"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-hashed-revoked",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "WZWeHph0LUxwoxzOxCG_tLIf2b-omd2MkTVFdmKTSIo"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Active, registered by the DNS name of a signer a revoked entity pins"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-named-active",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "named-pinned.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "mMJXQHf5cPPBSF_CAUDUcXnTRHE",
+              "ca" : false,
+              "certificate" : "MIICBTCCAaugAwIBAgIJAJcPiZZRKwQjMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMEsxCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxOYW1lZCBJc3N1ZXIxJTAjBgNVBAMMHG5hbWVkLXBpbm5lZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAR0t7VvDD5mOA1KE/U+vgCM1EQNIJugzsTX6AvE3uSBhI/XrD9jmOmvI9EpTR63hk2DT42BseefeLWuT0w4OscGo4GKMIGHMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBRbQVf+rVx6Vt5jxRMHv+3zHxwtozAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAnBgNVHREEIDAeghxuYW1lZC1waW5uZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0gAMEUCICaSxar+ZhKvbhHrBb9qKqF8a58wp9eBwzRQ4/TJ5tteAiEAzvbsLOeQFuY/2HwSwN21K3hxqGnzWMb6pWO62OdR80w=",
+              "dnsNames" : [
+                "named-pinned.vectors.example"
+              ],
+              "issuer" : "CN=RP Access CA,O=Registrar,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "970f8996512b0423",
+              "sha256" : "4_01TW8MnASmWxRCaH466W9DN5ySFwDg5B1F8cWJ0Ws",
+              "subject" : "CN=named-pinned.vectors.example,O=Named Issuer,C=UT",
+              "subjectKeyIdentifier" : "W0FX_q1celbeY8UTB7_t8x8cLaM"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, pins a signer whose DNS name an active entity is registered by"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-named-pin-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
           "authorizations" : [ ],
           "certificates" : [ ],
           "display" : [
@@ -6581,6 +7631,237 @@
             "CREDENTIAL_ISSUER"
           ],
           "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIICBjCCAaugAwIBAgIJAOwMKFNICEQ+MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMTswOQYDVQQDDDJVdG9waWEgRFMgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABFQU/5dCBPH6PHINXvcne79bZt9A5govQlGg9LyiNPni6rA4Q6wQMT/3O07KEoZOK01xqmjXru4tcfnS23TAb/SjdzB1MAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQEB/wQLMAkGByiBjF0FAQIwHQYDVR0OBBYEFIYzcf515TFGQze32n2KOSY3VE2FMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGCCqGSM49BAMCA0kAMEYCIQC7WzX63lmP4u4llwDvp8T89sw1ksaKtx7ZTgKoGum2hQIhAMslDztXRw3c9KekrncAJMAlNMo1jvkTkntyfmhcaw1E",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443e",
+              "sha256" : "PN3RCaY2ZFdkwe0KUD2CogpVMJGw4vuPdrbVFTQvTI0",
+              "subject" : "CN=Utopia DS pinned by a revoked and an active entity,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "hjNx_nXlMUZDN7fafYo5JjdUTYU"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Active, pins a Document Signer a revoked entity pins too"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-both-active",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIICBjCCAaugAwIBAgIJAOwMKFNICEQ+MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMTswOQYDVQQDDDJVdG9waWEgRFMgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABFQU/5dCBPH6PHINXvcne79bZt9A5govQlGg9LyiNPni6rA4Q6wQMT/3O07KEoZOK01xqmjXru4tcfnS23TAb/SjdzB1MAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQEB/wQLMAkGByiBjF0FAQIwHQYDVR0OBBYEFIYzcf515TFGQze32n2KOSY3VE2FMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGCCqGSM49BAMCA0kAMEYCIQC7WzX63lmP4u4llwDvp8T89sw1ksaKtx7ZTgKoGum2hQIhAMslDztXRw3c9KekrncAJMAlNMo1jvkTkntyfmhcaw1E",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443e",
+              "sha256" : "PN3RCaY2ZFdkwe0KUD2CogpVMJGw4vuPdrbVFTQvTI0",
+              "subject" : "CN=Utopia DS pinned by a revoked and an active entity,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "hjNx_nXlMUZDN7fafYo5JjdUTYU"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, pins a Document Signer an active entity pins too"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-both-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIICCjCCAa+gAwIBAgIJAOwMKFNICEQ9MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMGMxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMT8wPQYDVQQDDDZVdG9waWEgRFMgcGlubmVkIGJ5IGFuIGVudGl0eSB3aG9zZSByZWdpc3RyYXRpb24gZW5kZWQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQu1Uh3z2g6mgK14sCsIJw7zFgpqSGmAZrZHvJqs9BuWGfrGVXgdwkm3Zb4eh1YtRhwNdUjuWPpNxFN7uLKe+KOo3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBSge9K4tFG0tVqNcgM8am+EHcVedDAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNJADBGAiEAoQKBkoerUz77VslNDU2Zv1JVWIYtUMzSJUM+nmapHLoCIQCUPDCwdQ0aQGzF/2Dy3vmnpQ0iu0QFx8egFLOh+D20SA==",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443d",
+              "sha256" : "eCNnOpqon_nsP0tDEoshkNuH7rR5Yj_Eycb-vooANho",
+              "subject" : "CN=Utopia DS pinned by an entity whose registration ended,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "oHvSuLRRtLVajXIDPGpvhB3FXnQ"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Registration ended, pins a Document Signer of the registered IACA"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-ended",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE",
+          "validUntil" : "2020-01-01T00:00:00Z"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIIB9zCCAZ2gAwIBAgIJAOwMKFNICEQ7MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMFExCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMS0wKwYDVQQDDCRVdG9waWEgRFMgcGlubmVkIGJ5IGEgcmV2b2tlZCBlbnRpdHkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATTTxK5hseqYvQY9Ksj51CUosvb+9BsZs9BiEB6yN5kVmHFaDj1CGSHsfZGgGZ62UlYuU6iTWMJFptrT/CrhBhfo3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBTcP2Wp4fU4rosPhgVKnIjnjbIxyDAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiAJR6qDr7S/H5mbgjt+vN8zMFE1PfUNTkvU8T6X80HyJQIhANSz0uGiMZlB6Ox+/Chi1vONV9cA/7WQ2JMluCyOeFis",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443b",
+              "sha256" : "pt94h8dk9f6nFF7fCg4SuqwnEgcjpCw6KLMkiz3_R_4",
+              "subject" : "CN=Utopia DS pinned by a revoked entity,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "3D9lqeH1OK6LD4YFSpyI542yMcg"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, pins a Document Signer of the registered IACA"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIIB+TCCAZ+gAwIBAgIJAOwMKFNICEQ8MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMFMxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMS8wLQYDVQQDDCZVdG9waWEgRFMgcGlubmVkIGJ5IGEgc3VzcGVuZGVkIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABL96TgPUHSy53Axk4H9CRZVvAFqsNUAVTqQ6RYxzkWzZrcbB5vMwZ2IDblX3vWbe5saVbjZdSIspDWNO0AyskVqjdzB1MAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBUGA1UdJQEB/wQLMAkGByiBjF0FAQIwHQYDVR0OBBYEFOdINZuo0kjZpVvAcTpif4MGCFXnMB8GA1UdIwQYMBaAFKh7FmVTE/PDWqc30+0fwj57iUpgMAoGCCqGSM49BAMCA0gAMEUCIQDpj6eKJzXKAofIxYykLUY7GuoVqBPV6TVUxF7LCCSN1QIgQ+KnMlinzRJEk/IsiZPwqC2L41OjGmDV32EY6l/vlpQ=",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "ec0c28534808443c",
+              "sha256" : "SsIEz2VUfjgr6KMIJcMsBFDuaiZD3jht3v641B-toeU",
+              "subject" : "CN=Utopia DS pinned by a suspended entity,O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "50g1m6jSSNmlW8BxOmJ_gwYIVec"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Suspended, pins a Document Signer of the registered IACA"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pin-suspended",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "SUSPENDED"
         },
         {
           "attributes" : { },
@@ -6747,6 +8028,96 @@
             "CREDENTIAL_ISSUER"
           ],
           "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "mMJXQHf5cPPBSF_CAUDUcXnTRHE",
+              "ca" : false,
+              "certificate" : "MIIB7TCCAZSgAwIBAgIJAJcPiZZRKwQiMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1QaW5uZWQgSXNzdWVyMTgwNgYDVQQDDC9TaWduZXIgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABII3Z3A6pV898DKyTrLhofDh/J4EOS/aBy0dqv3ZdR2me3v/dezrjI0W6r/X2FTyhWxD+y5tgqtF5dcg/zGsGWKjYDBeMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQviKcU28X4IJ9kOO6W6MErErBSZTAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAKBggqhkjOPQQDAgNHADBEAiBDRnMu99OSGVVSVaU5yFwgNT+HUiaa1cARITR/1dMYvgIgRWSopIsxNZRLuwWqoaYjuMwqVgP/Cr38bymZg77McSM=",
+              "dnsNames" : [ ],
+              "issuer" : "CN=RP Access CA,O=Registrar,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "970f8996512b0422",
+              "sha256" : "xMdKDjulfiGs932f7FTMda5PBH7Tgd_w3FGOcQm9jOg",
+              "subject" : "CN=Signer pinned by a revoked and an active entity,O=Pinned Issuer,C=UT",
+              "subjectKeyIdentifier" : "L4inFNvF-CCfZDjulujBKxKwUmU"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Active, pins a signer under the shared anchor a revoked entity pins too"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-shared-pin-active",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "dc+sd-jwt"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "mMJXQHf5cPPBSF_CAUDUcXnTRHE",
+              "ca" : false,
+              "certificate" : "MIIB7TCCAZSgAwIBAgIJAJcPiZZRKwQiMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODAzMTBaFw00NjAxMTEwODAzMTBaMF8xCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1QaW5uZWQgSXNzdWVyMTgwNgYDVQQDDC9TaWduZXIgcGlubmVkIGJ5IGEgcmV2b2tlZCBhbmQgYW4gYWN0aXZlIGVudGl0eTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABII3Z3A6pV898DKyTrLhofDh/J4EOS/aBy0dqv3ZdR2me3v/dezrjI0W6r/X2FTyhWxD+y5tgqtF5dcg/zGsGWKjYDBeMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQviKcU28X4IJ9kOO6W6MErErBSZTAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAKBggqhkjOPQQDAgNHADBEAiBDRnMu99OSGVVSVaU5yFwgNT+HUiaa1cARITR/1dMYvgIgRWSopIsxNZRLuwWqoaYjuMwqVgP/Cr38bymZg77McSM=",
+              "dnsNames" : [ ],
+              "issuer" : "CN=RP Access CA,O=Registrar,C=UT",
+              "notAfter" : "2046-01-11T08:03:10Z",
+              "notBefore" : "2026-11-12T08:03:10Z",
+              "serialNumber" : "970f8996512b0422",
+              "sha256" : "xMdKDjulfiGs932f7FTMda5PBH7Tgd_w3FGOcQm9jOg",
+              "subject" : "CN=Signer pinned by a revoked and an active entity,O=Pinned Issuer,C=UT",
+              "subjectKeyIdentifier" : "L4inFNvF-CCfZDjulujBKxKwUmU"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, pins a signer under the shared anchor an active entity pins too"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-shared-pin-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "REVOKED"
         },
         {
           "attributes" : { },

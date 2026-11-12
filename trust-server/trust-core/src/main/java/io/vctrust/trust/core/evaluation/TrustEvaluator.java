@@ -523,9 +523,20 @@ public class TrustEvaluator {
             lookUpOnDemand(ev, keyMaterial ? key.identifiers() : claim.identifiers(), candidates);
         }
         keepRole(ev, candidates);
+        String leafHash = key.chain().isEmpty() ? null : Certificates.sha256Thumbprint(key.chain().getFirst());
         TrustedEntity entity = pick(candidates.entities, key.anchor(), ev.now(),
-                e -> denied(e, ev.format(), ev.types(), ev.strict()) == null);
+                e -> denied(e, ev.format(), ev.types(), ev.strict()) == null, e -> boundToCertificate(e, leafHash));
         return new Found(entity, candidates.matched);
+    }
+
+    /**
+     * Whether the entity is bound to the presented certificate itself: it pins the leaf ({@code certificates}) or names
+     * the leaf's SHA-256 as an identifier ({@code X509_SHA256}), whatever else it was found through as well. A key
+     * without a certificate (a DID key, a bare JWK) binds no entity this way.
+     */
+    private static boolean boundToCertificate(TrustedEntity entity, String leafHash) {
+        return leafHash != null && (entity.identifiers().contains(Identifier.of(IdentifierType.X509_SHA256, leafHash))
+                || entity.certificates().stream().anyMatch(c -> Certificates.sha256Thumbprint(c).equals(leafHash)));
     }
 
     private static Map<TrustedEntity, String> registered(Evaluation ev, Collection<Identifier> identifiers) {
@@ -611,15 +622,25 @@ public class TrustEvaluator {
 
     /**
      * The entity a decision is about. When the key is bound to several registered parties, which one is meant must
-     * not depend on the order a registry or a snapshot happens to list them in: the entity the anchor belongs to;
-     * else, in order of entity id, the first in good standing that is authorized for what is asked; else the first
-     * in good standing; else the first.
+     * not depend on the order a registry or a snapshot happens to list them in. What is bound to the certificate itself
+     * ({@link #boundToCertificate}) speaks before what is bound to a name in it or to its CA: when there are such
+     * entities and none of them is in good standing, the decision is about the first of them in order of entity id, and
+     * the standing check refuses it. Where a valid chain to a listed CA is trusted by itself, an entry that withdraws
+     * this very certificate's party is what restricts it; it must not lose to the CA's entity or to a name. Otherwise:
+     * the entity the anchor belongs to; else, in order of entity id, the first in good standing that is authorized for
+     * what is asked; else the first in good standing; else the first. A certificate that an entity in good standing is
+     * bound to as well is therefore decided as before: the list says that party is active.
      */
-    private static TrustedEntity pick(Collection<TrustedEntity> candidates, TrustAnchor anchor, Instant now, Predicate<TrustedEntity> authorized) {
+    private static TrustedEntity pick(Collection<TrustedEntity> candidates, TrustAnchor anchor, Instant now, Predicate<TrustedEntity> authorized,
+                                      Predicate<TrustedEntity> boundToCertificate) {
         if (candidates.isEmpty()) {
             return null;
         }
         List<TrustedEntity> ordered = candidates.stream().sorted(Comparator.comparing(TrustedEntity::id)).toList();
+        List<TrustedEntity> bound = ordered.stream().filter(boundToCertificate).toList();
+        if (!bound.isEmpty() && bound.stream().noneMatch(e -> e.isUsableAt(now))) {
+            return bound.getFirst();
+        }
         if (anchor != null && anchor.entityId() != null) {
             for (TrustedEntity e : ordered) {
                 if (e.id().equals(anchor.entityId())) {

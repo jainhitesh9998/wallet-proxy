@@ -150,6 +150,13 @@ const present = (s?: string | null): string | undefined => (typeof s === 'string
 /** OpenID4VP 1.0 §5.9.3 client identifier prefixes; anything else is a pre-registered client_id. */
 const CLIENT_ID_PREFIXES = new Set(['redirect_uri', 'x509_san_dns', 'x509_hash', 'decentralized_identifier', 'verifier_attestation', 'openid_federation', 'origin']);
 const pickName = (e: EntityView) => (e.display.find((d) => d.locale?.startsWith('en')) ?? e.display[0])?.name ?? e.id;
+/**
+ * Whether the entity is bound to the presented certificate itself: it pins the leaf (certificates) or names the leaf's
+ * SHA-256 as an identifier (X509_SHA256), whatever else it was found through as well. A key without a certificate (a DID
+ * key, a bare JWK) binds no entity this way.
+ */
+const boundToCertificate = (e: EntityView, leafHash: string | undefined) => leafHash !== undefined
+  && (e.identifiers.some((i) => i.type === 'X509_SHA256' && i.value === leafHash) || (e.certificates ?? []).some((c) => c.sha256 === leafHash));
 const goodStanding = (e: EntityView, now: Date) => e.status === 'ACTIVE' && !(e.validUntil && now > new Date(e.validUntil)) && !(e.validFrom && now < new Date(e.validFrom));
 const error = (code: string, message: string): Reason => ({ code, message, severity: 'ERROR' });
 const warning = (code: string, message: string): Reason => ({ code, message, severity: 'WARNING' });
@@ -557,7 +564,9 @@ export class LocalEvaluator {
       await this.lookUpOnDemand(ev, keyMaterial ? key.identifiers : claim.identifiers, candidates);
     }
     this.keepRole(ev, candidates);
-    const entity = this.pick(candidates.entities, key.anchor, ev.now, (e) => this.denied(e, ev.format, ev.types, ev.strict) === undefined);
+    const leafHash = key.chain[0]?.sha256;
+    const entity = this.pick(candidates.entities, key.anchor, ev.now, (e) => this.denied(e, ev.format, ev.types, ev.strict) === undefined,
+      (e) => boundToCertificate(e, leafHash));
     return { entity, matched: candidates.matched };
   }
 
@@ -639,11 +648,20 @@ export class LocalEvaluator {
 
   /**
    * The entity the decision is about. When the key is bound to several registered parties, which one is meant must not
-   * depend on the order a snapshot lists them in: the entity the anchor belongs to; else, in order of entity id, the
-   * first in good standing that is authorized for what is asked; else the first in good standing; else the first.
+   * depend on the order a snapshot lists them in. What is bound to the certificate itself (boundToCertificate) speaks
+   * before what is bound to a name in it or to its CA: when there are such entities and none of them is in good
+   * standing, the decision is about the first of them in order of entity id, and the standing check refuses it. Where a
+   * valid chain to a listed CA is trusted by itself, an entry that withdraws this very certificate's party is what
+   * restricts it; it must not lose to the CA's entity or to a name. Otherwise: the entity the anchor belongs to; else, in
+   * order of entity id, the first in good standing that is authorized for what is asked; else the first in good
+   * standing; else the first. A certificate that an entity in good standing is bound to as well is therefore decided as
+   * before: the list says that party is active.
    */
-  private pick(candidates: EntityView[], anchor: LocalAnchor | undefined, now: Date, authorized: (e: EntityView) => boolean): EntityView | undefined {
+  private pick(candidates: EntityView[], anchor: LocalAnchor | undefined, now: Date, authorized: (e: EntityView) => boolean,
+               bound: (e: EntityView) => boolean): EntityView | undefined {
     const ordered = [...candidates].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const toCertificate = ordered.filter(bound);
+    if (toCertificate.length > 0 && !toCertificate.some((e) => goodStanding(e, now))) return toCertificate[0];
     return (anchor?.entityId ? ordered.find((e) => e.id === anchor.entityId) : undefined)
       ?? ordered.find((e) => goodStanding(e, now) && authorized(e)) ?? ordered.find((e) => goodStanding(e, now)) ?? ordered[0];
   }

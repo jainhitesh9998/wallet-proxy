@@ -282,6 +282,181 @@
             "value": "subject:rsa-leaf"
           }
         ]
+      },
+      "vec-pin-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Revoked, pins a Document Signer of the registered IACA",
+        "status": "REVOKED",
+        "certificates": [
+          "pem:ds-pin-revoked"
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-pin-suspended": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Suspended, pins a Document Signer of the registered IACA",
+        "status": "SUSPENDED",
+        "certificates": [
+          "pem:ds-pin-suspended"
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-pin-ended": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Registration ended, pins a Document Signer of the registered IACA",
+        "validUntil": "2020-01-01T00:00:00Z",
+        "certificates": [
+          "pem:ds-pin-ended"
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-pin-both-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Revoked, pins a Document Signer an active entity pins too",
+        "status": "REVOKED",
+        "certificates": [
+          "pem:ds-pin-both"
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-pin-both-active": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Active, pins a Document Signer a revoked entity pins too",
+        "certificates": [
+          "pem:ds-pin-both"
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-shared-pin-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Revoked, pins a signer under the shared anchor an active entity pins too",
+        "status": "REVOKED",
+        "certificates": [
+          "pem:rp-pin-both"
+        ],
+        "authorizations": [
+          {
+            "format": "dc+sd-jwt"
+          }
+        ]
+      },
+      "vec-shared-pin-active": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Active, pins a signer under the shared anchor a revoked entity pins too",
+        "certificates": [
+          "pem:rp-pin-both"
+        ],
+        "authorizations": [
+          {
+            "format": "dc+sd-jwt"
+          }
+        ]
+      },
+      "vec-named-pin-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Revoked, pins a signer whose DNS name an active entity is registered by",
+        "status": "REVOKED",
+        "certificates": [
+          "pem:rp-named-pinned"
+        ],
+        "authorizations": [
+          {
+            "format": "dc+sd-jwt"
+          }
+        ]
+      },
+      "vec-named-active": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Active, registered by the DNS name of a signer a revoked entity pins",
+        "identifiers": [
+          {
+            "type": "DNS",
+            "value": "named-pinned.vectors.example"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "dc+sd-jwt"
+          }
+        ]
+      },
+      "vec-hashed-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Revoked, names by its hash a signer whose DNS name an active entity is registered by",
+        "status": "REVOKED",
+        "identifiers": [
+          {
+            "type": "X509_SHA256",
+            "value": "sha256:rp-named-hashed"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "dc+sd-jwt"
+          }
+        ]
+      },
+      "vec-hashed-active": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Active, registered by the DNS name of a signer a revoked entity names by its hash",
+        "identifiers": [
+          {
+            "type": "DNS",
+            "value": "named-hashed.vectors.example"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "dc+sd-jwt"
+          }
+        ]
       }
     }
   },
@@ -1954,6 +2129,115 @@
           "protocol": "oid4vci",
           "credentialFormat": "ldp_vc",
           "credentialType": "UniversityDegreeCredential"
+        }
+      }
+    },
+    {
+      "name": "Document Signer under the registered IACA, pinned by a revoked entity: what is bound to the certificate itself speaks before the IACA's entity",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-pin-revoked"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "Document Signer under the registered IACA, pinned by a suspended entity",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-pin-suspended"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "Document Signer under the registered IACA, pinned by an entity whose registration has ended",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-pin-ended"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "Document Signer under the registered IACA, pinned by a revoked and by an active entity: the list says it is active, and the IACA's entity is meant",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-pin-both"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor, pinned by a revoked and by an active issuer: the active one is meant",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-pin-both"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor: an active issuer registered by the certificate's DNS name, and a revoked one that pins the certificate",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-named-pinned"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor: an active issuer registered by the certificate's DNS name, and a revoked one that names the certificate's hash",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-named-hashed"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
         }
       }
     }
