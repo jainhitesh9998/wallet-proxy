@@ -189,6 +189,7 @@ trust:
 | `openid-federation` | `trustAnchor`, `trustAnchorJwks` / `trustAnchorJwksLocation`, `crawl`, `maxDepth`, `maxEntities` | Entities from validated trust chains (metadata policy applied, trust marks verified); asked on demand about unknown entity identifiers |
 | `ebsi-tir` | `baseUrl`, `crawl`, `maxIssuers`, `pageSize` | EBSI Trusted Issuers Registry entries; asked on demand about `did:ebsi` issuers |
 | `oid4vci-discovery` | `issuers: [url \| {url, entityId}]` | What listed issuers say about themselves (display names, the JSON-LD contexts of their credentials). It describes entities registered elsewhere and authorizes nothing |
+| `mapped` | `location`, `mappingLocation` / `mapping`, `format`, `verify`, `headers`, `allowUnverified`, `allowExpired`, `publicUri`, `limits` | Entities and anchors from any trust list or registry that speaks JSON, mapped onto the registry by configuration ([mapped sources](#mapped-sources)); with a `lookup`, asked on demand about single identifiers |
 
 What makes a source's content authentic differs by type:
 
@@ -199,6 +200,7 @@ What makes a source's content authentic differs by type:
 | `x509-bundle` from the network | The pinned `sha256` of every certificate |
 | `static` from an `https:` location, `ebsi-tir`, `oid4vci-discovery` | TLS to the configured host only: whoever controls that host, or its certificate, controls the content |
 | `static` from `classpath:` or `file:`, `managed` | The operator: the deployment, or an admin client |
+| `mapped` | `format: jws`: the list's signature, verified against the keys or certificates pinned in `verify` before anything of it is read. `format: json`: TLS to the configured host only, as `static` from `https:`; a local copy: the operator |
 
 `allowUnverified` (and `allowUnpinned`) drop a list to the transport level too; they exist for test environments and
 say so in the log on every load.
@@ -399,6 +401,296 @@ proves, never through what a credential claims. List at least one of:
 A credential that names a registered issuer in `iss` or `issuer` while its key is bound to nobody, or to someone
 else, is refused (`identifier.unbound`).
 
+### Mapped sources
+
+A `mapped` source reads a trust list or registry that another service publishes as JSON, and maps it onto the
+registry by configuration alone: where the document is, what authenticates it, and how its records become entities
+and anchors. No code is written per format. Each record is turned into an entry in the
+[registry format](#registry-format) and read by the same parser as a hand-written one, so the rules above hold for it.
+
+```yaml
+trust:
+  sources:
+    - id: partner
+      type: mapped
+      framework: partner
+      refresh: PT1H
+      properties:
+        location: https://registry.partner.example/v1/issuers
+        headers: { Authorization: "Bearer ${PARTNER_TOKEN}" }
+        mappingLocation: file:/etc/trust/partner-mapping.yaml
+```
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `location` | required | The document: an `https:` URL, or a local copy (`file:`, `classpath:`, a path). Only a source that does nothing but look up goes without |
+| `mappingLocation` / `mapping` | one of them | The mapping: a YAML or JSON file of this host (`file:`, `classpath:` or a path, never a URL), or inline. Prefer the file: an inline mapping passes through Spring's property binding ([below](#a-mapping-inside-applicationyml)) |
+| `format` | `json` | `json`, or `jws`: a compact JWS or JWT whose payload is the JSON |
+| `verify.jwks` / `verify.jwksLocation` | none | For `jws`: the public keys (EC or RSA) the list is signed with, as a JWKS inline or in a `file:` / `classpath:` location. The header's `kid` chooses the key |
+| `verify.certificates` / `verify.certificateLocation` | none | Or certificates (PEM or base64 DER; a PEM file) that the JWS's `x5c` chain must validate to |
+| `verify.typ` | none | The JOSE `typ` the JWS must have, so that another document signed with the same key cannot pass for the list |
+| `verify.audience` | none | This service's name at the list's issuer. A JWT that names an audience (`aud`) is loaded only when it names this one |
+| `allowUnverified` | `false` | Load a `jws` list without pinned keys, on the strength of TLS alone. For test environments; said in the log on every load |
+| `allowExpired` | `false` | Load a list past its mapped `nextUpdate` or its `exp`, with a warning |
+| `headers` | none | Sent with requests to the origin of `location` (scheme, host and port) and nowhere else; never shown in a log, a message or the source state |
+| `publicUri` | none | Published as the entries' `provenance.sourceUri`. Without it an https `location` is published, and a local one is not |
+| `limits.entities` / `limits.anchors` | `5000` / `1000` | More records than this fail the load |
+
+#### The mapping
+
+```yaml
+list:                                    # optional: facts about the list, read from its (first) page
+  issuer: $.publisher
+  sequence: $.version                    # a list with a lower number than the one held is refused
+  issuedAt: $.issued                     # an ISO date-time or date, or seconds since the epoch
+  nextUpdate: $.next_update              # past it, the list is not loaded
+pages:                                   # optional: the list comes in pages
+  next: $.links.next                     # the next page's URL (may be relative), absent or empty on the last
+  max: 50
+entities:                                # one or more blocks: every match of each is one entity
+  - each: $.issuers[*]
+    id: { template: "partner:{$.id}" }   # required
+    roles: [CREDENTIAL_ISSUER]
+    name: $.display.name                 # or display: [{ each, locale, name, description, logoUri }]
+    identifiers:                         # items: type (required), value, and an each of their own if needed
+      - { type: URL, value: $.credential_issuer }
+      - { each: "$.dids[*]", type: DID, value: $ }
+    certificates: $.signing_certificates[*]      # PEM or base64 DER
+    authorizations:
+      - { each: "$.credentials[*]", format: $.format, type: $.type }
+    status: { path: $.state, values: { active: ACTIVE, suspended: SUSPENDED }, default: REVOKED }
+    validFrom: $.valid_from
+    validUntil: $.valid_until
+    contexts: $.contexts[*]              # or items { each, url, sha256 }
+    attributes: { country: $.country }
+    metadataPolicy: $.metadata_policy    # an object
+    framework: $.framework               # optional: a record that names another framework is skipped
+anchors:
+  - each: $.authorities[*]
+    id: $.kid
+    domain: mdoc-iaca                    # required
+    certificate: $.certificate           # required: one certificate, PEM or base64 DER
+    entity: { template: "partner:{$.issuer_id}" }
+    status: $.status
+    docTypes: $.doctypes[*]
+    crlUrls: $.crl_urls[*]
+    crl: $.crl
+lookup:                                  # optional: ask about one party at a time (a registry too large to list)
+  url: "https://registry.partner.example/v1/issuers/{identifier}"
+  identifierTypes: [DID]
+  startsWith: ["did:example:"]
+  missStatus: [404]                      # the answers that mean "not listed"
+  entity: { ... }                        # an entities block; each defaults to the whole answer
+```
+
+Every member of the registry format that makes sense for remote data can be mapped. `certificateLocation` cannot: a
+document from elsewhere never makes the service read a file.
+
+**Values.** Every member takes one of these forms; a member that takes a list takes a list of them.
+
+| Form | Meaning |
+| --- | --- |
+| `$.path` | A path into the current record: the match of `each` (in an item with an `each` of its own, that match) |
+| `^.path` | The same, from the root of the document |
+| Any other scalar | A constant |
+| `{ value: "$5" }` | A constant that starts with `$` or `^` |
+| `{ path: P, values: { a: X, b: Y }, default: Z }` | The value at `P`, translated. Without `default`, a value not in the table yields nothing. `values` can also be a list of `{ when, then }` pairs |
+| `{ template: "did:web:{$.host}" }` | Text with paths in braces; nothing if any of them yields nothing |
+
+A path with `[*]` or a filter gives every match to a list member, and its first match to a single one. A member that
+yields nothing is left out. A member that yields something of the wrong kind (an object where text belongs, a
+`validUntil` that is not a date) skips the record, with a warning that names the block, the record and the reason; so
+does a record without what the registry format requires (an entity's `id`, an anchor's `domain` and `certificate`) or
+with an id that is not 1 to 128 letters, digits or `. _ : @ ~ -`. Give `status` a `default`: a state the mapping does
+not know should not stand for good standing, and a status left out is `ACTIVE`.
+
+**Paths.** A subset of JSONPath (RFC 9535), evaluated in time linear in the size of the document:
+
+| Syntax | Selects |
+| --- | --- |
+| `$`, `^` | The current record; the document |
+| `.name`, `['name']` | A member (brackets for a name with characters other than letters, digits and `_`) |
+| `[2]`, `[-1]` | An array element; from the end when negative |
+| `[*]` | Every element of an array, every member value of an object |
+| `[?@.type == 'DSC' && @.country != 'XX']` | The children for which every comparison holds; also written `[?(...)]`. `==` and `!=` compare a member of the child (`@`, `@.a.b`, `@['a']`, `@[0]`) with a string, a number, `true`, `false` or `null`; a missing member equals nothing |
+
+There is no recursive descent (`..`), slice, function, regular expression, `||` or `!`. A path is checked when the
+configuration is read.
+
+**What the source does.**
+
+- *Anything unknown is an error.* A property, mapping member, value form, role, status or identifier type that the
+  source does not know makes every load fail, with a message that names the source and the place, shown by
+  `GET /admin/v1/sources`: `Source 'partner' (mapped): mapping.entities[0]: unknown member [nmae]; known: [...]`.
+- *A signed list is verified first.* With `format: jws` the signature is checked against the pinned keys before
+  anything else is read: asymmetric algorithms only (ES256, ES384, ES512, PS256, PS384, PS512, and RS256, RS384,
+  RS512 with keys of 2048 bits or more), never `none` or HMAC, no `crit`, the key chosen by `kid`. A JWT payload is
+  held to `exp`, `nbf` and `aud`. Keys come from the configuration, never from the network: a key served next to the
+  list proves nothing about it. The source's `listInfo` says `VERIFIED`; for `format: json`, `NOT_SIGNED`.
+- *Freshness, when the list says it.* With `nextUpdate` mapped, a list past it is not loaded; with `issuedAt` or
+  `sequence` mapped, a list older than the one held is refused, as for every source. A fact the mapping names but the
+  document lacks fails the load, and so does a list issued in the future.
+- *Headers stay with their origin.* They go with requests to the origin of `location` (for a source that only looks
+  up: of `lookup.url`), not to a lookup URL elsewhere, and not after a redirect to another origin: the outbound
+  client then passes on `Accept` only.
+- *Bounds.* At most `limits.entities` and `limits.anchors` records and `pages.max` pages; a next page must be on the
+  origin of `location` and not one already read; strict JSON (no member twice, nothing after the value), nested at
+  most 32 deep; at most 50 warnings, then their number. Past a bound the load fails rather than load part of a list.
+- *A mapping that produces nothing fails.* When the document has records for a block and none of them maps, its
+  format has probably changed: the load fails and the source keeps its last good content. A block that finds no
+  record at all is a warning.
+- *A source speaks for its own framework.* Everything lands in the source's framework; a record whose mapped
+  `framework` names another is skipped.
+- *Lookups are bound to the question.* Only identifiers of `identifierTypes` that start with one of `startsWith` are
+  asked about, URL-encoded into the URL. An answer counts only when the entity it maps to carries the identifier
+  asked about (compared as the registry compares identifiers). Answers are kept for 10 minutes and misses for 1, at
+  most 5000 of them. A `missStatus` is a miss; any other failure is an error. With `format: jws` an answer is verified
+  like the list.
+
+#### A mapping inside application.yml
+
+`mapping` can be written inline, under `properties`. Spring's property binding keeps it intact except for map keys,
+which keep letters, digits, `-` and `_` and lose everything else unless written in brackets. A translation table
+keyed by URIs is therefore written `values: { "[https://partner.example/kinds/iaca]": mdoc-iaca }`, or as
+`{ when, then }` pairs; a key that Spring has split is refused with a message that says so. A table whose keys are all
+numbers arrives as a list, and needs `{ when, then }` pairs too. A mapping file has none of these limits.
+
+#### Examples
+
+These are shortened from the mappings that `MappedSourceFixturesTest` runs.
+
+A wallet backend's list of the issuers it accepts,
+`{"issuers": [{"issuer_id", "credential_issuer", "display": [{"name", "language", "logo"}], "enabled"}]}`:
+
+```yaml
+entities:
+  - each: $.issuers[*]                   # or $.issuers[?@.enabled == true]: disabled ones left out
+    id: { template: "wallet:{$.issuer_id}" }
+    roles: [CREDENTIAL_ISSUER]
+    display:
+      - { each: "$.display[*]", locale: $.language, name: $.name, logoUri: $.logo }
+    identifiers:
+      - { type: URL, value: $.credential_issuer }
+    status: { path: $.enabled, values: { "true": ACTIVE }, default: SUSPENDED }
+```
+
+A certificate list in the style of the EU Digital COVID Certificate trust list,
+`{"certificates": [{"certificateType", "country", "kid", "rawData"}]}`: the CAs as anchors in the domain their type
+says, the document signers as one entity per country.
+
+```yaml
+anchors:
+  - each: $.certificates[?@.certificateType != 'DSC']
+    id: { template: "dcc:{$.kid}" }
+    domain: { path: $.certificateType, values: { CSCA: mdoc-iaca, RPCA: verifier-access } }
+    certificate: $.rawData
+entities:
+  - each: $.certificates[?@.certificateType == 'DSC']
+    id: { template: "dcc:{$.country}" }  # records with one id are merged into one entity
+    roles: [CREDENTIAL_ISSUER]
+    certificates: [$.rawData]
+```
+
+Another trust service like this one, through its snapshot ([the claims](architecture.md#the-snapshot)): `location`
+its `/api/v1/snapshot`, `headers` its API key for this service, `format: jws`, and
+`verify: { jwksLocation: file:/etc/trust/upstream-jwks.json, typ: trust-snapshot+jwt, audience: <this service's client id there> }`.
+
+```yaml
+list: { issuer: $.iss, issuedAt: $.iat, nextUpdate: $.exp }
+entities:
+  - each: $.entities[*]
+    id: $.id
+    roles: $.roles[*]
+    display:
+      - { each: "$.display[*]", locale: $.locale, name: $.name, description: $.description, logoUri: $.logoUri }
+    identifiers:
+      - { each: "$.identifiers[*]", type: $.type, value: $.value }
+    certificates: $.certificates[*].certificate
+    authorizations:
+      - { each: "$.authorizations[*]", format: $.format, type: $.type }
+    status: $.status
+    validUntil: $.validUntil
+    metadataPolicy: $.metadataPolicy
+anchors:
+  - each: $.anchors[*]
+    id: $.id
+    domain: $.domain
+    certificate: $.certificate
+    entity: $.entityId
+    status: $.status
+    docTypes: $.constraints.docTypes[*]
+    crlUrls: $.constraints.crlUrls[*]
+```
+
+#### The example
+
+[`docs/examples/mapped-source`](examples/mapped-source) is a service whose only source is a partner's registry
+(`partner-registry.json`, a local copy so that it runs without a network) mapped by `mapping.yaml`: issuers and a
+verifier, one withdrawn and one disabled, and two CAs from the test PKI of [`conformance/pki`](../conformance/README.md).
+From the repository root:
+
+```sh
+scripts/build.sh                                    # once
+java -jar trust-server/trust-server/target/trust-server.jar \
+  --spring.config.additional-location=docs/examples/mapped-source/application.yml       # http://localhost:8096
+```
+
+In a second terminal, at the repository root:
+
+```sh
+curl -s -H 'Authorization: Bearer ops-key' localhost:8096/admin/v1/sources \
+  | jq '.[] | {id, type, lastError, entityCount, anchorCount, listInfo, warnings}'
+```
+
+```json
+{
+  "id": "partner",
+  "type": "mapped",
+  "lastError": null,
+  "entityCount": 3,
+  "anchorCount": 2,
+  "listInfo": {
+    "issuer": "Partner Registry (example)",
+    "sequence": "12",
+    "issuedAt": "2026-11-01T00:00:00Z",
+    "nextUpdate": "2030-01-01T00:00:00Z",
+    "signature": "NOT_SIGNED",
+    "details": {
+      "pages": 1,
+      "format": "json"
+    }
+  },
+  "warnings": []
+}
+```
+
+```sh
+curl -s -H 'Authorization: Bearer wallet-key' localhost:8096/api/v1/issuers \
+  | jq -c '.items[] | {id, status, identifiers: [.identifiers[].value], source: .provenance.sourceUri}'
+# {"id":"partner:closed-college","status":"REVOKED","identifiers":["https://college.example"],"source":"https://registry.partner.example/v1/issuers"}
+# {"id":"partner:utopia-dmv","status":"ACTIVE","identifiers":["https://issuer.utopia.example"],"source":"https://registry.partner.example/v1/issuers"}
+```
+
+The source is the `publicUri`: the local path the list was read from is not published. The disabled issuer is not
+there, and the withdrawn one is `REVOKED`, because the mapping's `status` has a default. The decisions, with the
+helpers of [the trust methods guide](trust-methods.md#the-example) on port 8096:
+
+```sh
+x5c() { grep -v -- '-----' "conformance/pki/$1.pem" | tr -d '\n'; }
+ask() { curl -s -H "Authorization: Bearer $1" -H 'Content-Type: application/json' localhost:8096/api/v1/evaluate -d "$2"; }
+
+ask wallet-key '{"role": "issuer", "subject": {"x5c": ["'"$(x5c ds)"'"]},
+  "context": {"credentialFormat": "mso_mdoc", "credentialType": "org.iso.18013.5.1.mDL"}}' | jq -c '[.decision, .summary]'
+# ["TRUSTED","Trusted credential issuer 'Utopia DMV' in framework 'partner'"]
+ask wallet-key '{"role": "verifier", "subject": {"identifier": "x509_san_dns:verifier.example", "x5c": ["'"$(x5c rp)"'"]},
+  "context": {"responseUri": "https://verifier.example/response"}}' | jq -c '[.decision, .summary]'
+# ["TRUSTED","Trusted verifier 'Verifier Inc' in framework 'partner'"]
+ask wallet-key '{"role": "issuer", "subject": {"identifier": "https://college.example"}}' | jq -c '[.decision, .summary]'
+# ["NOT_TRUSTED","Entity 'partner:closed-college' is REVOKED"]
+ask wallet-key '{"role": "issuer", "subject": {"identifier": "https://sandbox.example"}}' | jq -c '[.decision, .summary]'
+# ["UNKNOWN","No trust information found for the subject in accepted frameworks"]
+```
+
 ### Trust mechanisms
 
 A trust mechanism is a rule for a class of questions: which proof of key is accepted for them, which trust anchors
@@ -530,6 +822,7 @@ that predates mechanisms refuses a format 5 snapshot ("Snapshot format 5 is not 
 the client or the service") and decides from pinned trust instead; one that knows them refuses a snapshot with a
 mechanism member or value it does not know, rather than apply part of a rule. **Update the clients before you
 configure the first mechanism.**
+
 
 ### Proxy, cache and outbound HTTP
 

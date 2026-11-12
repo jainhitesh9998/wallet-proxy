@@ -39,6 +39,10 @@ cannot read exactly.
 
 ## Adding a trust list format
 
+A list or registry that speaks JSON (signed as a JWS or not, in pages or asked per identifier) needs no code: a
+`mapped` source says where it is, what authenticates it and how its records map onto the registry, in configuration
+([mapped sources](../docs/configuration.md#mapped-sources)). For any other format:
+
 1. Implement `io.vctrust.trust.core.spi.TrustSourceFactory`; its `TrustSource.load()` maps the list to
    `TrustedEntity` and `TrustAnchor` records. Use `SourceContext.http()` for every request, so the outbound guard and
    the limits apply, and verify the list's signature before returning anything.

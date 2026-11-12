@@ -686,6 +686,7 @@ The methods above work the same whatever the source.
 | `openid-federation` | Entities from validated trust chains, with their metadata policy | Can also be asked on demand about an entity identifier it did not crawl |
 | `ebsi-tir` | `did:ebsi` issuers with what they are accredited for | Asked on demand by default |
 | `oid4vci-discovery` | Display names and contexts of issuers that are listed elsewhere | Authorizes nothing |
+| `mapped` | Whatever its mapping makes of a JSON list or registry: entities and anchors in the registry format | Any list that speaks JSON, without code: [mapped sources](configuration.md#mapped-sources). A signed list is verified against keys pinned in the configuration; with a `lookup`, asked on demand about one identifier |
 
 **Parties too many to ship.** A federation or EBSI is not copied into every snapshot. With
 `lookups.unknownParties: true` the library asks the service about an identifier the snapshot does not carry

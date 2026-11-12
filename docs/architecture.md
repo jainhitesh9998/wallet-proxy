@@ -70,7 +70,7 @@ flowchart LR
 | Path | What | Notes |
 | --- | --- | --- |
 | `trust-server/trust-core` | Registry model, evaluator, X.509 path validation, CRLs, DID drivers, metadata policy | No Spring; the rules live here |
-| `trust-server/trust-adapters` | Trust list formats (`TrustSourceFactory` SPI) | static, managed, x509-bundle, vical, etsi-tl, etsi-lote, openid-federation, ebsi-tir, oid4vci-discovery |
+| `trust-server/trust-adapters` | Trust list formats (`TrustSourceFactory` SPI) | static, managed, x509-bundle, vical, etsi-tl, etsi-lote, openid-federation, ebsi-tir, oid4vci-discovery; and mapped: any list or registry that speaks JSON, read by configuration (a JSONPath subset, pinned keys for signed lists) |
 | `trust-server/trust-server` | REST API, snapshot signing, proxy caches, client authentication, admin API | Spring Boot application |
 | `packages/trust-client` | The client library | Main entry: the client. `@vctrust/trust-client/primitives`: the parsers and verifiers it is made of |
 | `packages/wallet-core` | OpenID4VCI 1.0 / OpenID4VP 1.0 / HAIP wallet core; credential verification | Uses the trust client for every external fact |

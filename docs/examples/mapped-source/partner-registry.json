@@ -1,0 +1,55 @@
+{
+  "publisher": "Partner Registry (example)",
+  "version": 12,
+  "issued": "2026-11-01T00:00:00Z",
+  "next_update": "2030-01-01T00:00:00Z",
+  "issuers": [
+    {
+      "id": "utopia-dmv",
+      "kind": "issuer",
+      "enabled": true,
+      "state": "active",
+      "display": { "name": "Utopia DMV" },
+      "credential_issuer": "https://issuer.utopia.example",
+      "credentials": [{ "format": "mso_mdoc", "type": "org.iso.18013.5.1.mDL" }]
+    },
+    {
+      "id": "verifier-inc",
+      "kind": "verifier",
+      "enabled": true,
+      "state": "active",
+      "display": { "name": "Verifier Inc" },
+      "dns": "verifier.example"
+    },
+    {
+      "id": "closed-college",
+      "kind": "issuer",
+      "enabled": true,
+      "state": "withdrawn",
+      "display": { "name": "Closed College" },
+      "credential_issuer": "https://college.example"
+    },
+    {
+      "id": "sandbox-issuer",
+      "kind": "issuer",
+      "enabled": false,
+      "state": "active",
+      "display": { "name": "Sandbox" },
+      "credential_issuer": "https://sandbox.example"
+    }
+  ],
+  "authorities": [
+    {
+      "kid": "utopia-iaca",
+      "type": "IACA",
+      "issuer_id": "utopia-dmv",
+      "doctypes": ["org.iso.18013.5.1.mDL"],
+      "certificate": "MIIBqzCCAVKgAwIBAgIJAPl9na9lxDM1MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NjEwMjYyMDA4NThaMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABFVQyb01Ha2zJJCBv/U+xeR9lrpLLTRxZFCxwvfcqct/oRZ0X9OT24R2YAXFeK2BPQXkwWxlJ90ZVM707Zd0IWejRTBDMBIGA1UdEwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNHADBEAiAs6nsYCEWuXydj2nyj9GENYnxvli12FfnYSocKOZLP2QIgHXIWBu+oXGDtRyUX7ZEYCME0U8NwEH7/7zZewz6zs0A="
+    },
+    {
+      "kid": "rp-access-ca",
+      "type": "RP_CA",
+      "certificate": "MIIBrTCCAVKgAwIBAgIJAJ5Ek3XUyw0kMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjEwMzEyMDA4NThaFw00NjEwMjYyMDA4NThaMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLlSLn9QbzQA/BG6r+vnn5TrO3WD6RlkjUOQrzN3oFdezCfX7hVdTQevvjwX3GuhoOGsqJdEeuhfh8Ra97RiJTijRTBDMBIGA1UdEwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgEGMB0GA1UdDgQWBBSYwldAd/lw88FIX8IBQNRxedNEcTAKBggqhkjOPQQDAgNJADBGAiEA/Df2jqcG+NUqlU/pSN7OazwtgCWUO6Jpxm6YaGtFvYECIQCiIzEd0ryTnBkDkvUQD8lLcYBM16haQmetmQQf/RAVcA=="
+    }
+  ]
+}

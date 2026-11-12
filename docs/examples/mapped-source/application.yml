@@ -1,0 +1,45 @@
+# A service whose registry comes from someone else's JSON registry, mapped by configuration alone
+# (docs/configuration.md, "Mapped sources"). From the repository root, after building the service:
+#
+#   java -jar trust-server/trust-server/target/trust-server.jar \
+#     --spring.config.additional-location=docs/examples/mapped-source/application.yml
+#
+# partner-registry.json stands in for the partner's registry, as a local copy, so that the example runs without a
+# network. Against the real registry, location is its https URL and headers carry the credential it asks for.
+# Test material only: the API keys below are published here, and the certificates are the test PKI of conformance/pki.
+server:
+  port: 8096
+
+spring:
+  datasource:
+    url: jdbc:h2:file:./.runtime/mapped-source/trust;MODE=PostgreSQL
+
+trust:
+  service:
+    issuer: http://localhost:8096
+    signing-key-file: ./.runtime/mapped-source/signing-key.jwk
+  revocation:
+    fetch-anchor-crls: false              # the example needs no network
+
+  clients:
+    - id: wallet
+      api-key: wallet-key
+      frameworks: [partner]
+    - id: ops
+      api-key: ops-key
+      admin: true
+
+  frameworks:
+    - { id: partner, name: Partner registry }
+
+  sources:
+    - id: partner
+      type: mapped
+      framework: partner
+      refresh: PT1H
+      properties:
+        location: docs/examples/mapped-source/partner-registry.json
+        # location: https://registry.partner.example/v1/issuers
+        # headers: { Authorization: "Bearer ${PARTNER_TOKEN}" }
+        publicUri: https://registry.partner.example/v1/issuers   # published in place of the local path
+        mappingLocation: docs/examples/mapped-source/mapping.yaml

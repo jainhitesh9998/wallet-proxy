@@ -1,0 +1,28 @@
+# How the partner's registry (partner-registry.json) maps onto this service's registry. Each member is explained in
+# docs/configuration.md, "Mapped sources".
+list:
+  issuer: $.publisher
+  sequence: $.version
+  issuedAt: $.issued
+  nextUpdate: $.next_update          # past it, the list is not loaded
+
+entities:
+  - each: $.issuers[?@.enabled == true]          # disabled entries are left out
+    id: { template: "partner:{$.id}" }
+    roles: { path: $.kind, values: { issuer: CREDENTIAL_ISSUER, verifier: VERIFIER } }
+    name: $.display.name
+    identifiers:                     # an item whose value is absent is left out
+      - { type: URL, value: $.credential_issuer }
+      - { type: DNS, value: $.dns }
+    authorizations:
+      - { each: "$.credentials[*]", format: $.format, type: $.type }
+    # A state this mapping does not know is not taken for good standing.
+    status: { path: $.state, values: { active: ACTIVE, suspended: SUSPENDED }, default: REVOKED }
+
+anchors:
+  - each: $.authorities[*]
+    id: { template: "partner:{$.kid}" }
+    domain: { path: $.type, values: { IACA: mdoc-iaca, RP_CA: verifier-access } }
+    certificate: $.certificate
+    entity: { template: "partner:{$.issuer_id}" }  # no issuer_id: a CA shared by many parties
+    docTypes: $.doctypes[*]
