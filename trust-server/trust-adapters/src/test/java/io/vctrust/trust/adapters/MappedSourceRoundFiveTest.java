@@ -436,4 +436,83 @@ class MappedSourceRoundFiveTest {
         assertThat(r.getKey()).startsWith(unreadable("roles", "$.roles[1]"));
         assertThat(revoked(both, "roles", List.of("VERIFIER", "VERIFIER"))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
     }
+
+    // 5: how many times the bytes read a load may yield is the operator's to set ----------------------------------------
+
+    /** A list of {@code n} terse issuers (an id and a URL each), and {@code more} members at its root. */
+    static String terse(int n, String more) {
+        StringBuilder b = new StringBuilder("{\"issuers\":[");
+        for (int i = 0; i < n; i++) {
+            b.append(i == 0 ? "" : ",").append("{\"id\":\"p").append(i).append("\",\"u\":\"https://p").append(i).append(".example\"}");
+        }
+        return b.append("]").append(more).append("}").toString();
+    }
+
+    static Map<String, Object> terseMapping(Object authorizations) {
+        Map<String, Object> block = new LinkedHashMap<>(Map.of("each", "$.issuers[*]", "id", "$.id", "roles", List.of("CREDENTIAL_ISSUER"),
+                "identifiers", List.of(Map.of("type", "URL", "value", "$.u"))));
+        block.put("authorizations", authorizations);
+        return new LinkedHashMap<>(Map.of("entities", List.of(block)));
+    }
+
+    /** {@code n} credential types, stated once at the root of a list. */
+    static String sharedTypes(int n) {
+        StringBuilder b = new StringBuilder(",\"credential_types\":[");
+        for (int i = 0; i < n; i++) {
+            b.append(i == 0 ? "" : ",").append("\"org.example.credential.type.number.").append(i).append('"');
+        }
+        return b.append(']').toString();
+    }
+
+    static final Object EACH_SHARED_TYPE = List.of(Map.of("each", "^.credential_types[*]", "format", "mso_mdoc", "type", "$"));
+
+    static String refused(String document, int factor) {
+        return "The list's records yield more than " + factor + " times the " + document.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                + " bytes read (limits.yield, which may be raised up to 1024; at least 1048576 is always allowed)";
+    }
+
+    @Test
+    void item5_anHonestListThatStatesOnceWhatEachRecordRepeatsLoadsWithLimitsYield() throws Exception {
+        // 3,000 issuers, each of which may issue the 30 types the list states once at its root.
+        String shared = terse(3_000, sharedTypes(30));
+        TestContext ctx = ctx();
+        serveJson(ctx, shared);
+        assertThat(loadError(source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE))))).isEqualTo(refused(shared, 32));
+        var loaded = source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE), "limits", Map.of("yield", 64))).load();
+        assertThat(loaded.entities()).hasSize(3_000).allSatisfy(e -> assertThat(e.authorizations()).hasSize(30));
+        // 3,000 issuers and 40 authorizations the mapping gives each of them; the factor as Spring hands it over, as text.
+        List<Object> constants = new java.util.ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            constants.add(Map.of("format", "mso_mdoc", "type", "org.example.credential.type.number." + i));
+        }
+        String bare = terse(3_000, "");
+        serveJson(ctx, bare);
+        assertThat(loadError(source(ctx, props("mapping", terseMapping(constants))))).isEqualTo(refused(bare, 32));
+        assertThat(source(ctx, props("mapping", terseMapping(constants), "limits", Map.of("yield", "64"))).load().entities())
+                .hasSize(3_000).allSatisfy(e -> assertThat(e.authorizations()).hasSize(40));
+    }
+
+    @Test
+    void item5_limitsYieldIsAWholeNumberFrom1To1024AndTheFloorAndLimitsTextStay() throws Exception {
+        TestContext ctx = ctx();
+        String ten = terse(3_000, sharedTypes(10));
+        serveJson(ctx, ten);
+        for (Object factor : java.util.Arrays.asList(0, -1, 1_025, "x", 1.5, "", List.of(32))) {
+            assertThat(loadError(source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE), "limits", Map.of("yield", factor)))))
+                    .as(String.valueOf(factor)).isEqualTo("Source 'partner' (mapped): limits.yield must be a whole number from 1 to 1024: "
+                            + "how many times the bytes it read a load may yield");
+        }
+        // Ten shared types load at the default and at 1,024; at 1 the factor holds them to the bytes read.
+        assertThat(source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE))).load().entities()).hasSize(3_000);
+        assertThat(source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE), "limits", Map.of("yield", 1_024))).load().entities())
+                .hasSize(3_000);
+        assertThat(loadError(source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE), "limits", Map.of("yield", 1)))))
+                .isEqualTo(refused(ten, 1));
+        // The floor stays: a small list may yield a mebibyte whatever the factor; and limits.text stays a bound on top.
+        serveJson(ctx, terse(10, sharedTypes(10)));
+        assertThat(source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE), "limits", Map.of("yield", 1))).load().entities()).hasSize(10);
+        serveJson(ctx, ten);
+        assertThat(loadError(source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE), "limits", Map.of("yield", 1_024, "text",
+                1_000_000))))).contains("yield more than 1000000 characters and nodes of mapped text (limits.text)");
+    }
 }

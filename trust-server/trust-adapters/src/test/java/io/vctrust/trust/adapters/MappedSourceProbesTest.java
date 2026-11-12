@@ -431,9 +431,10 @@ class MappedSourceProbesTest {
         TestContext ctx = ctx();
         serveJson(ctx, json);
         Map<String, Object> m = MappedSourceAttacksTest.entities("attributes", Map.of("flags", "^.nulls"));
+        // (Since the fifth round the factor is limits.yield, 32 unless set, and the message names it.)
         assertThat(loadError(source(ctx, props("mapping", m)))).contains("The list's records yield more than 32 times the "
-                + json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + " bytes read (limits: 32 times what is read, and at "
-                + "least 1048576)");
+                + json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + " bytes read (limits.yield, which may be raised up "
+                + "to 1024; at least 1048576 is always allowed)");
         // The same list without what repeats: inside the factor by far.
         assertThat(source(ctx, props()).load().entities()).hasSize(1_000);
         // A small document may still yield a mebibyte: a text of 8,000 characters at the root, in eight attributes of

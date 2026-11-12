@@ -71,8 +71,16 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     static final int DEFAULT_MAX_ANCHORS = 1_000;
     /** The characters of mapped text one load may yield, all records together (64 Mi). */
     static final int DEFAULT_MAX_TEXT = 67_108_864;
-    /** How many times the bytes it read a load (or a lookup answer) may yield, as characters and nodes of mapped text. */
-    static final long YIELD_FACTOR = 32;
+    /**
+     * How many times the bytes it read a load (or a lookup answer) may yield, as characters and nodes of mapped text,
+     * unless {@code limits.yield} says otherwise.
+     */
+    static final int DEFAULT_YIELD = 32;
+    /**
+     * The most {@code limits.yield} may say: a list whose records each repeat a few hundred types stated once at its root
+     * stays below it, and a document still cannot make the registry as large as it likes.
+     */
+    static final int MAX_YIELD = 1_024;
     /** What a load may yield however few bytes it read: a small list with a long text in each record is honest. */
     static final long MIN_YIELD = 1_048_576;
     /** How long a load may still be fetching pages: whoever serves them slowly would otherwise hold the load forever. */
@@ -102,8 +110,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
 
     /** The configuration, as read and checked when the source is created. */
     record Config(String location, URI origin, String publicUri, Map<String, String> headers, boolean jws, PinnedKeys keys,
-                  boolean allowUnverified, boolean allowExpired, int maxEntities, int maxAnchors, int maxText, Duration maxDuration,
-                  Mapping mapping) {
+                  boolean allowUnverified, boolean allowExpired, int maxEntities, int maxAnchors, int maxText, int maxYield,
+                  Duration maxDuration, Mapping mapping) {
 
         /**
          * Header names only, and the location without its query: header values are credentials, a query often holds
@@ -259,16 +267,33 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         int maxEntities = DEFAULT_MAX_ENTITIES;
         int maxAnchors = DEFAULT_MAX_ANCHORS;
         int maxText = DEFAULT_MAX_TEXT;
+        int maxYield = DEFAULT_YIELD;
         Duration maxDuration = DEFAULT_MAX_DURATION;
         if (p.containsKey("limits")) {
-            Map<String, Object> l = Mapping.members(p.get("limits"), "limits", Set.of("entities", "anchors", "text", "duration"));
+            Map<String, Object> l = Mapping.members(p.get("limits"), "limits", Set.of("entities", "anchors", "text", "yield", "duration"));
             maxEntities = l.containsKey("entities") ? Mapping.positive(l.get("entities"), "limits.entities") : maxEntities;
             maxAnchors = l.containsKey("anchors") ? Mapping.positive(l.get("anchors"), "limits.anchors") : maxAnchors;
             maxText = l.containsKey("text") ? Mapping.positive(l.get("text"), "limits.text") : maxText;
+            maxYield = l.containsKey("yield") ? yieldFactor(l.get("yield")) : maxYield;
             maxDuration = l.containsKey("duration") ? Mapping.duration(l.get("duration"), "limits.duration", "PT5M") : maxDuration;
         }
         return new Config(location, origin, publicUri, headers, jws, keys, allowUnverified, bool(p, "allowExpired"),
-                maxEntities, maxAnchors, maxText, maxDuration, mapping);
+                maxEntities, maxAnchors, maxText, maxYield, maxDuration, mapping);
+    }
+
+    /** {@code limits.yield}: a whole number from 1 to {@link #MAX_YIELD}. */
+    private static int yieldFactor(Object raw) {
+        int n;
+        try {
+            n = Mapping.positive(raw, "limits.yield");
+        } catch (IllegalArgumentException e) {
+            n = 0;
+        }
+        if (n < 1 || n > MAX_YIELD) {
+            throw new IllegalArgumentException("limits.yield must be a whole number from 1 to " + MAX_YIELD + ": how many times the "
+                    + "bytes it read a load may yield");
+        }
+        return n;
     }
 
     private static String text(Map<String, Object> p, String key) {
@@ -428,7 +453,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             Numbering numbering = new Numbering();
             Tally[] entityTallies = tallies(config.mapping().entities);
             Tally[] anchorTallies = tallies(config.mapping().anchors);
-            Text text = new Text(config.maxText(), "The list's records");
+            Text text = new Text(config.maxText(), config.maxYield(), "The list's records");
             List<TrustedEntity> entities = new ArrayList<>();
             List<TrustAnchor> anchors = new ArrayList<>();
             int entityRecords = 0;
@@ -1288,19 +1313,22 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         /**
          * What a load (or a lookup answer) has yielded, all its records together: the characters of its mapped text,
          * and one for each node ({@link Mapping.Weight}), so that nulls and empty lists repeated into every record weigh
-         * something too. Each record is bounded, and so is what they make together: at most {@link #YIELD_FACTOR}
-         * times the bytes read, over all pages (a path from the root repeats what it finds into every record, and a
-         * document of 180 kB yielded 100 MB inside every other bound), though never less than {@link #MIN_YIELD}; and
-         * at most {@code limits.text} in any case.
+         * something too. Each record is bounded, and so is what they make together: at most {@code limits.yield}
+         * ({@link #DEFAULT_YIELD} unless set) times the bytes read, over all pages (a path from the root repeats what it
+         * finds into every record, and a document of 180 kB yielded 100 MB inside every other bound), though never less
+         * than {@link #MIN_YIELD}; and at most {@code limits.text} in any case. The factor is the operator's to raise for
+         * an honest list that states once what each of its records repeats (types at its root, constants in the mapping).
          */
         private static final class Text {
             private final int max;
+            private final int factor;
             private final String what;
             private long used;
             private long read;
 
-            Text(int max, String what) {
+            Text(int max, int factor, String what) {
                 this.max = max;
+                this.factor = factor;
                 this.what = what;
             }
 
@@ -1314,9 +1342,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 if (used > max) {
                     throw new TrustSourceException(what + " yield more than " + max + " characters and nodes of mapped text (limits.text)");
                 }
-                if (used > Math.max(MIN_YIELD, YIELD_FACTOR * read)) {
-                    throw new TrustSourceException(what + " yield more than " + YIELD_FACTOR + " times the " + read + " bytes read (limits: "
-                            + YIELD_FACTOR + " times what is read, and at least " + MIN_YIELD + ")");
+                if (used > Math.max(MIN_YIELD, factor * read)) {
+                    throw new TrustSourceException(what + " yield more than " + factor + " times the " + read + " bytes read (limits.yield, "
+                            + "which may be raised up to " + MAX_YIELD + "; at least " + MIN_YIELD + " is always allowed)");
                 }
             }
         }
@@ -1494,7 +1522,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     if (records.size() > config.maxEntities()) {
                         throw new TrustSourceException("The lookup answered with more than " + config.maxEntities() + " records");
                     }
-                    Text text = new Text(config.maxText(), "The answer's records");
+                    Text text = new Text(config.maxText(), config.maxYield(), "The answer's records");
                     text.read(r.body().length);
                     List<TrustedEntity> about = new ArrayList<>();
                     for (int i = 0; i < records.size(); i++) {
