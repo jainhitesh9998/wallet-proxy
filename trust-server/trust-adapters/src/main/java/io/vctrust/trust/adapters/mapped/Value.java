@@ -18,7 +18,10 @@ import java.util.TreeSet;
  *       {@code {when, then}} pairs, for keys a YAML or Spring property key cannot carry. Keys are compared without
  *       regard to case and surrounding whitespace. {@code default} stands for both a value not in the table and no
  *       value at P; without it, either yields nothing. An object or a list at P is the wrong kind, not the default;</li>
- *   <li>{@code {template: "did:web:{$.host}"}}: a string with paths in braces; nothing if any of them yields nothing.</li>
+ *   <li>{@code {template: "did:web:{$.host}"}}: a string with paths in braces; nothing if any of them yields nothing;</li>
+ *   <li>for a member that takes a list, {@code {path: P, allowEmpty: true}} (also with {@code values} and
+ *       {@code default}): a list at P that is there and yields nothing leaves the member absent, where it would
+ *       otherwise restrict to nothing.</li>
  * </ul>
  *
  * <p>A path that finds something of the wrong kind (see {@link JsonPath#select}) is an error, which skips the record.
@@ -65,22 +68,40 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
     }
 
     /**
-     * Reads a value form from configuration.
+     * Whether the operator said that a list this form reads, when it is there and yields nothing, is absent rather than
+     * a restriction to nothing ({@code {path: P, allowEmpty: true}}): for an upstream that writes an empty list where it
+     * means "none registered".
+     */
+    default boolean allowEmpty() {
+        return false;
+    }
+
+    /**
+     * Reads a value form of a member that takes a single value.
      *
      * @param where where the form is, for the error ("mapping.entities[0].status")
      * @throws IllegalArgumentException for anything that is not one of the forms
      */
     static Value parse(Object raw, String where) {
+        return parse(raw, where, false);
+    }
+
+    /** Reads a value form of a member that takes a list: as {@link #parse}, and {@code allowEmpty} may be said. */
+    static Value parseList(Object raw, String where) {
+        return parse(raw, where, true);
+    }
+
+    private static Value parse(Object raw, String where, boolean list) {
         try {
-            return read(raw);
+            return read(raw, list);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(where + ": " + e.getMessage(), e);
         }
     }
 
-    private static Value read(Object raw) {
+    private static Value read(Object raw, boolean list) {
         if (raw instanceof String s) {
-            return s.startsWith("$") || s.startsWith("^") ? new At(JsonPath.parse(s)) : new Constant(s);
+            return s.startsWith("$") || s.startsWith("^") ? new At(JsonPath.parse(s), false) : new Constant(s);
         }
         if (raw instanceof Number || raw instanceof Boolean) {
             return new Constant(raw);
@@ -88,23 +109,45 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         if (raw instanceof Map<?, ?> m) {
             TreeSet<String> keys = new TreeSet<>();
             m.keySet().forEach(k -> keys.add(String.valueOf(k)));
-            if (keys.equals(new TreeSet<>(List.of("value")))) {
+            boolean allowEmpty = false;
+            boolean says = keys.contains("allowEmpty");
+            if (says) {
+                if (!list) {
+                    throw new IllegalArgumentException("allowEmpty applies to a member that takes a list, not to one that takes a single value");
+                }
+                Object flag = m.get("allowEmpty");
+                if (!(Boolean.TRUE.equals(flag) || Boolean.FALSE.equals(flag) || "true".equals(flag) || "false".equals(flag))) {
+                    throw new IllegalArgumentException("allowEmpty must be true or false");
+                }
+                allowEmpty = Boolean.TRUE.equals(flag) || "true".equals(flag);
+            }
+            TreeSet<String> form = new TreeSet<>(keys);
+            form.remove("allowEmpty");
+            if (!says && form.equals(new TreeSet<>(List.of("value")))) {
                 return new Constant(scalar(m.get("value"), "value"));
             }
-            if (keys.equals(new TreeSet<>(List.of("template")))) {
+            if (!says && form.equals(new TreeSet<>(List.of("template")))) {
                 return Template.of(scalar(m.get("template"), "template").toString());
             }
-            if (keys.contains("path") && keys.contains("values") && keys.size() <= 3
-                    && (keys.size() == 2 || keys.contains("default"))) {
+            boolean translated = form.contains("path") && form.contains("values") && form.size() <= 3
+                    && (form.size() == 2 || form.contains("default"));
+            if (translated || says && form.equals(new TreeSet<>(List.of("path")))) {
                 Object path = m.get("path");
                 if (!(path instanceof String p) || !(p.startsWith("$") || p.startsWith("^"))) {
                     throw new IllegalArgumentException("path must be a path ($... or ^...)");
                 }
+                JsonPath at = JsonPath.parse(p);
+                if (says && !at.endsInList()) {
+                    throw new IllegalArgumentException("allowEmpty applies to a list: " + p + " does not end in [*] or a filter");
+                }
+                if (!translated) {
+                    return new At(at, allowEmpty);
+                }
                 Object fallback = m.containsKey("default") ? scalar(m.get("default"), "default") : null;
-                return new Translated(JsonPath.parse(p), table(m.get("values")), fallback);
+                return new Translated(at, table(m.get("values")), fallback, allowEmpty);
             }
             throw new IllegalArgumentException("unknown value form with members " + keys + "; a value is a path ($... or ^...), "
-                    + "a constant, {value}, {path, values, default} or {template}");
+                    + "a constant, {value}, {path, values, default} or {template}" + (list ? ", and {path, allowEmpty} for a list" : ""));
         }
         if (raw instanceof List<?>) {
             throw new IllegalArgumentException("a list is not accepted here");
@@ -229,7 +272,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         }
     }
 
-    record At(JsonPath path) implements Value {
+    record At(JsonPath path, boolean allowEmpty) implements Value {
         @Override
         public List<Object> all(Object current, Object root) {
             return present(path.select(current, root));
@@ -251,7 +294,7 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         }
     }
 
-    record Translated(JsonPath path, Map<String, Object> table, Object fallback) implements Value {
+    record Translated(JsonPath path, Map<String, Object> table, Object fallback, boolean allowEmpty) implements Value {
         @Override
         public List<Object> all(Object current, Object root) {
             List<Object> found = present(path.select(current, root));

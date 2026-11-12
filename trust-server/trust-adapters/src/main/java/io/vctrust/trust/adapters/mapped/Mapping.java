@@ -557,14 +557,16 @@ final class Mapping {
         /**
          * The authorizations. A list of them that is there and yields none ({@code credentials: []}, {@code [null]},
          * {@code {}}, or one whose filter keeps none) authorizes nothing: it cannot be read as "none listed", which
-         * would leave the entity unconstrained for a lenient client.
+         * would leave the entity unconstrained for a lenient client. Unless the item says {@code allowEmpty}: the
+         * operator knows that the upstream writes an empty list where it means "none registered", and then the member
+         * is absent. A wrong kind, or an item that lacks a member, stays unreadable either way.
          */
         private List<Map<String, Object>> authorizations(Object record, Object root) {
             List<Item> items = items(fields.get("authorizations"));
             List<Map<String, Object>> out = objects(items, "authorizations", record, root, Set.of(), Items.STRICT);
             if (out.isEmpty()) {
                 for (Item item : items) {
-                    if (item.each != null && item.each.containerPresent(record, root)) {
+                    if (item.each != null && !item.allowEmpty() && item.each.containerPresent(record, root)) {
                         throw emptyList("authorizations", item.each.text());
                     }
                 }
@@ -572,12 +574,15 @@ final class Mapping {
             return out;
         }
 
-        /** An anchor's doctypes: a list of them that is there and yields none constrains the IACA to none. */
+        /**
+         * An anchor's doctypes: a list of them that is there and yields none constrains the IACA to none, unless the
+         * form says {@code allowEmpty} (see {@link #authorizations}).
+         */
         private List<String> docTypes(Object record, Object root) {
             List<String> out = texts("docTypes", record, root);
             if (out.isEmpty()) {
                 for (Value v : values(fields.get("docTypes"))) {
-                    if (v.listPresent(record, root)) {
+                    if (!v.allowEmpty() && v.listPresent(record, root)) {
                         throw emptyList("docTypes", v instanceof Value.At a ? a.path().text() : ((Value.Translated) v).path().text());
                     }
                 }
@@ -728,10 +733,16 @@ final class Mapping {
         return out == null ? s : out.toString();
     }
 
-    /** A nested item (an identifier, an authorization, a display, a context): its own {@code each}, and members. */
-    record Item(JsonPath each, Map<String, Value> members) {
+    /**
+     * A nested item (an identifier, an authorization, a display, a context): its own {@code each}, and members.
+     *
+     * @param allowEmpty whether the list {@code each} reads, when it is there and yields no item, leaves the member
+     *                   absent rather than restricting to nothing (an upstream that writes [] for "none registered")
+     */
+    record Item(JsonPath each, Map<String, Value> members, boolean allowEmpty) {
     }
 
+    /** The forms of a member that takes a list: each may say {@code allowEmpty}. */
     private static List<Value> many(Object raw, String where) {
         if (raw == null) {
             return List.of();
@@ -739,10 +750,10 @@ final class Mapping {
         List<Value> out = new ArrayList<>();
         if (raw instanceof List<?> l) {
             for (int i = 0; i < l.size(); i++) {
-                out.add(Value.parse(l.get(i), where + "[" + i + "]"));
+                out.add(Value.parseList(l.get(i), where + "[" + i + "]"));
             }
         } else {
-            out.add(Value.parse(raw, where));
+            out.add(Value.parseList(raw, where));
         }
         return List.copyOf(out);
     }
@@ -764,6 +775,7 @@ final class Mapping {
     private static Item item(Object raw, String where, Set<String> allowed, Set<String> required) {
         Set<String> all = new LinkedHashSet<>(allowed);
         all.add("each");
+        all.add("allowEmpty");
         Map<String, Object> m = members(raw, where, all);
         JsonPath each = null;
         if (m.containsKey("each")) {
@@ -771,6 +783,16 @@ final class Mapping {
                 throw new IllegalArgumentException(where + ".each must be a path");
             }
             each = pathAt(s, where + ".each");
+        }
+        boolean allowEmpty = flag(m, "allowEmpty", where);
+        if (m.containsKey("allowEmpty")) {
+            // Said where it cannot apply, it would be ignored: refused instead.
+            if (each == null) {
+                throw new IllegalArgumentException(where + ": allowEmpty applies to an item with an each of its own");
+            }
+            if (!each.endsInList()) {
+                throw new IllegalArgumentException(where + ": allowEmpty applies to a list: " + each.text() + " does not end in [*] or a filter");
+            }
         }
         Map<String, Value> members = new LinkedHashMap<>();
         for (String k : new TreeSet<>(allowed)) {   // in a fixed order, so that a message names the same member each time
@@ -783,7 +805,7 @@ final class Mapping {
         if (members.isEmpty()) {
             throw new IllegalArgumentException(where + " maps nothing");
         }
-        return new Item(each, java.util.Collections.unmodifiableMap(members));
+        return new Item(each, java.util.Collections.unmodifiableMap(members), allowEmpty);
     }
 
     /** Contexts: a URL as a value form, or {url, sha256} items (a pinned digest). */
@@ -798,7 +820,7 @@ final class Mapping {
             if (e instanceof Map<?, ?> m && (m.containsKey("url") || m.containsKey("each") || m.containsKey("sha256"))) {
                 out.add(item(e, where + "[" + i + "]", Set.of("url", "sha256"), Set.of("url")));
             } else {
-                out.add(Value.parse(e, where + "[" + i + "]"));
+                out.add(Value.parseList(e, where + "[" + i + "]"));
             }
         }
         return List.copyOf(out);

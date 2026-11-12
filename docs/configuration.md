@@ -505,6 +505,7 @@ read; `required` names members the block maps (another name is a configuration e
 | `{ value: "$5" }` | A constant that starts with `$` or `^` |
 | `{ path: P, values: { a: X, b: Y }, default: Z }` | The value at `P`, translated. Keys are compared without regard to case and to surrounding whitespace (`Revoked`, ` revoked` and `revoked` are one key; two keys of one table that are the same this way are a configuration error). `default` stands for both a value not in the table and no value at `P`, for every member; without it, either yields nothing. An object or a list at `P` is not translated, and not the default: the member cannot be read. `values` can also be a list of `{ when, then }` pairs |
 | `{ template: "did:web:{$.host}" }` | Text with paths in braces; nothing if any of them yields nothing |
+| `{ path: P, allowEmpty: true }` | For a member that takes a list, with `P` ending in `[*]` or a filter: the values at `P`, and when the list is there and empty, the member is absent (see the restricting lists below). Also with `values` and `default` |
 
 A path with `[*]` or a filter gives every match to a list member, and its first match to a single one.
 
@@ -524,7 +525,15 @@ either when:
   client;
 - it is a restricting list that is there and yields nothing: `credentials: []`, `[null]` or `{}` under a mapped
   `authorizations` (or a filter that keeps none of them), and the same for an anchor's `docTypes`. An empty list says
-  "none", which is not "no restriction"; only a member that is not there at all, or `null`, is absent;
+  "none", which is not "no restriction"; only a member that is not there at all, or `null`, is absent. Unless the
+  mapping says `allowEmpty: true` for that list: on a nested item (`{ each: "$.credentials[*]", allowEmpty: true,
+  format: $.format, type: $.type }`) or on a list member written as a path (`docTypes: { path: $.doctypes[*],
+  allowEmpty: true }`, also with `values` and `default`), a list that is there and empty leaves the member absent.
+  It turns "authorized for nothing" upstream into "no restriction" here: write it only where the upstream means
+  "none registered" by an empty list (this service's own snapshot does), never where an empty list may mean that
+  everything was withdrawn. It covers nothing else: a wrong kind, or an item that lacks a member, still cannot be
+  read. `allowEmpty` on a member that takes a single value, on an item without an `each` of its own, on a path that
+  does not end in `[*]` or a filter, or with a value other than `true` or `false`, is a configuration error;
 - it is a context item with `sha256` mapped that yields its `url` but no digest (or the reverse): it would be shipped
   unpinned;
 - it is an identifier item that yields its `value` but no `type` (or the reverse); an item that finds nothing at all is
@@ -700,17 +709,12 @@ entities:
 Another trust service like this one, through its snapshot ([the claims](architecture.md#the-snapshot)): `location`
 its `/api/v1/snapshot`, `headers` its API key for this service, `format: jws`, and
 `verify: { jwksLocation: file:/etc/trust/upstream-jwks.json, typ: trust-snapshot+jwt, audience: <this service's client id there> }`.
-A snapshot writes `"authorizations": []` for an entity with none registered, which a mapped list that is there and
-empty would read as "authorized for nothing"; such entities are read by a second block that maps no authorizations.
-The filter's comparison holds when the list has no first item (a missing node equals only another missing node), and
-`allowEmpty` lets either block find none: the pinned `typ` and `audience` tell a snapshot for this service from any
-other document of the upstream key.
+A snapshot writes `"authorizations": []` for an entity with none registered, hence `allowEmpty: true` on that list.
 
 ```yaml
 list: { issuer: $.iss, issuedAt: $.iat, nextUpdate: $.exp }
 entities:
-  - each: $.entities[?@.authorizations[0] != @.authorizations[999999999]]   # with authorizations
-    allowEmpty: true
+  - each: $.entities[*]
     id: $.id
     roles: $.roles[*]
     display:
@@ -718,14 +722,11 @@ entities:
     identifiers:
       - { each: "$.identifiers[*]", type: $.type, value: $.value }
     certificates: $.certificates[*].certificate
-    authorizations:
-      - { each: "$.authorizations[*]", format: $.format, type: $.type }
+    authorizations:                      # [] in a snapshot: none registered, unconstrained unless the client is strict
+      - { each: "$.authorizations[*]", allowEmpty: true, format: $.format, type: $.type }
     status: $.status
     validUntil: $.validUntil
     metadataPolicy: $.metadataPolicy
-  - each: $.entities[?@.authorizations[0] == @.authorizations[999999999]]   # without: unconstrained, as upstream
-    allowEmpty: true
-    # ... the same members, without authorizations
 anchors:
   - each: $.anchors[*]
     id: $.id

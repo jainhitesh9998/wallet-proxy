@@ -81,8 +81,13 @@ final class JsonPath {
      * nothing ({@code []}, {@code [null]}, {@code {}}) says "none", which is not the same as a list that is not there.
      */
     boolean containerPresent(Object current, Object root) {
+        return endsInList() && selection(current, root).lastInputPresent();
+    }
+
+    /** Whether the path ends in {@code [*]} or a filter: it reads the items of a list (or the members of an object). */
+    boolean endsInList() {
         Segment last = segments.isEmpty() ? null : segments.getLast();
-        return (last instanceof Wildcard || last instanceof Filter) && selection(current, root).lastInputPresent();
+        return last instanceof Wildcard || last instanceof Filter;
     }
 
     /** What a path selected, and whether its last segment had anything to look into. */

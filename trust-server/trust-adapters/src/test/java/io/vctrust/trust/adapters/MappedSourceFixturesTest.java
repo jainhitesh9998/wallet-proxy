@@ -184,19 +184,15 @@ class MappedSourceFixturesTest {
     // 3. Another instance of this service: its signed snapshot, mapped back into entities and anchors.
 
     // A snapshot writes "authorizations": [] for an entity with none registered (unconstrained unless the client is
-    // strict). A mapped list that is there and empty means "authorized for nothing" (second round of fixes, H), so the
-    // entities with none are read by a block of their own that maps no authorizations. The filter's comparison holds
-    // when the list has no first item: a missing node equals only another missing node (RFC 9535 2.3.5.2.2). The
-    // pinned typ and audience tell a snapshot for this service from any other document of the upstream key, so either
-    // block may find no entity.
+    // strict). A mapped list that is there and empty would mean "authorized for nothing"; allowEmpty says that here it
+    // means none stated, as the snapshot does.
     static final String SNAPSHOT_MAPPING = """
             list:
               issuer: $.iss
               issuedAt: $.iat
               nextUpdate: $.exp
             entities:
-              - each: $.entities[?@.authorizations[0] != @.authorizations[999999999]]
-                allowEmpty: true
+              - each: $.entities[*]
                 id: $.id
                 roles: $.roles[*]
                 display:
@@ -205,20 +201,7 @@ class MappedSourceFixturesTest {
                   - { each: "$.identifiers[*]", type: $.type, value: $.value }
                 certificates: $.certificates[*].certificate
                 authorizations:
-                  - { each: "$.authorizations[*]", format: $.format, type: $.type }
-                status: $.status
-                validFrom: $.validFrom
-                validUntil: $.validUntil
-                metadataPolicy: $.metadataPolicy
-              - each: $.entities[?@.authorizations[0] == @.authorizations[999999999]]
-                allowEmpty: true
-                id: $.id
-                roles: $.roles[*]
-                display:
-                  - { each: "$.display[*]", locale: $.locale, name: $.name, description: $.description, logoUri: $.logoUri }
-                identifiers:
-                  - { each: "$.identifiers[*]", type: $.type, value: $.value }
-                certificates: $.certificates[*].certificate
+                  - { each: "$.authorizations[*]", allowEmpty: true, format: $.format, type: $.type }
                 status: $.status
                 validFrom: $.validFrom
                 validUntil: $.validUntil

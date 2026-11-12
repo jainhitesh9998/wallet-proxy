@@ -770,6 +770,127 @@ class MappedSourceValidationTest {
         }
     }
 
+    // H, decided after the second round: allowEmpty on a list member ----------------------------------------------------
+
+    /** {@link #boundMapping()} with its authorizations item written as {@code item}. */
+    static Map<String, Object> withAuthorizations(Map<String, Object> item) {
+        Map<String, Object> m = boundMapping();
+        ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("authorizations", List.of(item));
+        return m;
+    }
+
+    static final Map<String, Object> EMPTY_IS_NONE = Map.of("each", "$.credentials[*]", "allowEmpty", true, "format", "$.format",
+            "type", "$.type");
+
+    @Test
+    void h_allowEmptyOnANestedEachReadsAListThatIsThereAndEmptyAsNoneStated() {
+        for (Object credentials : java.util.Arrays.asList(List.of(), java.util.Collections.singletonList(null), Map.of(),
+                List.of(Map.of("format", "mso_mdoc", "type", MDL, "withdrawn", true)))) {
+            // The default, as H made it: authorized for nothing, so not in good standing.
+            TestContext ctx = ctx();
+            serveJson(ctx, boundList(1, members("credentials", credentials)));
+            Map<String, Object> filtered = withAuthorizations(Map.of("each", "$.credentials[?@.withdrawn != true]", "format", "$.format",
+                    "type", "$.type"));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", filtered)))) {
+                assertThat(decide(registry, PID)).as(String.valueOf(credentials)).isEqualTo(Decision.NOT_TRUSTED);
+                assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).isEqualTo(EntityStatus.SUSPENDED);
+            }
+            // With allowEmpty: the operator knows the upstream writes an empty list for "none registered".
+            Map<String, Object> allowed = withAuthorizations(Map.of("each", "$.credentials[?@.withdrawn != true]", "allowEmpty", true,
+                    "format", "$.format", "type", "$.type"));
+            registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", allowed)))) {
+                assertThat(state(m, "partner").warnings()).as(String.valueOf(credentials)).isEmpty();
+                TrustedEntity dmv = registry.snapshot().entity("partner:dmv").orElseThrow();
+                assertThat(dmv.status()).isEqualTo(EntityStatus.ACTIVE);
+                assertThat(dmv.authorizations()).isEmpty();
+                assertThat(decide(registry, PID)).as(String.valueOf(credentials)).isEqualTo(Decision.TRUSTED);   // unconstrained, lenient
+            }
+        }
+    }
+
+    @Test
+    void h_allowEmptyCoversOnlyThereAndEmptyNotAWrongKindOrAMissingMember() {
+        Map<Object, String> unreadable = new LinkedHashMap<>();
+        unreadable.put("mso_mdoc", "authorizations: the path $.credentials[*] finds text where [*] needs a list or an object");
+        unreadable.put(List.of(Map.of("format", "mso_mdoc")), "authorizations: an item yields no type");
+        unreadable.forEach((credentials, warning) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, boundList(1, members("credentials", credentials)));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", withAuthorizations(EMPTY_IS_NONE))))) {
+                assertThat(decide(registry, PID)).isEqualTo(Decision.NOT_TRUSTED);
+                assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).isEqualTo(EntityStatus.SUSPENDED);
+                assertThat(state(m, "partner").warnings()).singleElement().asString().contains("is listed SUSPENDED: " + warning);
+            }
+        });
+    }
+
+    @Test
+    void h_allowEmptyOnAListMemberWrittenAsAPath() throws Exception {
+        Map<String, Object> m = boundMapping();
+        Map<String, Object> anchors = new LinkedHashMap<>(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca",
+                "certificate", "$.certificate", "docTypes", Map.of("path", "$.doctypes[*]", "allowEmpty", true)));
+        m.put("anchors", List.of(anchors));
+        Map<String, Object> d = boundList(1, members("certificates", null));
+        d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", der("iaca"), "doctypes", List.of()),
+                Map.of("kid", "rp-ca", "certificate", der("rp-ca"))));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        var r = source(ctx, props("mapping", m)).load();
+        assertThat(r.warnings()).isEmpty();
+        assertThat(r.anchors()).extracting(a -> a.id() + " " + a.docTypes()).containsExactly("shared-iaca []", "rp-ca []");
+        // With a translation too.
+        anchors.put("docTypes", Map.of("path", "$.doctypes[*]", "values", Map.of("mdl", MDL), "allowEmpty", "true"));
+        assertThat(source(ctx, props("mapping", m)).load().anchors()).hasSize(2);
+        d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", der("iaca"), "doctypes", List.of("MDL"))));
+        serveJson(ctx, d);
+        assertThat(source(ctx, props("mapping", m)).load().anchors()).singleElement().satisfies(a -> assertThat(a.docTypes()).containsExactly(MDL));
+        // A wrong kind is still a wrong kind: the anchor is skipped.
+        d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", der("iaca"), "doctypes", MDL),
+                Map.of("kid", "rp-ca", "certificate", der("rp-ca"))));
+        serveJson(ctx, d);
+        anchors.put("docTypes", Map.of("path", "$.doctypes[*]", "allowEmpty", true));
+        r = source(ctx, props("mapping", m)).load();
+        assertThat(r.anchors()).extracting(a -> a.id()).containsExactly("rp-ca");
+        assertThat(r.warnings()).singleElement().asString().contains("docTypes: the path $.doctypes[*] finds text where [*] needs");
+    }
+
+    @Test
+    void h_anAllowEmptyThatIsMisplacedOrNotABooleanIsAConfigurationError() {
+        java.util.function.BiConsumer<Map<String, Object>, String> refused = (mapping, message) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, boundList(1, Map.of()));
+            assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", mapping)))).as(message).contains(message);
+            assertThat(ctx.http.requests).as(message).isEmpty();
+        };
+        Map<String, Object> m = boundMapping();
+        ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("name", Map.of("path", "$.name", "allowEmpty", true));
+        refused.accept(m, "mapping.entities[0].name: allowEmpty applies to a member that takes a list, not to one that takes a single value");
+        refused.accept(withAuthorizations(Map.of("each", "$.credentials[*]", "allowEmpty", "sometimes", "format", "$.format", "type", "$.type")),
+                "mapping.entities[0].authorizations[0].allowEmpty must be true or false");
+        refused.accept(withAuthorizations(Map.of("allowEmpty", true, "format", "$.format", "type", "$.type")),
+                "mapping.entities[0].authorizations[0]: allowEmpty applies to an item with an each of its own");
+        refused.accept(withAuthorizations(Map.of("each", "$.credential", "allowEmpty", true, "format", "$.format", "type", "$.type")),
+                "mapping.entities[0].authorizations[0]: allowEmpty applies to a list: $.credential does not end in [*] or a filter");
+        refused.accept(withAuthorizations(Map.of("each", "$.credentials[*]", "format", Map.of("path", "$.format", "allowEmpty", true),
+                "type", "$.type")), "mapping.entities[0].authorizations[0].format: allowEmpty applies to a member that takes a list");
+        m = boundMapping();
+        Map<String, Object> block = (Map<String, Object>) ((List<?>) m.get("entities")).getFirst();
+        block.put("certificates", Map.of("path", "$.certificates[*]", "allowEmpty", "yes"));
+        refused.accept(m, "mapping.entities[0].certificates: allowEmpty must be true or false");
+        block.put("certificates", Map.of("path", "$.certificate", "allowEmpty", true));
+        refused.accept(m, "mapping.entities[0].certificates: allowEmpty applies to a list: $.certificate does not end in [*] or a filter");
+        for (Map<String, Object> form : List.of(Map.<String, Object>of("value", "x", "allowEmpty", true),
+                Map.<String, Object>of("template", "{$.x}", "allowEmpty", true),
+                Map.<String, Object>of("path", "$.certificates[*]", "allowEmpty", true, "else", "x"),
+                Map.<String, Object>of("path", "$.certificates[*]", "values", Map.of("a", "b"), "allowEmpty", true, "fallback", "c"))) {
+            block.put("certificates", form);
+            refused.accept(m, "mapping.entities[0].certificates: unknown value form with members");
+        }
+    }
+
     @Test
     void h_aPinnedContextWithoutItsDigestOrATranslationOfAnObjectMakesTheRecordUnreadable() throws Exception {
         Map<String, Object> m = MappedSourceAttacksTest.entities("contexts", List.of(Map.of("each", "$.ctx[*]", "url", "$.url", "sha256", "$.digest")));
