@@ -677,66 +677,90 @@ final class Mapping {
             return v == null ? null : scalar(first(v, member, record, root), member);
         }
 
-        /** A PEM certificate block as the certificate parser reads one. */
+        /** A PEM certificate block as the certificate parser reads one, its base64 body in group 1. */
         private static final java.util.regex.Pattern PEM_BLOCK = java.util.regex.Pattern.compile(
-                "-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\\s]+?-----END CERTIFICATE-----");
+                "-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\\s]+?)-----END CERTIFICATE-----");
 
         /**
-         * Certificates as text, held to what the text says it holds. A PEM text: every {@code -----BEGIN} yields a
-         * certificate, and outside its blocks there is white space only. A base64 value: exactly one certificate, and
-         * nothing after it. A damaged block next to a good one (a BEGIN line written with four dashes or in lower case,
-         * a block of something else), or a second certificate behind the first in one base64 value, would otherwise be
-         * passed over, and the certificate it was (the party's signing key, say) bound to nobody.
+         * Certificates as text, held to what the text says it holds. A text with an armor line in it ({@code -----}) is
+         * PEM: the body of each {@code CERTIFICATE} block is exactly one certificate, and outside the blocks a line that
+         * holds {@code -----} cannot be read (a damaged armor line: a BEGIN written with four dashes or in lower case, a
+         * block that never ends, a block with another label). Any other line outside the blocks is text that explains
+         * them, as tools write it ({@code subject=} and {@code issuer=} lines, "Bag Attributes", a byte-order mark), and
+         * is passed over: refused, it failed the load of an honest list. Any other text is a base64 value: exactly one
+         * certificate, and nothing after it. Two certificates one after the other in one block or one base64 value, a
+         * certificate followed by other bytes, or a damaged block next to a good one would otherwise be read as the
+         * first or passed over, and the certificate it was (the party's signing key, say) bound to nobody.
          */
         private static <T> T pem(T certificates, String member) {
             for (Object c : certificates instanceof List<?> l ? l : java.util.Collections.singletonList(certificates)) {
                 if (!(c instanceof String text)) {
                     continue;
                 }
-                if (!text.contains("-----BEGIN")) {
-                    oneCertificate(text, member);
+                if (!text.contains("-----")) {
+                    oneCertificate(text, member, "a base64 value");
                     continue;
                 }
-                if (!PEM_BLOCK.matcher(text).replaceAll("").isBlank()) {
-                    throw new IllegalArgumentException(member + ": a PEM text holds something besides certificate blocks and white "
-                            + "space; every block must be a certificate");
+                java.util.regex.Matcher block = PEM_BLOCK.matcher(text);
+                StringBuilder outside = new StringBuilder();
+                int at = 0;
+                while (block.find()) {
+                    // A line break where the block was: what stands before it and what after are not one line.
+                    outside.append(text, at, block.start()).append('\n');
+                    byte[] der;
+                    try {
+                        der = java.util.Base64.getMimeDecoder().decode(block.group(1));
+                    } catch (IllegalArgumentException e) {
+                        throw new IllegalArgumentException(member + ": a PEM block whose body is not base64");
+                    }
+                    if (!oneCertificate(der, member, "a PEM block")) {
+                        throw new IllegalArgumentException(member + ": a PEM block that is not a certificate");
+                    }
+                    at = block.end();
                 }
-                int blocks = 0;
-                for (int at = text.indexOf("-----BEGIN"); at >= 0; at = text.indexOf("-----BEGIN", at + 1)) {
-                    blocks++;
-                }
-                int read;
-                try {
-                    read = io.vctrust.trust.adapters.support.AdapterSupport.parseCertificateText(text).size();
-                } catch (RuntimeException e) {
-                    throw new IllegalArgumentException(member + ": a PEM text that cannot be read (" + e.getClass().getSimpleName() + ")");
-                }
-                if (read != blocks) {
-                    throw new IllegalArgumentException(member + ": a PEM text with " + blocks + " BEGIN lines yields " + read
-                            + (read == 1 ? " certificate" : " certificates") + "; every block must be a certificate");
+                outside.append(text, at, text.length());
+                if (outside.indexOf("-----") >= 0) {
+                    throw new IllegalArgumentException(member + ": a PEM text has a line with ----- outside its certificate blocks (a "
+                            + "damaged BEGIN or END line, or a block of something else); every block must be a certificate");
                 }
             }
             return certificates;
         }
 
         /** A certificate in base64 (or base64url) DER: one, with nothing after it. */
-        private static void oneCertificate(String text, String member) {
+        private static void oneCertificate(String text, String member, String what) {
             byte[] der;
-            java.security.cert.X509Certificate certificate;
             try {
                 der = io.vctrust.trust.core.util.Base64Url.decodeLenient(text.replaceAll("\\s", ""));
-                certificate = io.vctrust.trust.core.x509.Certificates.fromDer(der);
             } catch (RuntimeException e) {
                 return;   // not a certificate at all: the registry format says so, naming the member
             }
+            oneCertificate(der, member, what);
+        }
+
+        /**
+         * Whether {@code der} is a certificate, and nothing else: one, with nothing after it (the certificate parser reads
+         * the first certificate of what it is given, and passes over what follows).
+         *
+         * @return false when it is not a certificate at all
+         * @throws IllegalArgumentException when it is a certificate followed by something
+         */
+        private static boolean oneCertificate(byte[] der, String member, String what) {
+            java.security.cert.X509Certificate certificate;
+            try {
+                certificate = io.vctrust.trust.core.x509.Certificates.fromDer(der);
+            } catch (RuntimeException e) {
+                return false;
+            }
             try {
                 if (certificate.getEncoded().length != der.length) {
-                    throw new IllegalArgumentException(member + ": a base64 value holds more than one certificate, or something after "
-                            + "it; a base64 value is one certificate");
+                    throw new IllegalArgumentException(member + ": " + what + " holds more than one certificate, or something after it; "
+                            + what + " is one certificate");
                 }
             } catch (java.security.cert.CertificateEncodingException e) {
                 throw new IllegalArgumentException(member + ": a certificate that cannot be encoded again");
             }
+            return true;
         }
 
         private List<String> texts(String member, Object record, Object root) {

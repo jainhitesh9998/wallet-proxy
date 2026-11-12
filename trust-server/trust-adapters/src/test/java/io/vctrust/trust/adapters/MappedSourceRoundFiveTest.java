@@ -230,4 +230,99 @@ class MappedSourceRoundFiveTest {
             assertThat(MappedSourceValidationTest.decide(any, MappedSourceValidationTest.PID)).isEqualTo(Decision.TRUSTED);
         }
     }
+
+    // 3: a PEM block is one certificate, and text that explains the blocks is passed over ----------------------------
+
+    /** One PEM block whose body is these DER bytes, one after the other. */
+    static String block(byte[]... ders) {
+        java.io.ByteArrayOutputStream all = new java.io.ByteArrayOutputStream();
+        for (byte[] d : ders) {
+            all.writeBytes(d);
+        }
+        return "-----BEGIN CERTIFICATE-----\n" + java.util.Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(all.toByteArray())
+                + "\n-----END CERTIFICATE-----\n";
+    }
+
+    static byte[] derOf(String name) {
+        return java.util.Base64.getDecoder().decode(der(name));
+    }
+
+    /** The decision about the DS certificate's mDL, the issuer revoked and its certificates written as {@code text}. */
+    static Map.Entry<String, Decision> revokedWith(String text) {
+        return MappedSourceProbesTest.revokedDmv(Map.of(), MappedSourceValidationTest.members("certificates", List.of(text)));
+    }
+
+    /** The DMV's IACA, written as {@code text}, and a CA of verifiers beside it; the DMV active. */
+    static Map.Entry<TrustRegistry, TrustSourceManager> withIaca(String text) {
+        Map<String, Object> d = MappedSourceProbesTest.tied("dmv", Map.of());
+        d.put("cas", List.of(Map.of("kid", "utopia-iaca", "certificate", text, "issuer_id", "dmv"),
+                Map.of("kid", "rp-access-ca", "certificate", der("rp-ca"))));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        return Map.entry(registry, manager(registry, source(ctx, props("mapping", MappedSourceProbesTest.tiedByTheCa()))));
+    }
+
+    @Test
+    void item3_aPemBlockIsOneCertificate() {
+        Map<String, String> hidden = new LinkedHashMap<>();
+        hidden.put("one block, two certificates", block(derOf("ds-nl"), derOf("ds")));
+        hidden.put("one block, a certificate and other bytes", block(derOf("ds-nl"), new byte[100]));
+        hidden.forEach((what, text) -> {
+            // Read as its first certificate: the revoked issuer was bound to ds-nl only, and the DS chain decided: TRUSTED.
+            var r = revokedWith(text);
+            assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(what).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: a "
+                    + "PEM block holds more than one certificate, or something after it; a PEM block is one certificate");
+        });
+        // A block of one certificate, and two blocks: read.
+        assertThat(revokedWith(block(derOf("ds")))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        assertThat(revokedWith(block(derOf("ds-nl")) + block(derOf("ds")))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        // An anchor's certificate likewise: the record is skipped (it was placed as the IACA, its first certificate).
+        var tied = withIaca(block(derOf("iaca"), derOf("rp-ca")));
+        try (TrustSourceManager m = tied.getValue()) {
+            assertThat(tied.getKey().snapshot().allAnchors()).extracting(a -> a.id()).containsExactly("rp-access-ca");
+            assertThat(state(m, "partner").warnings()).singleElement().asString().startsWith("mapping.anchors[0]: record 1 (id 'utopia-iaca') "
+                    + "is skipped: certificate: a PEM block holds more than one certificate");
+            assertThat(MappedSourceValidationTest.decide(tied.getKey(), MDL)).isNotEqualTo(Decision.TRUSTED);
+        }
+    }
+
+    @Test
+    void item3_textThatExplainsTheBlocksIsPassedOverAndALineWithAnArmorCannotBeRead() {
+        String ds = MappedTesting.pem("ds");
+        Map<String, String> honest = new LinkedHashMap<>();
+        honest.put("subject= and issuer= lines", "subject=C = UT, O = Utopia DMV, CN = Utopia DS\nissuer=C = UT, O = Utopia DMV, "
+                + "CN = Utopia IACA\n" + ds);
+        honest.put("Bag Attributes", "Bag Attributes\n    localKeyID: 01 00 00 00 \n    friendlyName: utopia-ds\n"
+                + "subject=/C=UT/O=Utopia DMV/CN=Utopia DS\nissuer=/C=UT/O=Utopia DMV/CN=Utopia IACA\n" + ds
+                + "Bag Attributes: <No Attributes>\nsubject=/C=UT/O=Utopia DMV/CN=Utopia DS NL\n" + MappedTesting.pem("ds-nl"));
+        honest.put("a byte-order mark", "\uFEFF" + ds);
+        honest.put("CRLF line ends and a line after the block", ds.replace("\n", "\r\n") + "valid until 2046\r\n");
+        honest.forEach((what, text) -> {
+            // The whole load failed: "a PEM text holds something besides certificate blocks and white space".
+            assertThat(revokedWith(text)).as(what).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        });
+        var tied = withIaca("subject=C = UT, O = Utopia DMV, CN = Utopia IACA\n" + MappedTesting.pem("iaca"));
+        try (TrustSourceManager m = tied.getValue()) {
+            assertThat(state(m, "partner").warnings()).isEmpty();
+            assertThat(tied.getKey().snapshot().allAnchors()).extracting(a -> a.id()).containsExactly("utopia-iaca", "rp-access-ca");
+            assertThat(MappedSourceValidationTest.decide(tied.getKey(), MDL)).isEqualTo(Decision.TRUSTED);
+        }
+        // A line that holds ----- outside the blocks is a damaged armor line, or a block of something else: unreadable.
+        String nl = MappedTesting.pem("ds-nl");
+        Map<String, String> damaged = new LinkedHashMap<>();
+        damaged.put("a BEGIN line with four dashes", ds.replace("-----BEGIN", "----BEGIN") + nl);
+        damaged.put("a BEGIN line in lower case", ds.replace("BEGIN CERTIFICATE", "begin certificate") + nl);
+        damaged.put("a block that never ends", nl + ds.substring(0, ds.indexOf("-----END")));
+        damaged.put("a block of a key", nl + "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n");
+        damaged.put("a TRUSTED CERTIFICATE block", ds.replace("CERTIFICATE", "TRUSTED CERTIFICATE") + nl);
+        damaged.put("an END line alone", "-----END CERTIFICATE-----\n" + der("ds"));
+        damaged.forEach((what, text) -> {
+            var r = revokedWith(text);
+            assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
+            assertThat(r.getKey()).as(what).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: a "
+                    + "PEM text has a line with ----- outside its certificate blocks");
+        });
+    }
 }

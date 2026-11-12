@@ -473,16 +473,19 @@ class MappedSourceProbesTest {
         System.arraycopy(dsDer, 0, two, nl.length, dsDer.length);
         Map<String, String> cases = new LinkedHashMap<>();
         cases.put("a damaged BEGIN line next to a good block", damaged);
-        cases.put("text after the last block", MappedTesting.pem("ds-nl") + "\nnot a certificate\n");
+        // "text after the last block" was a case here; since the fifth round a line outside the blocks that holds no
+        // ----- is text that explains them, and passed over (MappedSourceRoundFiveTest.item3_...): read below.
         cases.put("two certificates in one base64 DER", java.util.Base64.getEncoder().encodeToString(two));
         cases.forEach((what, text) -> {
             var r = revokedDmv(Map.of(), MappedSourceValidationTest.members("certificates", List.of(text)));
             assertThat(r.getValue()).as(what).isNotEqualTo(Decision.TRUSTED);
             assertThat(r.getKey()).as(what).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: ");
         });
-        // Blocks and white space only, or one certificate in base64: read.
+        // Blocks and white space only, blocks and a line of text after them, or one certificate in base64: read.
         assertThat(revokedDmv(Map.of(), MappedSourceValidationTest.members("certificates", List.of("\n  " + MappedTesting.pem("ds") + "\n\n"
                 + MappedTesting.pem("ds-nl") + "  \n")))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
+        assertThat(revokedDmv(Map.of(), MappedSourceValidationTest.members("certificates", List.of(MappedTesting.pem("ds")
+                + "\nnot a certificate\n")))).isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
         assertThat(revokedDmv(Map.of(), MappedSourceValidationTest.members("certificates", List.of(der("ds")))))
                 .isEqualTo(Map.entry("loaded", Decision.NOT_TRUSTED));
     }

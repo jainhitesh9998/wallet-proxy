@@ -577,10 +577,15 @@ instant depends on where it was written). A member cannot be read either when:
   filter emptied it, or its items are `null`;
 - it is named in `required` and yields nothing. This is how a renamed member upstream is caught: a `valid_until` that
   became `validUntil` would otherwise read as "no expiry";
-- it holds certificates as text that holds something else too: a PEM text in which a `-----BEGIN` block does not
-  yield a certificate (a damaged block next to a good one, a key), or anything but white space outside its blocks (a
-  BEGIN line written with four dashes or in lower case); or a base64 value that is not exactly one certificate (two
-  one after the other). The certificate it was would be bound to nobody;
+- it holds certificates as text that holds something else in their place. A text with `-----` in it is PEM: the body
+  of each `-----BEGIN CERTIFICATE-----` block must be exactly one certificate (not two one after the other, nor a
+  certificate followed by other bytes), and outside the blocks a line that holds `-----` cannot be read: a damaged
+  armor line (a BEGIN line written with four dashes or in lower case, a block that never ends) or a block with another
+  label than `CERTIFICATE` (a key, `TRUSTED CERTIFICATE`). Any other line outside the blocks is text that explains
+  them, as tools write it (`subject=` and `issuer=` lines, `Bag Attributes`, a byte-order mark), and is passed over;
+  so is a certificate written on such a line in base64 without its armor, so write every certificate of a PEM text in
+  a block of its own. Any other text is a base64 value, and must be exactly one certificate (not two one after the
+  other). The certificate it was would otherwise be read as the first, or passed over, and bound to nobody;
 - a path of it selects more than 1000 nodes for the record (`null`s and values no translation knows count too), or it
   yields more than 1000 values (all the forms of the member, and the items of a nested `each`, together);
 - one of its values is longer than 8,192 characters, or it would take the record beyond 65,536 characters of mapped
