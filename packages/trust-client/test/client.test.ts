@@ -1,3 +1,4 @@
+import { createPrivateKey } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createTrustClient, TrustIntegrityError, MemoryCacheStore, type TrustClientConfig } from '../src/index.js';
 import { isSecureUrl, jwkThumbprint } from '../src/primitives.js';
@@ -323,6 +324,82 @@ describe('lookups: the proxy first, the standard mechanism when it cannot serve'
     signer = es256Key().privateKey;
     const forged = await client(fakeFetch(routes).fetch, { lookups: { unknownParties: true } }).evaluateIssuer({ credentialIssuer: 'https://fed.example' });
     expect(forged.decision).toBe('UNKNOWN');
+  });
+});
+
+describe('authorization servers under signed issuer metadata', () => {
+  // The rp certificate's SAN is verifier.example, so it may sign this issuer's metadata; rp-ca is its anchor.
+  const ISSUER = 'https://verifier.example';
+  const AS1 = 'https://as.verifier.example';
+  const AS2 = 'https://as2.verifier.example';
+  const PRE_AUTH = 'urn:ietf:params:oauth:grant-type:pre-authorized_code';
+  const wellKnown = (as: string) => `${as}/.well-known/oauth-authorization-server`;
+  const signedBy = (servers: string[]) => signJwt({ alg: 'ES256', typ: 'openidvci-issuer-metadata+jwt', x5c: [b64(pem('rp'))] },
+    { credential_issuer: ISSUER, sub: ISSUER, iat: seconds(), credential_endpoint: `${ISSUER}/credential`, credential_configurations_supported: {},
+      authorization_servers: servers }, createPrivateKey(fixture('pki/rp.key')));
+  // The registry lists the issuer with a policy for its authorization servers; the service applies it to what it relays.
+  const policy = { oauth_authorization_server: { grant_types_supported: { add: [PRE_AUTH] } } };
+  const snapshot = snapshotRoute(() => ({
+    entities: [{ id: 'verifier-inc', frameworkId: 'utopia', roles: ['CREDENTIAL_ISSUER'], status: 'ACTIVE', display: [], authorizations: [],
+      identifiers: [{ type: 'URL', value: ISSUER }], metadataPolicy: policy }],
+    anchors: [{ id: 'rp-ca', domain: 'credential-issuer', frameworkId: 'utopia', status: 'ACTIVE', constraints: {}, certificate: b64(pem('rp-ca')) }],
+  }));
+  const envelope = (servers: string[], relayed: Record<string, Record<string, unknown>>) => ({
+    credentialIssuer: ISSUER, credentialIssuerMetadata: { credential_issuer: ISSUER }, authorizationServers: relayed, signedMetadata: signedBy(servers),
+    signedMetadataVerified: true, policyApplied: true, fetchedAt: 'x', expiresAt: new Date(Date.now() + 600_000).toISOString(), stale: false, warnings: [],
+    trust: { decision: 'TRUSTED' } });
+  const relayedCopy = (as: string, issuer = as) => ({ issuer, token_endpoint: `${as}/relayed-token`, grant_types_supported: ['authorization_code', PRE_AUTH] });
+  const own = (as: string) => () => json({ issuer: as, token_endpoint: `${as}/own-token`, grant_types_supported: ['authorization_code'] });
+  const serve = (env: ReturnType<typeof envelope>) => fakeFetch({ ...snapshot, [`${BASE}/api/v1/proxy/issuer-metadata`]: () => signedByService('trust-metadata+jwt', env),
+    [wellKnown(AS1)]: own(AS1), [wellKnown(AS2)]: own(AS2) });
+  const asked = (calls: string[], as: string) => calls.filter((x) => x === `GET ${wellKnown(as)}`).length;
+
+  it('takes a server the envelope carries from the envelope, without a request to the server', async () => {
+    const { fetch, calls } = serve(envelope([AS1], { [AS1]: relayedCopy(AS1) }));
+    const md = await client(fetch, { issuerMetadata: { signed: 'verify' } }).getIssuerMetadata(ISSUER);
+    expect([md.source, md.signedMetadataVerified]).toEqual(['proxy', true]);
+    // The registry's policy is applied as before: once more on the copy the service applied it to, with the same result.
+    expect(md.authorizationServers).toEqual({ [AS1]: relayedCopy(AS1) });
+    expect(asked(calls, AS1)).toBe(0);
+    // A copy the policy was not applied to (a service that has not seen the registry's change yet) gets it here.
+    const unpoliced = serve(envelope([AS1], { [AS1]: { ...relayedCopy(AS1), grant_types_supported: ['authorization_code'] } }));
+    const applied = await client(unpoliced.fetch, { issuerMetadata: { signed: 'verify' } }).getIssuerMetadata(ISSUER);
+    expect(applied.authorizationServers[AS1]).toEqual(relayedCopy(AS1));
+    expect(asked(unpoliced.calls, AS1)).toBe(0);
+  });
+
+  it('asks a server the envelope does not carry itself, and applies the policy to that copy too', async () => {
+    const { fetch, calls } = serve(envelope([AS1, AS2], { [AS1]: relayedCopy(AS1) }));
+    const md = await client(fetch, { issuerMetadata: { signed: 'verify' } }).getIssuerMetadata(ISSUER);
+    expect(md.authorizationServers[AS1]).toEqual(relayedCopy(AS1));
+    expect(md.authorizationServers[AS2]).toEqual({ issuer: AS2, token_endpoint: `${AS2}/own-token`, grant_types_supported: ['authorization_code', PRE_AUTH] });
+    expect([asked(calls, AS1), asked(calls, AS2)]).toEqual([0, 1]);
+    // Only the servers the signed metadata names: an entry the envelope has for another one is not taken over.
+    const extra = serve(envelope([AS1], { [AS1]: relayedCopy(AS1), [AS2]: relayedCopy(AS2) }));
+    expect(Object.keys((await client(extra.fetch, { issuerMetadata: { signed: 'verify' } }).getIssuerMetadata(ISSUER)).authorizationServers)).toEqual([AS1]);
+  });
+
+  it("does not take an entry whose issuer is another server's: the server named is asked itself", async () => {
+    for (const entry of [relayedCopy(AS1, AS2), relayedCopy(AS1, `${AS1}/`), { ...relayedCopy(AS1), issuer: undefined }]) {
+      const { fetch, calls } = serve(envelope([AS1], { [AS1]: entry as Record<string, unknown> }));
+      const md = await client(fetch, { issuerMetadata: { signed: 'verify' } }).getIssuerMetadata(ISSUER);
+      expect(md.source).toBe('proxy');
+      expect(md.authorizationServers[AS1]?.token_endpoint, String(entry.issuer)).toBe(`${AS1}/own-token`);
+      expect(asked(calls, AS1)).toBe(1);
+    }
+  });
+
+  it('holds a relayed server to the https rule a direct fetch is held to', async () => {
+    const plain = 'http://as.verifier.example';
+    const { fetch, calls } = fakeFetch({ ...snapshot,
+      [`${BASE}/api/v1/proxy/issuer-metadata`]: () => signedByService('trust-metadata+jwt', envelope([plain], { [plain]: relayedCopy(plain) })),
+      [`${ISSUER}/.well-known/openid-credential-issuer`]: () => new Response(signedBy([plain]), { headers: { 'Content-Type': 'application/jwt' } }) });
+    const md = await client(fetch, { issuerMetadata: { signed: 'verify' } }).getIssuerMetadata(ISSUER);
+    // The relayed answer does not count; discovery at the issuer reports the server and does not reach it.
+    expect(md.source).toBe('fallback');
+    expect(md.authorizationServers).toEqual({});
+    expect(md.warnings.join()).toMatch(/Authorization server http:\/\/as\.verifier\.example: .*must be an https URL/);
+    expect(calls.some((x) => x.startsWith(`GET ${plain}`))).toBe(false);
   });
 });
 

@@ -14,6 +14,19 @@ import { via, type LookupContext } from './context.js';
 /** Metadata is cached per signed-metadata rule, so an unsigned copy never satisfies a stricter rule. */
 const metadataKey = (credentialIssuer: string, check?: SignedMetadataCheck) => `md:${check?.mode ?? 'json'}:${credentialIssuer}`;
 
+/**
+ * The relayed metadata of the authorization server {@code as}, held to what a direct fetch is held to: an https
+ * identifier (or a development host), a JSON object, and an {@code issuer} identical to the identifier (RFC 8414
+ * §3.3). Undefined when the envelope has no such entry: the server is then asked itself.
+ */
+function relayedAuthorizationServer(relayed: unknown, as: string, insecureHosts: readonly string[]): Record<string, unknown> | undefined {
+  requireSecureUrl(as, 'An authorization server', insecureHosts);
+  if (!relayed || typeof relayed !== 'object' || !Object.prototype.hasOwnProperty.call(relayed, as)) return undefined;
+  const md = (relayed as Record<string, unknown>)[as];
+  if (!md || typeof md !== 'object' || Array.isArray(md) || (md as Record<string, unknown>).issuer !== as) return undefined;
+  return md as Record<string, unknown>;
+}
+
 export class IssuerMetadataLookup {
   /**
    * @param signed the signed-metadata rule this client is configured with
@@ -56,12 +69,18 @@ export class IssuerMetadataLookup {
       const policy = trust.entity?.metadataPolicy;
       result.credentialIssuerMetadata = policy?.openid_credential_issuer ? applyMetadataPolicy(v.metadata, policy.openid_credential_issuer) : v.metadata;
       result.signedMetadataVerified = true;
-      // The authorization servers are the signed metadata's, fetched from them directly (the wallet talks to them next anyway).
+      // The authorization servers are the signed metadata's. The envelope carries the metadata of the servers the
+      // service found, signed by it for this client and bound to this issuer: an entry for exactly a server's
+      // identifier is used when it passes what a direct fetch is held to; a server it has no such entry for is asked
+      // itself. Either copy then gets the registry's policy (the service applied it to its copy already; the policy
+      // operators give the same result when applied twice).
       const servers = Array.isArray(v.metadata.authorization_servers) && v.metadata.authorization_servers.length
         ? (v.metadata.authorization_servers as string[]).slice(0, 3) : [credentialIssuer];
+      const relayed = env.authorizationServers;
       result.authorizationServers = {};
       for (const as of servers) {
-        const asMd = await fetchAuthorizationServerMetadata(as, ctx.fetch, ctx.timeoutMs, ctx.insecureHosts);
+        const asMd = relayedAuthorizationServer(relayed, as, ctx.insecureHosts)
+          ?? await fetchAuthorizationServerMetadata(as, ctx.fetch, ctx.timeoutMs, ctx.insecureHosts);
         result.authorizationServers[as] = policy?.oauth_authorization_server ? applyMetadataPolicy(asMd, policy.oauth_authorization_server) : asMd;
       }
     }

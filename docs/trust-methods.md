@@ -454,7 +454,10 @@ authorization servers:
 - **Signed issuer metadata**: with `issuerMetadata.signed: 'verify'` the library uses the issuer's signed metadata
   when there is one, with `'require'` it refuses issuers without it; a client profile with
   `require-signed-issuer-metadata: true` forces `'require'`. The signer's chain must validate in the
-  `credential-issuer` domain and must not be self-signed. It is verified on the device, whoever relayed it.
+  `credential-issuer` domain and must not be self-signed. It is verified on the device, whoever relayed it. The
+  authorization servers it names are taken from the service's answer, which carries their metadata signed with the
+  rest, when that has an entry for exactly the server's identifier whose `issuer` is that identifier (RFC 8414
+  §3.3); a server it has no such entry for is asked itself. The entity's `metadataPolicy` applies to either copy.
 
 ## JSON-LD contexts
 

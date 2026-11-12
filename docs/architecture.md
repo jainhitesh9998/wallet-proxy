@@ -179,7 +179,7 @@ printers of platforms differ.
 
 | Lookup | Through the proxy | How the device knows it is genuine | Fallback |
 | --- | --- | --- | --- |
-| Issuer and authorization server metadata | `GET /api/v1/proxy/issuer-metadata?issuer=` | Signed by the service for this client and bound to the issuer asked for; signed metadata is verified against the issuer's own certificate | OpenID4VCI 1.0 §12.2.2 discovery at the issuer, RFC 8414 at its authorization servers |
+| Issuer and authorization server metadata | `GET /api/v1/proxy/issuer-metadata?issuer=` | Signed by the service for this client and bound to the issuer asked for; signed metadata is verified against the issuer's own certificate, and the metadata of each authorization server it names is taken from the same answer when it names that server as its `issuer` (RFC 8414 §3.3) | OpenID4VCI 1.0 §12.2.2 discovery at the issuer, RFC 8414 at its authorization servers (also for a server the answer does not carry) |
 | DID document | In the snapshot for listed DIDs; `GET /api/v1/proxy/did/{did}` for others | Snapshot signature; signed response bound to the DID | The DID method itself (`did:web` over https; `did:key` and `did:jwk` are computed locally) |
 | CRL | In the snapshot for anchors; `GET /api/v1/proxy/crl?url=` for others | The CRL's signature, checked against the issuing CA | Where the CA publishes: the distribution point a certificate names, or for an anchor its `crlUrls` (a root's own distribution point when it lists none) |
 | Credential status list | `GET /api/v1/proxy/status-list?uri=` | The list's own signature and signer (Token Status List, Bitstring Status List) | The list's URI |
