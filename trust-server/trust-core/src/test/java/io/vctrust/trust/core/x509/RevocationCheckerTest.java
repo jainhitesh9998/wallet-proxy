@@ -119,9 +119,11 @@ class RevocationCheckerTest {
         assertThat(r.valid()).isFalse();
         assertThat(codes(r)).contains("x509.on_hold");
         assertThat(r.revocation().getFirst().status()).isEqualTo(Status.ON_HOLD);
-        // removeFromCRL (8) undoes a hold
+        // removeFromCRL (8) lifts a hold only in a delta CRL read with its base; in a complete CRL it proves nothing, as on
+        // the device (conformance/revocation/crl-cases.json has the rest)
         var removed = validate(List.of(DS.certificate()), IACA, new Crls().hold(IACA, TestPki.crl(IACA, Revoked.of(DS, 8))), false);
-        assertThat(removed.revocation().getFirst().status()).isEqualTo(Status.GOOD);
+        assertThat(removed.revocation().getFirst().status()).isEqualTo(Status.UNKNOWN);
+        assertThat(removed.revocation().getFirst().reason()).isEqualTo("the CRL lists the certificate with reason removeFromCRL, which only a delta CRL may use");
     }
 
     @Test

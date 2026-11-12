@@ -319,19 +319,12 @@ OpenID4VP 1.0 (DCQL, `direct_post` and `direct_post.jwt`, `x509_hash` / `x509_sa
 
 Where the two evaluators differ, the device is the stricter one:
 
-- it refuses a trust anchor whose certificate carries a critical extension it does not know;
-- it takes a revocation or a hold that a delta CRL lists (the service sets delta CRLs aside);
-- it does not read an entry with the reason `removeFromCRL` in a complete CRL as "not revoked" (the service does);
-- of a serial number a CRL lists more than once it takes the gravest entry (the service the last), and such a CRL
-  proves no certificate good that it does not list;
-- it sets aside a CRL whose entries carry a critical extension it does not know (the service looks at the CRL's own
-  extensions only);
-- a CRL scoped to a distribution point covers a certificate only when both name that point by URI and the
-  certificate's point is not limited to some reasons or to another CRL issuer (the service compares every URI of the
-  certificate's points, and takes a point named otherwise as covering every certificate);
-- it uses a CRL that states no next update for seven days after it was issued (the service without limit).
+- it refuses a trust anchor whose certificate carries a critical extension it does not know.
 
-The vectors define the behaviour both must share.
+How one CRL is read (delta CRLs, `removeFromCRL`, a serial number listed more than once, critical entry extensions,
+an issuing distribution point's scope, a CRL without a next update) and how several CRLs for one certificate decide
+are the same on both sides: `conformance/revocation/crl-cases.json` holds each case's status, and `CrlCasesTest.java`
+and `crl-cases.test.ts` replay it on the service and on the device. The vectors define the behaviour both must share.
 
 ## Code map
 

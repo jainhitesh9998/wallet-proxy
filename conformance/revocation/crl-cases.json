@@ -1,0 +1,874 @@
+{
+  "description" : "How one CRL is read, and how several CRLs for one certificate decide: the device's rule (checkRevocation in packages/trust-client/src/x509/revocation.ts) written down case by case. Each case checks 'certificate' (a key of 'certificates', base64 DER), issued by 'issuer', at the instant 'at', against the CRLs held for it in the order given (base64 DER), and nothing fetched. 'expect' is the status, for REVOKED and ON_HOLD the reason, and for every status but UNKNOWN the position of the CRL that decided. CrlCasesTest.java and crl-cases.test.ts hold the service and the library to this file; CrlCasesTest -Dcrl.cases.update=true writes it, with the expectations written there by hand.",
+  "at" : "2026-06-01T00:00:00Z",
+  "certificates" : {
+    "ca" : "MIIByTCCAW+gAwIBAgIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVDAeFw0yNjAxMDEwMDAwMDBaFw0yNzAxMDEwMDAwMDBaMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUHDtZpGBuEN3AQwJqkh1SuSlKdpVILpMmrZcUXsyL0QhArsOkWWojPrw2DFAPrwr1QUgy7AkWcSp8XCNjpcnPqNmMGQwHQYDVR0OBBYEFM0uC8X9hiBAYPf4y2XInbBQlqo1MB8GA1UdIwQYMBaAFM0uC8X9hiBAYPf4y2XInbBQlqo1MBIGA1UdEwEB/wQIMAYBAf8CAQAwDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMCA0gAMEUCIHEuyxNw9aGpx/FvvEphFHgPmPoJOesxoQULO/w2vtKgAiEAxXtllEzG9Cs3VHczn9yR6wdBt3/fG6jVLXOKSa+OS7w=",
+    "ca-without-crl-sign" : "MIIB6DCCAY+gAwIBAgIBAjAKBggqhkjOPQQDAjBKMSUwIwYDVQQDDBxDUkwgQ2FzZXMgQ0Egd2l0aG91dCBjUkxTaWduMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwHhcNMjYwMTAxMDAwMDAwWhcNMjcwMTAxMDAwMDAwWjBKMSUwIwYDVQQDDBxDUkwgQ2FzZXMgQ0Egd2l0aG91dCBjUkxTaWduMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATgTs7peuoFV5aH/hD3f93xuZIHPXJP5UG0fLXX/lho6XGLnd0BaOzR8pnKUKh7LnCSkCf95cfNmxAZlha0OWqzo2YwZDAdBgNVHQ4EFgQUTUcZQChKCoO6MQX9sjK3EUDChz8wHwYDVR0jBBgwFoAUTUcZQChKCoO6MQX9sjK3EUDChz8wEgYDVR0TAQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAgQwCgYIKoZIzj0EAwIDRwAwRAIgHPy7SyHLoURMGUuZeHjLiQe4n/UGBy2k1ooiSQlEzmwCIAJFoEpebGn6NaTaqM8OI5Iz2mjh4inq9JV8Ad4q7uvw",
+    "another-ca" : "MIIBxTCCAWugAwIBAgIBAzAKBggqhkjOPQQDAjA4MRMwEQYDVQQDDApBbm90aGVyIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwHhcNMjYwMTAxMDAwMDAwWhcNMjcwMTAxMDAwMDAwWjA4MRMwEQYDVQQDDApBbm90aGVyIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQY4SbR6W2VtdqVWeYx1jhptr3FeUZK35KBmlSx5VEdriyQRG81BuB2Fm3zIV0g0xnJ9C0pThuhbX9nR5ATrGU7o2YwZDAdBgNVHQ4EFgQUKNi9ZjWu+8U4YsizCRhKl21yQdUwHwYDVR0jBBgwFoAUKNi9ZjWu+8U4YsizCRhKl21yQdUwEgYDVR0TAQH/BAgwBgEB/wIBADAOBgNVHQ8BAf8EBAMCAQYwCgYIKoZIzj0EAwIDSAAwRQIgc8k2LUlLDjGNnX83dwGhK7zm0a0WRzOiTROKyBwNaMECIQDhLQQfrtGZTxWwV/WK2+fhRjpoNxDKUl9E4kHx07vMoQ==",
+    "leaf" : "MIICKzCCAdCgAwIBAgICEAEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwHhcNMjYwMTAxMDAwMDAwWhcNMjcwMTAxMDAwMDAwWjAyMQ0wCwYDVQQDDARMZWFmMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAScl/ENizi4fOBagFemZwUiFxRIf4qAc2QXaWxP3QfMEvVeIR82q0Df/ZRmcpTFJZ1UWo0QYyNAWqsMXlY2QreIo4HNMIHKMB0GA1UdDgQWBBRaoyIZ0E9EJnRtIKv7xIwrN2U7ozBiBgNVHSMEWzBZgBTNLgvF/YYgQGD3+MtlyJ2wUJaqNaE+pDwwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVSCAQEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwJwYDVR0fBCAwHjAcoBqgGIYWaHR0cDovL2NybC50ZXN0L2NhLmNybDAKBggqhkjOPQQDAgNJADBGAiEAmtSlFD6xpchT3SEJ9yRRjjAR383R/mWGsJNYJ9+TprUCIQDgwek/VgJkx1zcb6x2y+PsDsqEaf10YJ+qeEIorRObZg==",
+    "leaf-without-dp" : "MIICHjCCAcSgAwIBAgICEAEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwHhcNMjYwMTAxMDAwMDAwWhcNMjcwMTAxMDAwMDAwWjBPMSowKAYDVQQDDCFMZWFmIHdpdGhvdXQgYSBkaXN0cmlidXRpb24gcG9pbnQxFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABEYhxbNb7WDEgeQQhL3Y6cauBrkO2V4ZzIVprVxVy59DPlaV+hsJj2M7y5wECdsZSUdm+cOhDsfs4jY+Wf1WQ4qjgaQwgaEwHQYDVR0OBBYEFDVkeedRR8tGtGGlUxZLe6rLByHjMGIGA1UdIwRbMFmAFM0uC8X9hiBAYPf4y2XInbBQlqo1oT6kPDA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVIIBATAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAKBggqhkjOPQQDAgNIADBFAiEAnHG6NjSn8ZUeOKj2fndFZgl/KoQleMUz7MA827L64R8CIAJyNIaN/qvF4nr0uK9NfrobPfpgLZrgzKyMFOBoa7/c",
+    "leaf-dp-some-reasons" : "MIICWjCCAf+gAwIBAgICEAEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwHhcNMjYwMTAxMDAwMDAwWhcNMjcwMTAxMDAwMDAwWjBdMTgwNgYDVQQDDC9MZWFmIHdpdGggYSBkaXN0cmlidXRpb24gcG9pbnQgZm9yIHNvbWUgcmVhc29uczEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECw+vFKRE6dYGX6e5R2S6DZgGjK65ebukI9JnR0xTa5uxEusCsvD2yh7AvwkhZqyvprj+VXJmfLy/y97VSgxtRKOB0TCBzjAdBgNVHQ4EFgQU7p9VK++3uQBMmjaeF7qimxXIPbswYgYDVR0jBFswWYAUzS4Lxf2GIEBg9/jLZcidsFCWqjWhPqQ8MDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUggEBMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMCsGA1UdHwQkMCIwIKAaoBiGFmh0dHA6Ly9jcmwudGVzdC9jYS5jcmyBAgZAMAoGCCqGSM49BAMCA0kAMEYCIQD3CNKrrrH7qzpvIhlL6yKimz2F8CteWuYeiAYum3cNhwIhAO0Ufk4kpnl8xKfhiBhWc3aE8ymC/LGykMKoFh03HQon",
+    "leaf-dp-other-crl-issuer" : "MIICezCCAiGgAwIBAgICEAEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwHhcNMjYwMTAxMDAwMDAwWhcNMjcwMTAxMDAwMDAwWjBiMT0wOwYDVQQDDDRMZWFmIHdpdGggYSBkaXN0cmlidXRpb24gcG9pbnQgb2YgYW5vdGhlciBDUkwgaXNzdWVyMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASYr6DIM70Ls7Ut0PBlIY8VvtSMeABPIIN+AOKAFKkCRtzYu5Px8QVCUrZtti+baZtkgENRmiA79YITq9kqN5D/o4HuMIHrMB0GA1UdDgQWBBR469WIjQKO4fgxIvQzvMJ//IJfyjBiBgNVHSMEWzBZgBTNLgvF/YYgQGD3+MtlyJ2wUJaqNaE+pDwwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVSCAQEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwSAYDVR0fBEEwPzA9oBqgGIYWaHR0cDovL2NybC50ZXN0L2NhLmNybKIfpB0wGzEZMBcGA1UEAwwQT3RoZXIgQ1JMIElzc3VlcjAKBggqhkjOPQQDAgNIADBFAiEAsFrf5YPjuqNQYow8GOUzIr0AB692h68ONRlxydN9wlYCIAjY0vJfJ3Swx9mcnfkm42z84dN6lH8ueTZwefxcwWdL",
+    "sub-ca" : "MIICMzCCAdigAwIBAgICEAEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQwHhcNMjYwMTAxMDAwMDAwWhcNMjcwMTAxMDAwMDAwWjA0MQ8wDQYDVQQDDAZTdWIgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJd/m3ZW2oInZtz6/10ARUD/jwNkkrz8QTiY4LxFt5tI9lDWzOczvWCrugtHGnInID1uO75XrTA1HBS49HgWntijgdMwgdAwHQYDVR0OBBYEFNCdwgQ3Yh1SzkwvGHVbpmKxtUeiMGIGA1UdIwRbMFmAFM0uC8X9hiBAYPf4y2XInbBQlqo1oT6kPDA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVIIBATASBgNVHRMBAf8ECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAnBgNVHR8EIDAeMBygGqAYhhZodHRwOi8vY3JsLnRlc3QvY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQCpVQOztp84sPt+7MRm8CmvNdoUYxdibuZbjQlIFeJzQgIhAKSBk5cH35OdUJZPlaff285jLpUZFymR8Hz78kY8oCQQ",
+    "leaf-of-ca-without-crl-sign" : "MIICYzCCAgigAwIBAgICEAEwCgYIKoZIzj0EAwIwSjElMCMGA1UEAwwcQ1JMIENhc2VzIENBIHdpdGhvdXQgY1JMU2lnbjEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUMB4XDTI2MDEwMTAwMDAwMFoXDTI3MDEwMTAwMDAwMFowSjElMCMGA1UEAwwcTGVhZiBvZiBhIENBIHdpdGhvdXQgY1JMU2lnbjEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHgpFeGfGfgwa0aa1WLBMzV33wcYXdY0xCDNJNouh72PrZ3ZWz8+h5NFYVE6ukZikIAzmB4hxmc9fuX2z5M/laqOB3TCB2jAdBgNVHQ4EFgQUdwDSPleE/HiU8I3m/2g63Y7K/cAwcgYDVR0jBGswaYAUTUcZQChKCoO6MQX9sjK3EUDChz+hTqRMMEoxJTAjBgNVBAMMHENSTCBDYXNlcyBDQSB3aXRob3V0IGNSTFNpZ24xFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVIIBAjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAnBgNVHR8EIDAeMBygGqAYhhZodHRwOi8vY3JsLnRlc3QvY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQCRr6pDuvu4VwXtYyebvxrjSVq15szn2ESXFkzt7A01WgIhAMa44PeUrLOj+1iFPS6ntPry/TCYggO2yJNVQ7Eb3q6Z"
+  },
+  "cases" : [ {
+    "name" : "not-listed",
+    "about" : "A complete, current CRL that does not list the certificate",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH4MIGfAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCQwIgIDAJmZFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQGgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0gAMEUCIGS56RiJtqVNec1xSW+OZfbB2DaovS5br0btTouzblTwAiEA+8zP/aqpcND8RHwYiBpu4Xl7ecpdMbiAi40vWGRiB94=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "revoked",
+    "about" : "A complete CRL lists the certificate as revoked",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIgDUC4oN+AI/+85KmYW+m1jTW/tmy+qukw8dWvJh1A7EMCIQDLxDiByH3j4t7x4tWuHZ1nOtmpQoPJuZasiIKq6htsIA==" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 0
+    }
+  }, {
+    "name" : "revoked-without-reason",
+    "about" : "Listed without a reason code: unspecified",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHpMIGQAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMBUwEwICEAEXDTI2MDUyMjAwMDAwMFqgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0gAMEUCIHEYbM3HjRAezbITcXdLnal9EfbnN/YXwHK8t7du82mlAiEAqSNR7X/c76ZyXG11mzHvO8EEhIsz0EG9D1G3Zoeq8P8=" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "unspecified",
+      "crl" : 0
+    }
+  }, {
+    "name" : "on-hold",
+    "about" : "Listed with certificateHold",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIgK5kgD+XJ9oJwVp6tmti72scmTW1X8Db6oeK4yEf9a8ECIQCEiptmGFmdB6bR7VzEiq5Glt6w/gm4XRMLIrgpxLyGXQ==" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 0
+    }
+  }, {
+    "name" : "unknown-non-critical-crl-extension",
+    "about" : "A CRL extension nobody knows, not critical, is ignored",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHkMIGLAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoCAwHjAKBgNVHRQEAwIBAjAQBgkrBgEEAYaNHwIEAwwBeDAKBggqhkjOPQQDAgNIADBFAiA/nqyDZUmddPyZ2WzWTMC8U91ld4UzSE5nXMFq/z7j5wIhAOagK9j4tkFy5Eh9XIEZ+TtrAvucMSgaxTm8w/TkdFoI" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "remove-from-crl-in-a-complete-crl",
+    "about" : "removeFromCRL lifts a hold in a delta CRL; in a complete CRL it should not appear, and proves nothing",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBCKAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIhAPoWeyf0H4y2iUZVCU0zPLL+6+7KMamsddRYXogq150bAiA6pNQDL3ZUSi9Eo7itU9SNAK0UXt+zZCI0QammpoWD2w==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "hold-in-older-remove-from-crl-in-newer",
+    "about" : "A hold in the older complete CRL, removeFromCRL in the newer one: the newer decides, and proves nothing",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSAAwRQIhAOYvBeEANDsgf5p+WXN8AK1zo7fXu70cpr5DSJg0HFLyAiBX3Z52V4APXnDsUOpi7C0JI4WwS6Z4eNHJvJGYu2cxEg==", "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBCKAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDRwAwRAIgT1jKfWMCjlrxO6/2JLMU8ai0KcYRzDa3lvxeGhz6gvQCIHg/jZ7Qjf+RLxYYaqIuUjlCIjxObnvxqRf/ksIHuW0n" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "hold-in-older-remove-from-crl-in-newer-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH4MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBCKAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSQAwRgIhAOqXGxcsDfBBjb0ImXYinea3luSxfWZtInfAPVQrtwIYAiEAqK0UP3mTBOOR7pyE/6mQslxHPs1lbPCgx6z7QW/n82o=", "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSAAwRQIgY9vTV0DQHQ/gZ7RBM4o6a+EDhgne1Qx6kRYENbQF7YQCIQCkMwju6ENZ4EPvrEf2Cfj7a8rdLyJUNjHLa66Pihb1lg==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "no-next-update-issued-30-days-ago",
+    "about" : "A CRL that states no next update is used for seven days after it was issued",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHBMGoCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUwMjAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCIFi7vr5Tly9WO/wp7wWimO4c62F9wiLgh+QVBWPJGQ3pAiA2MfSMj8qvTWiITNSEmfYw1OQ9OC0NfhEhTeMDRZkcCA==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "no-next-update-issued-6-days-ago",
+    "about" : "Within the seven days it is used",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHDMGoCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQD6cBwxXsQ14driSex3jCd6QlaQZvVLZ0um1TW3rhRH+wIhALHXxjL7V8JheeYMq9UjtF+9D4/zdeu8gwTcaigtW1lB" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "delta-crl-alone-revokes",
+    "about" : "A delta CRL alone that lists the certificate: a revocation it shows stands",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBBzCBrQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjAjMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQGgHTAbMAoGA1UdFAQDAgECMA0GA1UdGwEB/wQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQCSLozfKq6rp0Sqefk2k/T4j7pFa7X0Supj6Qpnljt+XwIhAKbkLGzbyn1AXCuu/Jz9RbBzzuEY7buvkr1gMSnqaTMu" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 0
+    }
+  }, {
+    "name" : "delta-crl-alone-holds",
+    "about" : "A delta CRL alone that lists the certificate on hold",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBBjCBrQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjAjMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQagHTAbMAoGA1UdFAQDAgECMA0GA1UdGwEB/wQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIHQlmraA4ec6vSJhBDqiKHrwZwF6U5+XcW6m9ZOkzvg7AiEAwjDNL/7fUBNaYA4QUkEjx5gwqNJCjhi8tQJpDhXCCXQ=" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 0
+    }
+  }, {
+    "name" : "delta-crl-alone-silent",
+    "about" : "A delta CRL is not a complete list: that it does not list the certificate proves nothing",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHgMIGIAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoB0wGzAKBgNVHRQEAwIBAjANBgNVHRsBAf8EAwIBATAKBggqhkjOPQQDAgNHADBEAiAzuCc7UwyeekNBa7QWN4cScnpJLNACP0+rNx9Be723xAIgHhhxg0/o3wJEYRmt7Fyfyw7uly9zjy02OxoRe4cNohU=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "complete-good-newer-delta-revokes",
+    "about" : "The complete CRL does not list it, a newer delta CRL revokes it",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIBdf2AlITLmj0gXSgm1KPxv6GHoWxYdeTphtTahEYrruAiEAqMP8Dh+gfrbnJTc2RlBM+iWl6kwlmm7uW2mA3p/5Xss=", "MIIBBTCBrQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjAjMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQGgHTAbMAoGA1UdFAQDAgECMA0GA1UdGwEB/wQDAgEBMAoGCCqGSM49BAMCA0cAMEQCIA9vWe6fawH1tBPdTOoJZz5jcMoUBq0IXE71Yol5lAXeAiAxa98YdFf722k7PQGmW7CY3zqOubmJ1/L+LDbfYCw2kw==" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 1
+    }
+  }, {
+    "name" : "complete-good-newer-delta-revokes-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBBzCBrQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjAjMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQGgHTAbMAoGA1UdFAQDAgECMA0GA1UdGwEB/wQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQC4nWNrTtaT74V8nBkebLzRXFZ8afmWP9RLpIhW2mOWzwIhALBnsuapYQz0oNnRa3LcF6jcDXzWhaqjz1krdEXjlUZQ", "MIHSMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQCkGaHVlg19jxtHJGf1dYAIkBf5lfPG7bvjsHMKTPGLxwIhAOK7dyIN+CLesyMAwJS7i6t5ybRAaqNKNfO32pmIj6/d" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 0
+    }
+  }, {
+    "name" : "listed-twice-revoked-then-removed",
+    "about" : "The serial listed twice, keyCompromise then removeFromCRL: the gravest entry stands",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBGTCBwQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjBGMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQEwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBCKAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDRwAwRAIgH3W1wNqy+hVhYqoyA9tgDWJnIEphsNU6AEtIsu2IUBgCIBN2q5Qka2/EH6ow6TNdnFDBuxeFow0RTfFoDcjWb63C" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 0
+    }
+  }, {
+    "name" : "listed-twice-removed-then-revoked",
+    "about" : "The same entries in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBGTCBwQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjBGMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQgwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDRwAwRAIga7oXO8h3hQ9nLG8eJlq4FHFqxRB/7NgzxmXdrC4LZgsCIAebCwfUTJtXR5h1iABFTUVxpBVeVL6m0ECue4lc9gd2" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 0
+    }
+  }, {
+    "name" : "listed-twice-hold-then-removed",
+    "about" : "A hold and a removeFromCRL for the serial: the hold is the graver",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBGzCBwQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjBGMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQYwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBCKAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSQAwRgIhAN00uUk5Ny/RUQzlpt0LOdMowPLVG1S3kfnWoo1t2C9NAiEAmK2IH01ce/TjoYm896ywOFqNab0/k2Axo9NNYISx4w0=" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 0
+    }
+  }, {
+    "name" : "another-serial-listed-twice",
+    "about" : "A CRL that lists another serial twice is not a sound list: it proves no certificate good that it does not list",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBHDCBwwIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjBIMCICAwCZmRcNMjYwNTIyMDAwMDAwWjAMMAoGA1UdFQQDCgEBMCICAwCZmRcNMjYwNTIyMDAwMDAwWjAMMAoGA1UdFQQDCgEBoA4wDDAKBgNVHRQEAwIBAjAKBggqhkjOPQQDAgNIADBFAiEAqogRf2CYE5KwBnrchXemkPRan80fLimBx1Tih+/Kj4YCIGY7Cv4Vxu299F7zLAvd3Fn0hXbZpuhTCqXp3jEzIEyD" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "another-serial-listed-twice-then-a-sound-crl",
+    "about" : "A sound CRL next to it decides",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBHDCBwwIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjBIMCICAwCZmRcNMjYwNTIyMDAwMDAwWjAMMAoGA1UdFQQDCgEBMCICAwCZmRcNMjYwNTIyMDAwMDAwWjAMMAoGA1UdFQQDCgEBoA4wDDAKBgNVHRQEAwIBAjAKBggqhkjOPQQDAgNIADBFAiEA8KzT8/ctaNTxlE29CDdbRhAmMXOMvRxtCbC/IEpX8EgCIE4vXzpQ3qJVO7sjubvYUKUonrAGLWQc1ZNnWN5orHvU", "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIQDBa5eR8hKdDAWRFxG+lsIxFdu2/10AYkXTKAAiTuWrNQIgRUo/l6hXvVEMkmhCRRY7WDa5850BKRLfmEOWRcMeUMU=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 1
+    }
+  }, {
+    "name" : "certificate-issuer-on-another-entry",
+    "about" : "A non-critical certificateIssuer on another entry: an indirect CRL, which is not evaluated",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBGzCBwQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjBGMEQCAwCZmRcNMjYwNTIyMDAwMDAwWjAuMAoGA1UdFQQDCgEBMCAGA1UdHQQZMBekFTATMREwDwYDVQQDDAhPdGhlciBDQaAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSQAwRgIhAPbZ808WYo1w1k7+mpgIg/oh504JAvj/P3X1dmb7zBKIAiEA66xooxWLJDMXowR+vrBogzstKSX3c8fSabigpv+mP4w=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "critical-certificate-issuer-on-another-entry",
+    "about" : "The same with the extension critical",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBHjCBxAIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjBJMEcCAwCZmRcNMjYwNTIyMDAwMDAwWjAxMAoGA1UdFQQDCgEBMCMGA1UdHQEB/wQZMBekFTATMREwDwYDVQQDDAhPdGhlciBDQaAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSQAwRgIhAOtLHFgB20zhvgBZOAQir/blynOU81L0337AAPJ53n4cAiEA7QGyEl+Ud0Jk1LjVSQ6WfINPDfdvrXNa5yGuyjD+j8w=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "complete-holds-newer-delta-removes",
+    "about" : "The complete CRL holds it, a newer delta CRL has removeFromCRL: deltas are not combined with their base",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH4MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSQAwRgIhAK7TDytcMsXnLPLvnTX9IBRXz8CU4E4lQwSJy1Y2b63SAiEA4qmSQRQYMqHeH89a27wpFSlyUMzfbhL3D67G2H4WQ8Q=", "MIIBBTCBrQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjAjMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQigHTAbMAoGA1UdFAQDAgECMA0GA1UdGwEB/wQDAgEBMAoGCCqGSM49BAMCA0cAMEQCID0VQRljrcutinIwCkiFq1NmUfr1eYYdzZxOBnxM2w1wAiBPEzFg6vlkAFK4S9Vfn3OUe9JnNyrNftX56sjRsRSueQ==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "complete-holds-newer-delta-removes-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBBjCBrQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjAjMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQigHTAbMAoGA1UdFAQDAgECMA0GA1UdGwEB/wQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIQDEs1Drwjc+BHe7RSUqLxhWCZE9n+SlKaxpiFMF6ji9+AIgOxEyEKseaGdlDyHY7hFx99goElehrUuVkyF3hdNKFBk=", "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDRwAwRAIgGtWjaS8JshPFybTYkKpl/kRnIqxLm2+kJQEBK1n9+JwCID81iZ1qcg0F+gnUJLuB14QXMsc9yPEnUCqSlJWn4AUj" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "unknown-critical-crl-extension",
+    "about" : "A critical CRL extension nobody knows: the CRL is not used",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHnMIGOAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoCMwITAKBgNVHRQEAwIBAjATBgkrBgEEAYaNHwIBAf8EAwwBeDAKBggqhkjOPQQDAgNIADBFAiAUQxmX8APKYPyys9ziUN0+F0rcqHRbQuLqhy40a6zbZwIhAIlPKcyoRUysf1kMyR1ziYM/+BeGJcH2eFxbHi7k7lqD" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "unknown-critical-entry-extension-on-another-entry",
+    "about" : "A critical entry extension nobody knows, on another entry: the CRL is not used",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBDTCBtAIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjA5MDcCAwCZmRcNMjYwNTIyMDAwMDAwWjAhMAoGA1UdFQQDCgEBMBMGCSsGAQQBho0fAgEB/wQDDAF4oA4wDDAKBgNVHRQEAwIBAjAKBggqhkjOPQQDAgNIADBFAiAkxiJcMPRqNPc9dp2zx4Kuslyi9rdBFJti47Qg9OgLgwIhAKC7npb7rB4gmZ0FKFBn1g27MVmYnO7jAgTWo6jkWLQ5" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "unknown-non-critical-entry-extension",
+    "about" : "Not critical, it is ignored",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBCzCBsQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjA2MDQCAwCZmRcNMjYwNTIyMDAwMDAwWjAeMAoGA1UdFQQDCgEBMBAGCSsGAQQBho0fAgQDDAF4oA4wDDAKBgNVHRQEAwIBAjAKBggqhkjOPQQDAgNJADBGAiEA1OIw821B1MvyfQNh/abV1WBE6Nqutw1gJSbJrQ1OejQCIQCAGXy5KCnpacQpV6QWU0ZLHVfP2IYKIuPkcmerMc091A==" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "critical-reason-code-on-another-entry",
+    "about" : "A reason code marked critical is still a known extension",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH7MIGiAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCcwJQIDAJmZFw0yNjA1MjIwMDAwMDBaMA8wDQYDVR0VAQH/BAMKAQGgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0gAMEUCIQChg7iE4VlIowtvTinGX8ueBIfBLld0NWN4JJlO51xNVQIgOswrTho6dOqxJ9WrfNDbNwPijcH3Z2GJ6hPyIlXWExo=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "idp-names-the-certificates-point",
+    "about" : "The CRL is for the distribution point the certificate names",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH9MIGjAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoDgwNjAKBgNVHRQEAwIBAjAoBgNVHRwBAf8EHjAcoBqgGIYWaHR0cDovL2NybC50ZXN0L2NhLmNybDAKBggqhkjOPQQDAgNJADBGAiEA1bxeizEMWM4j+rulZhf75XnhUX2Jevk5quLlyYDRWcECIQCAc2zq9Bb3A+af6gxpzMVjBaE6H+m0T7bvEY/3VDCYUQ==" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "idp-names-the-certificates-point-revoked",
+    "about" : "Such a CRL that lists it",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBITCByAIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjAjMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQGgODA2MAoGA1UdFAQDAgECMCgGA1UdHAEB/wQeMBygGqAYhhZodHRwOi8vY3JsLnRlc3QvY2EuY3JsMAoGCCqGSM49BAMCA0gAMEUCIQDzjZwpIeCC8U5Qbivb5Prt7u7qeDhQO2ZA7vb4G/j0xQIgJM6ZGDsprCpqEZWg7H694BsYBY0J+rOwrUveK46/lCk=" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 0
+    }
+  }, {
+    "name" : "idp-names-another-point",
+    "about" : "A CRL for another distribution point does not cover the certificate",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBBTCBrAIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWqBBMD8wCgYDVR0UBAMCAQIwMQYDVR0cAQH/BCcwJaAjoCGGH2h0dHA6Ly9jcmwudGVzdC9wYXJ0aXRpb24tMi5jcmwwCgYIKoZIzj0EAwIDSAAwRQIgeuxr1EyUrj8h39Jzyi863yL6sTFIOxaa84I/rZ+DwOwCIQD3WgfgpMGkYQUBYKYbR/63wMbW1VKmYb+pVN9FUx3upQ==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-names-another-point-revoked",
+    "about" : "Nor does what it lists count",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBKTCB0QIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWjAjMCECAhABFw0yNjA1MjIwMDAwMDBaMAwwCgYDVR0VBAMKAQGgQTA/MAoGA1UdFAQDAgECMDEGA1UdHAEB/wQnMCWgI6Ahhh9odHRwOi8vY3JsLnRlc3QvcGFydGl0aW9uLTIuY3JsMAoGCCqGSM49BAMCA0cAMEQCIHWaxzz7k0g9BjVQFjLl67KKmSJekalwEDB1Xjed86AgAiAzTYrVD3x6DmJXJ0V8EEH5ubj/4OyjtlPn0PJaQ2UXRg==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-certificate-names-no-point",
+    "about" : "A certificate that names no distribution point is in no partition",
+    "certificate" : "leaf-without-dp",
+    "issuer" : "ca",
+    "crls" : [ "MIH8MIGjAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoDgwNjAKBgNVHRQEAwIBAjAoBgNVHRwBAf8EHjAcoBqgGIYWaHR0cDovL2NybC50ZXN0L2NhLmNybDAKBggqhkjOPQQDAgNIADBFAiEA3MdA19sXjBgLxiS235Z/5sBvkdgim4eWiVJNMAi/yG0CIGQfkoXdWMwOo2poPzobKG/Wk9j5upbo2XXi/uM1chhv" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-certificate-point-limited-to-reasons",
+    "about" : "A certificate's point limited to some reasons does not place it in the partition",
+    "certificate" : "leaf-dp-some-reasons",
+    "issuer" : "ca",
+    "crls" : [ "MIH7MIGjAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoDgwNjAKBgNVHRQEAwIBAjAoBgNVHRwBAf8EHjAcoBqgGIYWaHR0cDovL2NybC50ZXN0L2NhLmNybDAKBggqhkjOPQQDAgNHADBEAiAjUkRqFY1UQ3sf7+oypCJteVvCHN+tf0plOjUEEmEIVwIgUIEJUV5MCEirJIhxYyurjZLewtPqmPVkJ3S/zUwkpqM=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-certificate-point-of-another-crl-issuer",
+    "about" : "Nor does a point that names another CRL issuer",
+    "certificate" : "leaf-dp-other-crl-issuer",
+    "issuer" : "ca",
+    "crls" : [ "MIH8MIGjAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoDgwNjAKBgNVHRQEAwIBAjAoBgNVHRwBAf8EHjAcoBqgGIYWaHR0cDovL2NybC50ZXN0L2NhLmNybDAKBggqhkjOPQQDAgNIADBFAiByUo3fJKK24Moe6+3tdZLGrR4WhnlHW7h0JKwotZdsewIhANdHJXzbF2HVgpnBAww89CkI0inycVMjeaGfrZ393JKy" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "complete-crl-certificate-point-limited-to-reasons",
+    "about" : "A complete CRL covers that certificate all the same",
+    "certificate" : "leaf-dp-some-reasons",
+    "issuer" : "ca",
+    "crls" : [ "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0gAMEUCIQCXtk0nlD3TPJqSxzZbiCBaONjuwEtShydimVt7tjuE2QIgYR2+2TD5Ct4PMSu8cMJ8y9lhuMhXdmBgYavWk9yBr/8=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "idp-directory-name",
+    "about" : "A distribution point named by a directoryName is a partition that is not matched here: it covers nothing",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBAjCBqQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWqA+MDwwCgYDVR0UBAMCAQIwLgYDVR0cAQH/BCQwIqAgoB6kHDAaMRgwFgYDVQQDDA9DUkwgcGFydGl0aW9uIDcwCgYIKoZIzj0EAwIDSAAwRQIhAJA3xeuzbEXeL7efPOwTps/qoMQZxB6ExuITQ03yxy42AiBZ9EfKG6QY1NuNoT+8Zbzxp0ITAwIRzJOujA63BnOuCA==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-directory-name-certificate-names-no-point",
+    "about" : "Also for a certificate that names no point",
+    "certificate" : "leaf-without-dp",
+    "issuer" : "ca",
+    "crls" : [ "MIIBAjCBqQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWqA+MDwwCgYDVR0UBAMCAQIwLgYDVR0cAQH/BCQwIqAgoB6kHDAaMRgwFgYDVQQDDA9DUkwgcGFydGl0aW9uIDcwCgYIKoZIzj0EAwIDSAAwRQIgJsnGJrAvQCkZxkM3evA02IBNeYq8vQejXauTsTGESdoCIQC42LHhtYU58hIVQb7n/XjTiTgvc28fJzWd+L7XHoi/2A==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-name-relative-to-issuer",
+    "about" : "A distribution point named relative to the CRL issuer covers nothing either",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH4MIGfAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoDQwMjAKBgNVHRQEAwIBAjAkBgNVHRwBAf8EGjAYoBahFDASBgNVBAMMC3BhcnRpdGlvbiA3MAoGCCqGSM49BAMCA0gAMEUCIDGAacd528LVQkICL9BixWLvLEKYBy/4rc30cYYwpW77AiEA3/XmrFeZ7izbF3qG6dnRQiOyuenhlMhEFe3Ru3C3ah4=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-uri-and-directory-name",
+    "about" : "A point named by the certificate's URI and a directoryName: the URI matches",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIIBGjCBwQIBATAKBggqhkjOPQQDAjA6MRUwEwYDVQQDDAxDUkwgQ2FzZXMgQ0ExFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWqBWMFQwCgYDVR0UBAMCAQIwRgYDVR0cAQH/BDwwOqA4oDaGFmh0dHA6Ly9jcmwudGVzdC9jYS5jcmykHDAaMRgwFgYDVQQDDA9DUkwgcGFydGl0aW9uIDcwCgYIKoZIzj0EAwIDSAAwRQIhAIs8ipfPkhpfzMhCo+Jd/i4rHmGUjQktBluTa9tymoPyAiAjNEc0l5+mNwBcbcd7v2l7oZSEIKbeSh4D39SuGXAd7A==" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "idp-only-user-certificates",
+    "about" : "A CRL of end-entity certificates covers an end-entity certificate",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHjMIGKAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoB8wHTAKBgNVHRQEAwIBAjAPBgNVHRwBAf8EBTADgQH/MAoGCCqGSM49BAMCA0gAMEUCIHELgcO7bOHXcVjYq99yKKCoLjnQ9jwE911eyUwZTksqAiEA1/SoFGq0dJWt9FT81GWuUjj8R501k/Xqs1Z2G65aMkA=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "idp-only-ca-certificates",
+    "about" : "A CRL of CA certificates does not",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHjMIGKAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoB8wHTAKBgNVHRQEAwIBAjAPBgNVHRwBAf8EBTADggH/MAoGCCqGSM49BAMCA0gAMEUCIGSQjPESKvnibCp19rFFVkBLY17WKC+MI4z5Etvs6CwSAiEAvopwOWhVX0x0VhyaTMAigUdBenHyCJHo0c97Yo5OG8U=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-only-attribute-certificates",
+    "about" : "A CRL of attribute certificates covers no public-key certificate",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHjMIGKAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoB8wHTAKBgNVHRQEAwIBAjAPBgNVHRwBAf8EBTADhQH/MAoGCCqGSM49BAMCA0gAMEUCIQCxoNZfZz7oH5tuhxnzZSu/uF6dzBcy2tTcpogMpA4I0AIgI+DkOicp3jadk/y4UU/xpMWzm8Wki+o1iOLFwnuN+1Y=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-only-user-certificates-ca-subject",
+    "about" : "A CRL of end-entity certificates does not cover a CA",
+    "certificate" : "sub-ca",
+    "issuer" : "ca",
+    "crls" : [ "MIHkMIGKAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoB8wHTAKBgNVHRQEAwIBAjAPBgNVHRwBAf8EBTADgQH/MAoGCCqGSM49BAMCA0kAMEYCIQCzDEHvRxE29DtkRKas8TFePZRaC9xwZQjTVPIlKgT8zQIhANX1LRdvIvRZl4boAisESguY1r0BnlcZaG/hhW7xwqpr" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-only-ca-certificates-ca-subject",
+    "about" : "A CRL of CA certificates covers a CA",
+    "certificate" : "sub-ca",
+    "issuer" : "ca",
+    "crls" : [ "MIHjMIGKAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoB8wHTAKBgNVHRQEAwIBAjAPBgNVHRwBAf8EBTADggH/MAoGCCqGSM49BAMCA0gAMEUCIQDkAXvB2NXnFtDjYkyLeA889Poi1SqZH9UmKknrEBJuCgIgATy1KsMTIvVO3W/gHGbj8YN/bNafZN06OaGQg6XUFVE=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "idp-only-some-reasons",
+    "about" : "A CRL partitioned by reason is not evaluated",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHlMIGLAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoCAwHjAKBgNVHRQEAwIBAjAQBgNVHRwBAf8EBjAEgwIGQDAKBggqhkjOPQQDAgNJADBGAiEA6nFFylrBxFXKzOdb6OkFDoF277nwAXef8nw7xoqzOhcCIQDVTlToT6RJZeN4M33YXcntplCfBCXxwZv5GvqR6Sk4fg==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "idp-indirect",
+    "about" : "An indirect CRL is not evaluated",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHjMIGKAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoB8wHTAKBgNVHRQEAwIBAjAPBgNVHRwBAf8EBTADhAH/MAoGCCqGSM49BAMCA0gAMEUCIQDw9gXqFNroxLfBefiqVpHYaNv/J6R18JjWwCgJ5u9V9gIgBM66uzThC0aVMm+EXpgkKXYz8OGrkyGoEFcTDtMoS8w=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "signed-by-another-key",
+    "about" : "The CA's name, another key's signature",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSAAwRQIgGWlq8wiPqeM1sNe0NgOLFmCqB8F8AMM2hgzoS1GOPXoCIQDDn1hPj0X081DkqUJwKBIK2ftbVlBccUAIxO0nulC3rQ==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "issuer-may-not-sign-crls",
+    "about" : "The issuer's key usage does not allow cRLSign",
+    "certificate" : "leaf-of-ca-without-crl-sign",
+    "issuer" : "ca-without-crl-sign",
+    "crls" : [ "MIHhMIGJAgEBMAoGCCqGSM49BAMCMEoxJTAjBgNVBAMMHENSTCBDYXNlcyBDQSB3aXRob3V0IGNSTFNpZ24xFDASBgNVBAoMC0NvbmZvcm1hbmNlMQswCQYDVQQGEwJVVBcNMjYwNTMxMjMwMDAwWhcNMjYwNjA4MDAwMDAwWqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDRwAwRAIgBqOhwgo7LDxMm+Xb7/s3X9no/Ozj4gt3kAQTqhEg6YcCIESNnu9bsG7mM7PPYkVPToDRT3Q+FxcbrGiX1Mb6IZXc" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "crl-of-another-issuer",
+    "about" : "A CRL another CA issued says nothing about this certificate",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHPMHcCAQEwCgYIKoZIzj0EAwIwODETMBEGA1UEAwwKQW5vdGhlciBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoA4wDDAKBgNVHRQEAwIBATAKBggqhkjOPQQDAgNIADBFAiEAhocZL1hVjv8Mc1xdaCyh2/UTkqnQTMSkkZiDMtscbrYCIDedua/5vrGKoiT5q4HuD5tU8CEDV9hNUYl5OEtW3J74" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "expired",
+    "about" : "Past its next update",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHQMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNDAwMDAwMFoXDTI2MDUzMTAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCID5iCKXLoeN25C3K+RpiMl7SBlm648RB4U4O9mShNd2tAiAnnDLGJgvVHVsjz4u4yRKQKa8a0oE7/+KX1ZWP0yrCiw==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "issued-beyond-clock-skew",
+    "about" : "Issued six minutes after the instant of the check: beyond five minutes of clock skew",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDYwMTAwMDYwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIQCbgJwYh4xnss1B//d+b+z7fR5P52yKPE7WSPhTn0dzaAIgb5vdDAw/T/+BYV6mX6HRVa7yx4KFkZhpWwUJiwgovOY=" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  }, {
+    "name" : "issued-within-clock-skew",
+    "about" : "Issued four minutes after the instant of the check: within the skew",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDYwMTAwMDQwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIBdLh7YEZouibGpGtk+EVeCueCFsZpAAjUSE6qB9fQRuAiEAtRW6AOJAtFXD1W+fbWCB0biuaPgAS6VhAGh9lvTlsHk=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "revoked-in-older",
+    "about" : "Revoked in the older CRL, not listed in the newer: a revocation does not come back",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH4MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSQAwRgIhAJtXFumxk0olRP9QhclQPj177nj0OkTBG2HVbRTBZXB/AiEA+9RKZ4FwKcpnq/bcGJ9qoOjAnKQAPFbiushKtl4L0KE=", "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0gAMEUCIFdBQLnntYd6jsDsm4p8gcp4hvxkjggYK90QeE0GqZB0AiEAxdtfv5Q9wZoLDI2jsqRpKsFzEh3x+C++bpABGQRXq4w=" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 0
+    }
+  }, {
+    "name" : "revoked-in-older-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHSMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0kAMEYCIQDe9NbqmofSim9oEr9Cdpp8azpFu3/jaL6TOLwEFL7AFQIhAIOIaIXwsVlXfCULoFqvjNYwqqZwb0EXgF5Rf4I/2Jf8", "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDRwAwRAIgX3n9UVNHCz3lv9pr/tVDfotjMOuOwGCGv/Q2qeOiT6ACIH3S72trvNrUPC23VJtSQSneCSUsnCwnhu9YzFPuPiZY" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 1
+    }
+  }, {
+    "name" : "revoked-in-newer",
+    "about" : "Not listed in the older CRL, revoked in the newer",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIF6zWH7tjhLgQuQOE+sMYklostyNkkggVTB4SFvKPrLZAiEA5gglahaW80z1Vs7d8UTxKyBBSeBE6fUPe8FKjrjnkA4=", "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIhAPsiL9LQgzER2MQmeYXCbvLxhl3pgTBl4WfBgPPFmA0wAiB6OLgqILgsXf3ABovk+16AOfvvISUPduCMDeATMAIeZw==" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 1
+    }
+  }, {
+    "name" : "revoked-in-newer-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIgKL4Dhxklz5eT++fJ+BSbd973Pyb2xRFRbVHzYUSNrRMCIQCZNHF1frjcnlAB3K/pro+PZebC4ZYrfluYS2/h4NeSjg==", "MIHSMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQD9uvsIKdzOc/07bZkaozOka+r5nNJKKW6yo2KbammnxQIhANg0RyvyVq7e0k2VnuRFOvBG2zfDcPP1G9S0h7i3SW3q" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 0
+    }
+  }, {
+    "name" : "held-in-older",
+    "about" : "On hold in the older CRL, not listed in the newer: the hold was lifted",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSAAwRQIgVpoFIGYNKbb1IoFVqPDqhReGNXE1eHglt6ehM2UD1M0CIQCxhgtan8rJ5khhS/ozoSvgF56jZSQYrjalVG1oOu/ZXA==", "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0gAMEUCIAeDk3YeiqqUCfXTWUCYkk/dykdy0U5pNgxSuAedTD5FAiEAgRt0ZltE2WVQqP8B0ukAt4J7QFM//gyZe1VwdEVJHYg=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 1
+    }
+  }, {
+    "name" : "held-in-older-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHSMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0kAMEYCIQCkd5WKs4F7N+cKOzop0sfz37KgDV2i0+gFwqDR+0/3EQIhALn98tEUbwz68pvsv5V9oS56LmaDCOVvK7O3e/uZ4qDM", "MIH4MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSQAwRgIhALItmfXDXBf1OHn/IzcEQBcHiNU3Bgf+E9vSMmfmMBuzAiEAxd8Sh4KZqBdEVhh4nilg2lq+ZQtUE2dm1MyPtEgNTD8=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "held-in-newer",
+    "about" : "Not listed in the older CRL, on hold in the newer",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHQMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCIC9ZokVqjqxMtn6GBeVcOVlw49lQPfvkXb6Y2rncVHDgAiBsyBoqmUeiT8+Fw9iczUctifYY4RjnfK7IIxWCmRTyCg==", "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDRwAwRAIgM/a2cmXEual6QtI/fEiK8xnzF9+GzjqN0Rds2D8o36ICIBPl4fELtwlTM5urqTEgiz4tEsz18ITymaG3GnYkwHNu" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 1
+    }
+  }, {
+    "name" : "held-in-newer-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIgaOx3sIM6rTfTNWmlDVNdwUljWdhhnRrgFEN0qNkuWYICIQDi6HbOsbMjc9HJZGt0Brh9LJ9OfQUbSsHo+wOCh6+5Eg==", "MIHSMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQDDK8Uz19CnLc5Wq2hk/IA+N1ZFdTtLBRgaMm/JIm/IFQIhAOE83LnHtxxtZiJn0iQZl4uJF7W/5m7tjdaHy0WmGecV" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 0
+    }
+  }, {
+    "name" : "revoked-in-both",
+    "about" : "Revoked in both: the newest revocation is reported",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MjYwMDAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDRwAwRAIgXGleUrPaDM7zaBAfPrFVuATQ7ApeTXUTV/eyA/voUC8CICEplhguGZTeOltAizW+e31beqlRO4VbKDzxcSxlGpbg", "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBKAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIgXfMVseSe8Ean7C9sLtq2QJcwv91kzhKeizMOlUyOL2UCIQC515wlRyDHJwqP3GmkIGK7RsizQzct5lXTtgf97FfmWA==" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "superseded",
+      "crl" : 1
+    }
+  }, {
+    "name" : "tie-higher-crl-number-good",
+    "about" : "Issued at the same instant: the higher CRL number is the newer",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDRwAwRAIgORBF7MH25CUFxrH8amKQ5sfCWmDSmce9a8qd1LFq/YICIAMT3y272mcTpPtle2h5rH90nMoP4Bt8QxZyZVyqIg/H", "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0gAMEUCIQD5ouj5dXJp72YgqVmLgwS0fso6w+qSKSGMT6YwaBCVaQIgMh6bLRkuDwvELqq5gZTId1DDuQlk3tNCzJy0c84dfCU=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 1
+    }
+  }, {
+    "name" : "tie-higher-crl-number-good-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgECMAoGCCqGSM49BAMCA0gAMEUCIFMprGHu08mVu3MIUxr1HDERPFAKOkn5qfSZNj5N1bW8AiEA4oBNoLym+76CosWw8naAPTmFmJXVfcxpjyJawZ7DIsE=", "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSAAwRQIgesM031F3cGdDqv2Xc/CMiqMTxSraDyW/u7952RwJCUICIQDzJK7gm0Jj5B4gImfqn4wkkfiiB68DPu3huo+eQL7IgA==" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "tie-higher-crl-number-holds",
+    "about" : "The higher CRL number holds it",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHSMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQCXdM+sBL8CByvgzjzYAu+gW+dCgPNngKQFxK7rJhmjGQIhAJ0hU4SUyBsYYbcV2A7RG2m+gb5VVr8Vs9XeWewuMty7", "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDRwAwRAIgclkEdkTK/IinZIWWa5Ze/gn2bUiVaNbc4ikgpQwmfFsCIHgyizBSU7eC31+F1mcZ90297HOR1v5mZQ+/0ZUy6ojX" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 1
+    }
+  }, {
+    "name" : "tie-higher-crl-number-holds-reversed",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDRwAwRAIgFiT2g21Pgaowy1Ycjvop42nJLBG9HnftXkSZvUhnHH0CIEwJOgr7xWoK++YxB9ZKd//4UgLn9qhXPn0NHmWjscvK", "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIQC7jY4XPt/un7+9ma0ZAeaunJpYcYUTHj0ops7MKQMOPAIgMasJO3iV+2MDl2JqIDPMdaTYCpX4Zfci4NL4l6CjZ2Q=" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 0
+    }
+  }, {
+    "name" : "tie-same-crl-number-first-good",
+    "about" : "Same instant, same CRL number: the first held decides",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHQMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCID9sSeXVfIvCExZnRJ9Xvu8FGEahVAOq2hxWsFoF6/KhAiA/3otk3ESKJKZ27S/pwAM4R5G7oq7HeoH1k+W4i4lAXw==", "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSAAwRQIhAO+UX81Q9hwhcmaDKIG7dJW/W5JqA8DlsG7RCRYWuhJlAiAm8vDKzEywLPbUYeMfbJb9o4S8PDtfPEO+XCiWq/lANw==" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "tie-same-crl-number-first-holds",
+    "about" : "The same, held in the other order",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSAAwRQIgb0LijnPSz94Fh28DizsGIdoje0khcBOlX9MWbHwWc7ACIQDIhDbAr6clxGdfi6QDxh86sJN189z31XCuio8lqpKIEw==", "MIHQMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCIAcPdUV2K0zElnZgkcNWe0WiUuzoWL+aH1k2P2gQbuibAiA7z2OdK8/fKiDMwM05A2UyPDlgqwVPTbK27r6Q5UBJSg==" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 0
+    }
+  }, {
+    "name" : "tie-without-crl-numbers-first",
+    "about" : "Same instant, no CRL numbers: the first held decides",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHBMGkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIzMDAwMFoXDTI2MDYwODAwMDAwMFowCgYIKoZIzj0EAwIDSAAwRQIgf2tx4pOKht1bup8uttEyHrWtMXs3b3SNbKt3DoU3ZKsCIQCvx/Xz9tK82URpYZMZodzi348o83UrGiBBAtBjQvfASA==", "MIHmMIGOAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBjAKBggqhkjOPQQDAgNHADBEAiB3fq8uYa+oI1Y9hW07/1J8Ht1xGK9IBQhKwSCmeCj4lQIgEqFsO6yJEStlPvqv1k4PlikzAcI0PeHDhyC0Twfs5dU=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "this-update-before-crl-number",
+    "about" : "The later thisUpdate is the newer, whatever the CRL numbers say",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH4MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQEwCgYIKoZIzj0EAwIDSQAwRgIhAMukRVy7E5q601nPyMT1a2W9pXKFgx4VkUy8OmyskhsEAiEAlBabQLsqrRdLUQxn4TfA6+XuwDRHFWU7V8KJ6CCXsD0=", "MIHSMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUzMTIyMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEKMAoGCCqGSM49BAMCA0kAMEYCIQC/xr7ceNGsaY2gxldGM3j2AXEj30DuDShHU5hYY9l3XQIhAPerO2YOa+V4ELqjEc+j8dSHvTiKioJCYgSeZOA16Lyo" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 0
+    }
+  }, {
+    "name" : "unusable-first-expired-revoking",
+    "about" : "An expired CRL that revokes, held first, decides nothing",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MTgwMDAwMDBaFw0yNjA1MzEwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQowCgYIKoZIzj0EAwIDSAAwRQIgEKU2gp11ngfUMhVojyzVasQTYjrZcyhRUIi/Gz0+L90CIQCOL40DF6AhYdP4fqqZL9Ft7ERR7/yiLoTxjda/C60Rng==", "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIQC7fw/ECxPY1h7r/3yZuSFY0ZyyVvzBVj7/adxUqnj4TgIgIEhzSN57OqmVazB0ovPero6gDsi/efXfLUY5uY3gPvI=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 1
+    }
+  }, {
+    "name" : "unusable-first-forged-revoking",
+    "about" : "A CRL signed by another key that revokes, held first, decides nothing",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQowCgYIKoZIzj0EAwIDSAAwRQIgTP3nRnjNB205AIIhHMEAeeugLf+ZUmc84Y1S50DkfwYCIQD+vhqUtAG0nncDSvNcXrs6gFgv46eN8gZjRJOFUOwiLA==", "MIHQMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCIH0YElhziuivHhTBmNCWL6TVfYv6gLEWkrAFjazaBLGnAiA4dIG7zUx57r7wNF90miQ3YxaS3SVFkJAKXsuMdZKlog==" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 1
+    }
+  }, {
+    "name" : "unusable-first-silent-delta",
+    "about" : "A delta CRL that does not list it, held first, decides nothing",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHhMIGIAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaoB0wGzAKBgNVHRQEAwIBAjANBgNVHRsBAf8EAwIBATAKBggqhkjOPQQDAgNIADBFAiEAgAU5MtiXeKQGiLuwVlPBiCH5TIVYkz4Au1TUwCDjh7ICIDTqbFFEoTmx5CVUB3KERxSYupQum/WJftH7mbBaIgRB", "MIHQMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCIGUp9/++JvGEri3T77w/94dr+dW5G/sddlZ5Tsqiaes5AiApqJx4uzQ4/SR7inMHhIbqlV5RNhKtANA5i5CPLfjKEA==" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 1
+    }
+  }, {
+    "name" : "newer-beyond-clock-skew-revoking",
+    "about" : "A revoking CRL issued beyond the clock skew is not used",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHQMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCIDHe/DEgt97Qp5TT+uPOfpCmr7RMdQv2o7dFx7TFnu6jAiBYJc5T+nCQ2Qb4rD6vkbH4RdftjPMhxicWsBuhfqwetA==", "MIH4MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA2MDEwMDA2MDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQowCgYIKoZIzj0EAwIDSQAwRgIhANb/8qbdnsPaj5n1vNbvyTVfrtKsz5UndtvxPbhLqzk4AiEAwZ+UsKgP5QKCBXRr4g6QD9M8Bg76P90ZXZceeKBZmjw=" ],
+    "expect" : {
+      "status" : "GOOD",
+      "reason" : null,
+      "crl" : 0
+    }
+  }, {
+    "name" : "newer-within-clock-skew-revoking",
+    "about" : "Within the clock skew it is",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIQCdr6119WLcFrf/M80Lb/PEWCYSjoFcp403wwFVitf0hwIgdC9sCTRFwlA2KoNHmADiLBEyk3ZnINVfEcCsqJPaebc=", "MIH4MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA2MDEwMDA0MDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQowCgYIKoZIzj0EAwIDSQAwRgIhAJC3lwQc84np2RtOCFimPPU3I4R5fOGk81xT1J+Phn5dAiEAlDGjrD+f71h8jEyd7IX7mKE+dv88ePA9yhyLmEGcW/M=" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 1
+    }
+  }, {
+    "name" : "newer-within-clock-skew-holds",
+    "about" : "A hold in a CRL issued within the clock skew is the newest",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHRMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0gAMEUCIQCfvFPj8HLzAhCmR4+2QbV6oPdYmPo2GmtHhGYATXAHTAIgZ7OlJtzRXbATMo/GiNaZ2S7L7kz111zmuwhzIfy62qY=", "MIH2MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA2MDEwMDA0MDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBBqAOMAwwCgYDVR0UBAMCAQowCgYIKoZIzj0EAwIDRwAwRAIgUddqG+DZZ4eZvSY0WbuJmnSKZCKm/UsbUPP2gCQKnHsCIEEFsir9a7laRgCcvtCQBMbto+JiKdojzKjI4NTtTFK2" ],
+    "expect" : {
+      "status" : "ON_HOLD",
+      "reason" : "certificateHold",
+      "crl" : 1
+    }
+  }, {
+    "name" : "old-without-next-update-and-a-current-revocation",
+    "about" : "An old CRL without a next update does not hide the revocation in a current one",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHBMGoCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUwMjAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0cAMEQCIC4pTRff6t+1c7kvN5Du18LdXjfNdmTLQg1KFGfqktI7AiAd9NHSQmkfkskG5iZtqUyWEWfK5Y4sGJBVA7/3zHE7XA==", "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBAaAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIhAOVuQc/cWTvX5+AHCL7/IrgKItX5PdT1UwmEEBSGaIazAiAXs59GGdk4+f90NgVPF9HptYJe5Dq39feb6Yn58H8V3g==" ],
+    "expect" : {
+      "status" : "REVOKED",
+      "reason" : "keyCompromise",
+      "crl" : 1
+    }
+  }, {
+    "name" : "remove-from-crl-in-newer-good-in-older",
+    "about" : "Not listed in the older CRL, removeFromCRL in the newer complete one: the newer decides, and proves nothing",
+    "certificate" : "leaf",
+    "issuer" : "ca",
+    "crls" : [ "MIHSMHkCAQEwCgYIKoZIzj0EAwIwOjEVMBMGA1UEAwwMQ1JMIENhc2VzIENBMRQwEgYDVQQKDAtDb25mb3JtYW5jZTELMAkGA1UEBhMCVVQXDTI2MDUyNjAwMDAwMFoXDTI2MDYwODAwMDAwMFqgDjAMMAoGA1UdFAQDAgEBMAoGCCqGSM49BAMCA0kAMEYCIQCc4HWN069ZXH5J8Ka9o3UJvIRqYjPwlVyIP2Y7QYcdSAIhAOVktA05pOU4UW6Cmpy4FgqsL8Xuko8LEOsfW45GF4ZU", "MIH3MIGeAgEBMAoGCCqGSM49BAMCMDoxFTATBgNVBAMMDENSTCBDYXNlcyBDQTEUMBIGA1UECgwLQ29uZm9ybWFuY2UxCzAJBgNVBAYTAlVUFw0yNjA1MzEyMzAwMDBaFw0yNjA2MDgwMDAwMDBaMCMwIQICEAEXDTI2MDUyMjAwMDAwMFowDDAKBgNVHRUEAwoBCKAOMAwwCgYDVR0UBAMCAQIwCgYIKoZIzj0EAwIDSAAwRQIgEuqzR2qiOOuXv+s1p04AqbM0TWlV9SAjq0TwDEP8Y5UCIQCrtIzAgfBYfiZHHxXA6xTBMsEG5NKxDWV9OjuwZOlLRQ==" ],
+    "expect" : {
+      "status" : "UNKNOWN",
+      "reason" : null,
+      "crl" : null
+    }
+  } ]
+}

@@ -49,6 +49,21 @@ After a deliberate change to the rules, regenerate and review the diff: every ch
 clients are told to trust. A port of the client to another language passes when it reproduces `expect` from
 `snapshots`.
 
+## `revocation/`: how a CRL is read
+
+`crl-cases.json` holds CRL situations, each a certificate, its issuer, the CRLs held for it in order (base64 DER) and
+the instant of the check, with the status it must have (for `REVOKED` and `ON_HOLD` the reason, and for every decided
+status the CRL that decided): delta CRLs, `removeFromCRL`, a serial number listed twice, entry extensions, issuing
+distribution point scopes, CRLs without a next update, clock skew, and several CRLs for one certificate (revoked or
+held in the older or the newer, ties, CRL numbers, an unusable CRL first). The device's rule (`checkRevocation`) is
+the one written down; `CrlCasesTest.java` (the service's `RevocationChecker`) and `crl-cases.test.ts` (the library)
+replay every case. The certificates and CRLs are built, and the expectations written by hand, in `CrlCasesTest`:
+
+```sh
+cd trust-server
+mvn test -pl trust-core -Dtest=CrlCasesTest -Dcrl.cases.update=true -Dsurefire.failIfNoSpecifiedTests=false   # rewrite the file
+```
+
 ## `pki/`: test certificates
 
 A test PKI (an IACA with Document Signers and a CRL, a CA for verifiers and SD-JWT VC issuers, an RSA chain, a chain

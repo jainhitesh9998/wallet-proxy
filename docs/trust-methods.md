@@ -249,22 +249,27 @@ own certificate is where the CA above it publishes, not where it does.
 ### How a status is decided
 
 A CRL counts for a certificate when the certificate's issuer issued and signed it, that issuer may sign CRLs, it is
-current (not issued in the future beyond five minutes of clock skew, not past its next update), it is a complete
-CRL (no delta or indirect CRLs, none partitioned by reason, no critical extension the code does not know), and its
-scope covers the certificate (its issuing distribution point, when it has one).
+current (not issued in the future beyond five minutes of clock skew, not past its next update, and when it states no
+next update, issued at most seven days ago), it can be evaluated (not indirect, also when only one of its entries names
+another certificate issuer; not partitioned by reason; no critical extension the code does not know, on the CRL or on
+any entry), and its scope covers the certificate. A CRL with an issuing distribution point covers only the certificates
+that name that point by URI, in a distribution point of theirs that covers every reason and names no other CRL issuer;
+a point the CRL names another way (a directory name, a name relative to the issuer) covers none.
 
 | Status | When | Reason code | Effect |
 | --- | --- | --- | --- |
-| `GOOD` | Such a CRL does not list the certificate | `x509.not_revoked` (info) | none |
-| `REVOKED` | It lists the certificate | `x509.revoked` | `NOT_TRUSTED` |
+| `GOOD` | A complete CRL does not list the certificate. A delta CRL is not a complete list, and neither is a CRL that lists a serial number more than once: what they do not list is not taken as good | `x509.not_revoked` (info) | none |
+| `REVOKED` | A CRL lists the certificate (a delta CRL too) | `x509.revoked` | `NOT_TRUSTED` |
 | `ON_HOLD` | It lists the certificate with reason `certificateHold` | `x509.on_hold` | `NOT_TRUSTED` until the hold is lifted |
-| `UNKNOWN` | No such CRL could be had: none is published, the download failed, the CA publishes only OCSP, or the CRL is of a kind that cannot be evaluated | `x509.revocation_unknown` | A warning; an error (`NOT_TRUSTED`) for a client profile with `require-revocation-status: true` |
+| `UNKNOWN` | No such CRL could be had: none is published, the download failed, the CA publishes only OCSP, or the CRL is of a kind that cannot be evaluated. Also when the CRL that decides lists the certificate with reason `removeFromCRL`: that lifts a hold only in a delta CRL read with its base, and delta CRLs are not combined with their base | `x509.revocation_unknown` | A warning; an error (`NOT_TRUSTED`) for a client profile with `require-revocation-status: true` |
 
-When several such CRLs count for a certificate (a client that sees two frameworks whose anchor records of one CA
-name different locations, say), a revocation in any of them stands, and otherwise the newest decides: the one
-issued last, by `thisUpdate` and then CRL number. The service and the device apply this rule alike. The device is stricter
-than the service in one place: a CRL that states no next update is used for seven days after it was issued, not
-indefinitely.
+A serial number that a CRL lists more than once counts with its gravest entry: a revocation over a hold, either over
+`removeFromCRL`. When several such CRLs count for a certificate (a client that sees two frameworks whose anchor
+records of one CA name different locations, say, or a complete CRL and a delta CRL), a revocation in any of them
+stands, and otherwise the newest decides (a hold, which can be lifted, counts only when the newest says it): the one
+issued last, by `thisUpdate` and then CRL number, and of two issued alike the first held. The service and the device
+read a CRL, and choose among several, alike; [shared cases](../conformance/README.md)
+(`conformance/revocation/crl-cases.json`) hold both to it.
 
 ### Try it
 
