@@ -315,10 +315,13 @@ An anchor entry has these:
 | `entity` | Text: the id of the entity of the same framework that a chain to this anchor is |
 | `certificate`, `certificates`, `certificateLocation`, `certificateJsonField` | As for an entity; at least one certificate is required |
 | `status` | As for an entity; an anchor that is not `ACTIVE` vouches for nothing |
-| `constraints` | An object. What the service reads from it must have its type: `docTypes` a list of doctypes, `crlUrls` a URL or a list of URLs, `crl` a CRL as text (PEM or base64 DER) |
+| `constraints` | An object. What the service reads from it must have its type: `docTypes` a list of doctypes, `crlUrls` a URL or a list of URLs, `crl` a CRL as text (PEM or base64 DER). One of these names written another way (`doctypes`, `DocTypes`, `doc_types`, `crl_urls`, `CRL`) cannot be read |
 
 `metadata`, `metadataPolicy`, `attributes`, an anchor's `constraints` and an authorization's `constraints` are
-free-form: their members are not checked, beyond the three of `constraints` above and that each has a value.
+free-form: their members are not checked, beyond the three of `constraints` above and that each has a value. In an
+anchor's `constraints`, a member whose name is `docTypes`, `crlUrls` or `crl` once case is ignored and `-` and `_` are
+removed, but is not written exactly so, is refused with the name the service reads: read as absent, `doctypes` would
+leave the CA valid for every doctype. Any other name is accepted.
 
 **Hash and key identifiers** are compared in the form the evaluators compute from a certificate or a key. Written
 another way, an entry would bind nothing, and a `REVOKED` one would never apply:
@@ -343,7 +346,7 @@ written: an entity written with `staus: REVOKED` would otherwise be active, and 
 `docTypes: org.iso.18013.5.1.mDL` (no brackets) valid for every doctype. An entry cannot be read when:
 
 - it has a member that is not in the tables above, or one of its identifiers, display entries, authorizations or
-  contexts has a member other than theirs;
+  contexts has a member other than theirs, or its `constraints` name `docTypes`, `crlUrls` or `crl` another way;
 - a member has another type than the tables give: `roles: [7]`, an identifier that is a number, a `status` that is a
   list, a date that is a number, `certificates` that is one certificate rather than a list of them;
 - a member is written without a value (`status:` with nothing after it);

@@ -136,6 +136,13 @@ class RegistryFormatTest {
         unreadable(anchor("constraints: {crlUrls: [7]}"), "'constraints.crlUrls[0]' must be a URL, not a number");
         unreadable(anchor("constraints: {crl: [x]}"), "'constraints.crl' must be a CRL (PEM or base64 DER), not a list");
         unreadable(anchor("constraints: {crl:}"), "'constraints.crl' has no value");
+        // constraints is free-form, but a member the service reads, written another way, would be read as absent.
+        for (String[] nearMiss : new String[][]{{"doctypes", "docTypes"}, {"DocTypes", "docTypes"}, {"doc_types", "docTypes"},
+                {"doc-types", "docTypes"}, {"DOC_TYPES", "docTypes"}, {"crlurls", "crlUrls"}, {"crl_urls", "crlUrls"}, {"CRL-URLs", "crlUrls"},
+                {"CRL", "crl"}, {"Crl", "crl"}, {"_crl", "crl"}}) {
+            unreadable(anchor("constraints: {\"" + nearMiss[0] + "\": [x]}"), "anchor 'ca' cannot be read: 'constraints." + nearMiss[0]
+                    + "' is written another way than '" + nearMiss[1] + "', the name the service reads");
+        }
         unreadable("entities:\n  - {id: acme}\n  - 7\n", "entity entities[1] cannot be read: it is not an object");
         unreadable("entities: {acme: {roles: [VERIFIER]}}\n", "'entities' must be a list, not an object");
         unreadable("anchors: 7\n", "'anchors' must be a list, not a number");
@@ -348,6 +355,33 @@ class RegistryFormatTest {
             ctx.put("mem:registry.yaml", registry("status: ACTIVE", "{docTypes: org.iso.18013.5.1.mDL}"));
             assertThat(sources.refresh("list").lastError()).contains("anchor 'iaca' cannot be read: 'constraints.docTypes' must be a list of doctypes");
             assertThat(decide(registry, sources, "eu.europa.ec.eudi.pid.1")).isEqualTo(Decision.NOT_TRUSTED);
+        }
+    }
+
+    @Test
+    void aDoctypeConstraintWrittenAnotherWayDoesNotLeaveTheAnchorUnconstrained() throws Exception {
+        // Other names stay free-form: only a near miss of a member the service reads is refused.
+        assertThat(load(anchor("constraints: {docType: x, doctype: x, crls: [x], crlUrl: x, serviceType: x, doc.types: x}")).anchors()).hasSize(1);
+
+        // Read as absent, "doctypes" made the IACA an anchor for every doctype: a PID under it was TRUSTED.
+        ctx.put("mem:registry.yaml", registry("status: ACTIVE", "{doctypes: [org.iso.18013.5.1.mDL]}"));
+        var registry = new TrustRegistry();
+        try (var sources = manager(registry)) {
+            sources.start();
+            assertThat(decide(registry, sources, "eu.europa.ec.eudi.pid.1")).isNotEqualTo(Decision.TRUSTED);
+            assertThat(sources.states().getFirst().lastError()).contains("anchor 'iaca' cannot be read: 'constraints.doctypes' is written another way than 'docTypes'");
+            assertThat(sources.ready()).isFalse();
+        }
+        // Loaded with the constraint first, the edit does not take it away.
+        ctx.put("mem:registry.yaml", registry("status: ACTIVE", "{docTypes: [org.iso.18013.5.1.mDL]}"));
+        var constrained = new TrustRegistry();
+        try (var sources = manager(constrained)) {
+            sources.start();
+            assertThat(decide(constrained, sources, "eu.europa.ec.eudi.pid.1")).isEqualTo(Decision.NOT_TRUSTED);
+            ctx.put("mem:registry.yaml", registry("status: ACTIVE", "{doctypes: [org.iso.18013.5.1.mDL]}"));
+            assertThat(sources.refresh("list").lastError()).contains("'constraints.doctypes'");
+            assertThat(decide(constrained, sources, "eu.europa.ec.eudi.pid.1")).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(decide(constrained, sources, "org.iso.18013.5.1.mDL")).isEqualTo(Decision.TRUSTED);
         }
     }
 

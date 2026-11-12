@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -47,7 +48,8 @@ import java.util.stream.Collectors;
  * active, the anchor unconstrained. A member written without a value ({@code status:}) is refused for the same
  * reason. What is free-form stays so: {@code metadata}, {@code metadataPolicy}, {@code attributes}, an anchor's
  * {@code constraints} and an authorization's {@code constraints} may hold any member, though the members of
- * {@code constraints} that the service reads ({@code docTypes}, {@code crlUrls}, {@code crl}) must have their type.
+ * {@code constraints} that the service reads ({@code docTypes}, {@code crlUrls}, {@code crl}) must have their type,
+ * and a name that is one of them written another way ({@code doctypes}, {@code crl_urls}) is refused.
  */
 public final class TrustedEntityParser {
 
@@ -66,6 +68,11 @@ public final class TrustedEntityParser {
     static final List<String> CONTEXT_MEMBERS = List.of("url", "sha256");
 
     private static final String CERTIFICATE = "a certificate (PEM or base64 DER)";
+    /**
+     * The members of an anchor's constraints the service reads, by their name in lower case without '-' and '_': a
+     * member whose name reads so but is not written exactly so is a near miss, and cannot be read.
+     */
+    private static final Map<String, String> READ_CONSTRAINTS = Map.of("doctypes", "docTypes", "crlurls", "crlUrls", "crl", "crl");
 
     private TrustedEntityParser() {
     }
@@ -335,6 +342,14 @@ public final class TrustedEntityParser {
         Map<String, Object> c = a.freeForm("constraints");
         if (c == null) {
             return null;
+        }
+        // Any other name is free, but one that is a member the service reads written another way ("doctypes",
+        // "crl_urls", "CRL") would be read as absent: the IACA valid for every doctype, the CRL location not used.
+        for (String name : c.keySet()) {
+            String read = READ_CONSTRAINTS.get(name.toLowerCase(Locale.ROOT).replace("-", "").replace("_", ""));
+            if (read != null && !read.equals(name)) {
+                throw a.fail("'constraints." + shown(name) + "' is written another way than '" + read + "', the name the service reads");
+            }
         }
         if (c.containsKey("docTypes")) {
             if (!(c.get("docTypes") instanceof List<?> l)) {
