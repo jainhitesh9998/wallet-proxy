@@ -367,10 +367,9 @@ public class TrustEvaluator {
             reasons.add(Reason.error("client_id.x509_hash_mismatch",
                     "x509_hash client_id does not match the SHA-256 hash of the leaf certificate"));
         }
-        // The question's own domain, unless the governing mechanism names the domain whose anchors count instead.
         TrustDomain questionDomain = domainFor(ev.role(), ev.format());
         TrustMechanism.X509 rule = ev.mechanism() == null ? null : ev.mechanism().x509();
-        TrustDomain domain = rule != null && rule.domain() != null ? TrustDomain.of(rule.domain()) : questionDomain;
+        TrustDomain domain = governingDomain(ev);
         List<TrustAnchor> anchors = ev.snap().anchors(domain).stream()
                 .filter(a -> ev.profile().accepts(a.frameworkId())).toList();
         // The built-in profile follows the question, also when its anchors are another domain's: a mechanism adds
@@ -406,6 +405,12 @@ public class TrustEvaluator {
                     "Leaf certificate has no SAN dNSName equal to the x509_san_dns client_id"));
         }
         return x509;
+    }
+
+    /** The domain whose anchors count: the question's own, unless the governing mechanism names another in its x509 block. */
+    private static TrustDomain governingDomain(Evaluation ev) {
+        TrustMechanism.X509 rule = ev.mechanism() == null ? null : ev.mechanism().x509();
+        return rule != null && rule.domain() != null ? TrustDomain.of(rule.domain()) : domainFor(ev.role(), ev.format());
     }
 
     /** Default trust domain for a role / format combination. */
@@ -520,6 +525,16 @@ public class TrustEvaluator {
             Instant now = ev.now();
             if (now.isBefore(leaf.getNotBefore().toInstant()) || now.isAfter(leaf.getNotAfter().toInstant())) {
                 ev.reasons().add(Reason.error("x509.pinned_expired", "The pinned certificate is not valid at " + now));
+            }
+            // A mechanism with an x509 block says which anchors count and what their chains must satisfy. A pin is no such
+            // anchor: accepted, it would bring the certificate past every one of those requirements, so that the
+            // mechanism would loosen what it is there to tighten. Certificate material binds an entity under such a
+            // mechanism only through a chain that validated to an anchor of the governing domain.
+            TrustMechanism m = ev.mechanism();
+            if (m != null && m.x509() != null) {
+                ev.reasons().add(Reason.error("mechanism.anchor_required", "Trust mechanism '" + m.id()
+                        + "' accepts a certificate only through a chain to an anchor of domain '" + governingDomain(ev)
+                        + "'; a pinned certificate does not replace the anchor"));
             }
         }
     }

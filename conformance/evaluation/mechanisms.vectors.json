@@ -2398,6 +2398,492 @@
         }
       },
       "sameAsFirstPair" : "issuer URL, authorized format and type"
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pins-revoked",
+          "errors" : [
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:GC1VDMhKxUwZDLobdM2xg7AOEU48DlKljJJwCCtRh2s"
+          ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pins-revoked",
+          "errors" : [
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:GC1VDMhKxUwZDLobdM2xg7AOEU48DlKljJJwCCtRh2s"
+          ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "pin: a revoked document signer an entity pins, for an mDL governed into the national-id domain",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICHjCCAcOgAwIBAgIJAJfHAMxXYYcXMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMDEwNDQ2MjFaFw00NTEyMzEwNDQ2MjFaMEAxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRwwGgYDVQQDDBNVdG9waWEgRFMgKHJldm9rZWQpMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs6gSBFHDywDmvem5UALNogsZic822hNfFaXlcRxveIL4f0sUtnB1uZY/fCMrOT8igyPtG84p3cpCt1XeI6gmiaOBrTCBqjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBTvNABBRIFi3n98OXzv9GGN1+E8OzAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAzBgNVHR8ELDAqMCigJqAkhiJodHRwOi8vY3JsLnV0b3BpYS5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQD8jmUSBO1SXmc2h8EnyP1V6Kw4OsstizY2g7jM5G3+dgIhANeLFh7cSb/VQ+RTlukYYFHoZY/4KfVzCDFrLJ2cougD"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pins-noeku",
+          "errors" : [
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:VFDAG-euSRTw23X7tUrindld0FgH-TTI8xHJVVY6uwc"
+          ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pins-noeku",
+          "errors" : [
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:VFDAG-euSRTw23X7tUrindld0FgH-TTI8xHJVVY6uwc"
+          ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "pin: a document signer without the mDL purpose, pinned by its hash, for an mDL governed into the national-id domain",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIBzDCCAXGgAwIBAgIJAKXc3jlGX7JVMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDwxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRgwFgYDVQQDDA9VdG9waWEgbm90LWEtRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQV6pca2Nh2+QuRNaRKLs4zCiR5geJDeNJ3ijJ+H9xDLik6/xfACGE/B9NFWiAfOyMLzyzNfpxO8VUqZYtWOq//o2AwXjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUyTPgxPmrufeGBK3d4KxiDGqrWcAwHwYDVR0jBBgwFoAUqHsWZVMT88NapzfT7R/CPnuJSmAwCgYIKoZIzj0EAwIDSQAwRgIhAOjUSn0TsqtfvbZeVdOYGoOdvWcdSCkSVwD9ZYklLGawAiEA9NJxBTwO3KxyJ4c4ZZgMCuV8PC4evKPiGsU9PQoDWvw="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pinned",
+          "errors" : [
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:tN_t5PNClQmQXDKHh7BxKMU08OuG9cmehE-moSn41fA"
+          ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pinned",
+          "errors" : [
+            "entity.not_authorized",
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:tN_t5PNClQmQXDKHh7BxKMU08OuG9cmehE-moSn41fA"
+          ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "pin: a pinned certificate under a mechanism with a profile and revocation required, no anchor of its domain",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.example.id.card",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIBnTCCAUSgAwIBAgIJAL7PD1dyxjoYMAoGCCqGSM49BAMCMDIxCzAJBgNVBAYTAlVUMQ0wCwYDVQQKDARFdmlsMRQwEgYDVQQDDAtFdmlsIElzc3VlcjAeFw0yNjExMDEwODQyNDZaFw0zNjEwMjkwODQyNDZaMDIxCzAJBgNVBAYTAlVUMQ0wCwYDVQQKDARFdmlsMRQwEgYDVQQDDAtFdmlsIElzc3VlcjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBXizugPCjuW19jsiSRsJLboyaSQmiDlIQ4i6UFI4D6O78RwmbLPOTXVMFny5lpo53530K71AgDx6yrbGjTR28qjQzBBMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMCEGA1UdEQQaMBiGFmh0dHBzOi8vaXNzdWVyLmV4YW1wbGUwCgYIKoZIzj0EAwIDRwAwRAIge5nH+yKD4k6wU5anTKBBPIZvgp8t/aDK54+MIuR4TnsCIGRUNw6njIW+wUz4/1QsOuNa+WSIDiny9dTkgZz7bnIn"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pinned",
+          "errors" : [
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:tN_t5PNClQmQXDKHh7BxKMU08OuG9cmehE-moSn41fA"
+          ],
+          "mechanism" : "diplomas",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pinned",
+          "errors" : [
+            "entity.not_authorized",
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:tN_t5PNClQmQXDKHh7BxKMU08OuG9cmehE-moSn41fA"
+          ],
+          "mechanism" : "diplomas",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "pin: the same pinned certificate under a mechanism that requires revocation in the default domain",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "credentialType" : "https://diploma.example/bachelor",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIBnTCCAUSgAwIBAgIJAL7PD1dyxjoYMAoGCCqGSM49BAMCMDIxCzAJBgNVBAYTAlVUMQ0wCwYDVQQKDARFdmlsMRQwEgYDVQQDDAtFdmlsIElzc3VlcjAeFw0yNjExMDEwODQyNDZaFw0zNjEwMjkwODQyNDZaMDIxCzAJBgNVBAYTAlVUMQ0wCwYDVQQKDARFdmlsMRQwEgYDVQQDDAtFdmlsIElzc3VlcjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBXizugPCjuW19jsiSRsJLboyaSQmiDlIQ4i6UFI4D6O78RwmbLPOTXVMFny5lpo53530K71AgDx6yrbGjTR28qjQzBBMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMCEGA1UdEQQaMBiGFmh0dHBzOi8vaXNzdWVyLmV4YW1wbGUwCgYIKoZIzj0EAwIDRwAwRAIge5nH+yKD4k6wU5anTKBBPIZvgp8t/aDK54+MIuR4TnsCIGRUNw6njIW+wUz4/1QsOuNa+WSIDiny9dTkgZz7bnIn"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-by-hash-client-id",
+          "errors" : [
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "CLIENT_ID:x509_hash:FLJPM3iNn_ygjgRPB-3lq9Uf9XJV61nRnZSzpqVS0_U"
+          ],
+          "mechanism" : "verifiers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-by-hash-client-id",
+          "errors" : [
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "CLIENT_ID:x509_hash:FLJPM3iNn_ygjgRPB-3lq9Uf9XJV61nRnZSzpqVS0_U"
+          ],
+          "mechanism" : "verifiers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "pin: a verifier registered by its x509_hash client_id, governed by a mechanism with an x509 block",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp",
+          "responseUri" : "https://verifier.example/post"
+        },
+        "role" : "verifier",
+        "subject" : {
+          "identifier" : "x509_hash:FLJPM3iNn_ygjgRPB-3lq9Uf9XJV61nRnZSzpqVS0_U",
+          "x5c" : [
+            "MIIBsjCCAVigAwIBAgIJANVygxOXjjiGMAoGCCqGSM49BAMCMD8xCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxWZXJpZmllciBJbmMxGTAXBgNVBAMMEHZlcmlmaWVyLmV4YW1wbGUwHhcNMjYxMTAxMDg0MjQ2WhcNMzYxMDI5MDg0MjQ2WjA/MQswCQYDVQQGEwJVVDEVMBMGA1UECgwMVmVyaWZpZXIgSW5jMRkwFwYDVQQDDBB2ZXJpZmllci5leGFtcGxlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGk7YAX9eBFv+Hyl3fXf4NEdNRTUY2KHlYN8/oelpmSUYWHz6Kl7Tg1HvbIUuIASyzIpeR1v60T1aqR5PZX6tXKM9MDswDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwGwYDVR0RBBQwEoIQdmVyaWZpZXIuZXhhbXBsZTAKBggqhkjOPQQDAgNIADBFAiEAoO2+TJW0VclNQMFvIW6jCeCjmP4au3cOb4tyIi7sFcsCICSAMCgT2oho3wezGgT+Uq5ZIB+V8mbJXpN1MahJoL8u"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-pins-national",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:5GXjlRiLAvoYFl6xHewtstKiEGe0pwEz746bR1YqWNo"
+          ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-pins-national",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:5GXjlRiLAvoYFl6xHewtstKiEGe0pwEz746bR1YqWNo"
+          ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        }
+      },
+      "name" : "pin: a pinned certificate that also chains to an anchor of the governing domain",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.example.id.card",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICQzCCAeigAwIBAgIJAN3XWWlA5zJvMAoGCCqGSM49BAMCMEUxCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1VdG9waWEgTmF0aW9uMR4wHAYDVQQDDBVVdG9waWEgTmF0aW9uYWwgSUQgQ0EwHhcNMjYxMTEyMDUyOTQzWhcNNDYwMTExMDUyOTQzWjBXMQswCQYDVQQGEwJVVDEWMBQGA1UECgwNVXRvcGlhIE5hdGlvbjEwMC4GA1UEAwwnTmF0aW9uYWwgSUQgc2lnbmVyIHBpbm5lZCBieSBpdHMgaG9sZGVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZN9VXU1caKTw3DKUjUKP6ZJzBYJqx00O5+Ss6PMKgw2TrCxYEvrb7cLs0ZTnl+yaBhsX+ZLPz2d0OnP6jkPK2KOBrjCBqzAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAYBgNVHSUBAf8EDjAMBgorBgEEAYaNHwEBMB0GA1UdDgQWBBSzQLItGzLSpI+VeC4JUREpG+dosTAfBgNVHSMEGDAWgBS7PxVbiTH810zhT42urL0tFTZeqjAxBgNVHR8EKjAoMCagJKAihiBodHRwOi8vY3JsLm5hdGlvbi5leGFtcGxlL2lkLmNybDAKBggqhkjOPQQDAgNJADBGAiEAxQ4CY3moqyZIdN13Ffb/FxIgKGNGZo/8Ll7B00wmVD4CIQC+w9A1f4jj/QgOIuRuS9DoHXT45rV0PCd+lb7k4htIBg=="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pins-national",
+          "errors" : [
+            "entity.not_authorized",
+            "mdoc.ds.eku",
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:5GXjlRiLAvoYFl6xHewtstKiEGe0pwEz746bR1YqWNo"
+          ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-pins-national",
+          "errors" : [
+            "entity.not_authorized",
+            "mdoc.ds.eku",
+            "mechanism.anchor_required"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_SHA256:5GXjlRiLAvoYFl6xHewtstKiEGe0pwEz746bR1YqWNo"
+          ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "pin: the same certificate for an mDL governed into the national-id domain: the mDL profile still applies",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICQzCCAeigAwIBAgIJAN3XWWlA5zJvMAoGCCqGSM49BAMCMEUxCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1VdG9waWEgTmF0aW9uMR4wHAYDVQQDDBVVdG9waWEgTmF0aW9uYWwgSUQgQ0EwHhcNMjYxMTEyMDUyOTQzWhcNNDYwMTExMDUyOTQzWjBXMQswCQYDVQQGEwJVVDEWMBQGA1UECgwNVXRvcGlhIE5hdGlvbjEwMC4GA1UEAwwnTmF0aW9uYWwgSUQgc2lnbmVyIHBpbm5lZCBieSBpdHMgaG9sZGVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZN9VXU1caKTw3DKUjUKP6ZJzBYJqx00O5+Ss6PMKgw2TrCxYEvrb7cLs0ZTnl+yaBhsX+ZLPz2d0OnP6jkPK2KOBrjCBqzAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAYBgNVHSUBAf8EDjAMBgorBgEEAYaNHwEBMB0GA1UdDgQWBBSzQLItGzLSpI+VeC4JUREpG+dosTAfBgNVHSMEGDAWgBS7PxVbiTH810zhT42urL0tFTZeqjAxBgNVHR8EKjAoMCagJKAihiBodHRwOi8vY3JsLm5hdGlvbi5leGFtcGxlL2lkLmNybDAKBggqhkjOPQQDAgNJADBGAiEAxQ4CY3moqyZIdN13Ffb/FxIgKGNGZo/8Ll7B00wmVD4CIQC+w9A1f4jj/QgOIuRuS9DoHXT45rV0PCd+lb7k4htIBg=="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "mdoc.ds.is_ca",
+            "mdoc.ds.key_usage",
+            "profile.crl_distribution_point",
+            "profile.extended_key_usage",
+            "profile.key_usage",
+            "profile.leaf_is_ca",
+            "profile.validity"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "mdoc.ds.is_ca",
+            "mdoc.ds.key_usage",
+            "profile.crl_distribution_point",
+            "profile.extended_key_usage",
+            "profile.key_usage",
+            "profile.leaf_is_ca",
+            "profile.validity"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "pin: a certificate listed as an anchor of the governing domain itself is held to the mechanism's profile",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.example.id.card",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIIBxjCCAWygAwIBAgIJAKxhVEX1ALWhMAoGCCqGSM49BAMCMEUxCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1VdG9waWEgTmF0aW9uMR4wHAYDVQQDDBVVdG9waWEgTmF0aW9uYWwgSUQgQ0EwHhcNMjYxMTEyMDQxMTI0WhcNNDYxMTA3MDQxMTI0WjBFMQswCQYDVQQGEwJVVDEWMBQGA1UECgwNVXRvcGlhIE5hdGlvbjEeMBwGA1UEAwwVVXRvcGlhIE5hdGlvbmFsIElEIENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEL8EQhSSNjEQ5pTBNPKM5eZsJ0m3Vk2XOKdss//T5s1RR0aM1QsRscWknZnQ6trK07s4yPCp43EgZXLo5F9T3RaNFMEMwEgYDVR0TAQH/BAgwBgEB/wIBATAOBgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFLs/FVuJMfzXTOFPja6svS0VNl6qMAoGCCqGSM49BAMCA0gAMEUCIFgAh93rUqrbeiiWHB34S8PjxLjJrk5rJi+GKkysiyhPAiEAvSgYcn4rE1TlxpsBqs2sgArKXehhTWLrp4kH4Ye5NMU="
+          ]
+        }
+      }
     }
   ],
   "description" : "Generated by MechanismVectorsTest from mechanisms.cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",
@@ -2931,6 +3417,126 @@
           ],
           "frameworkId" : "vectors",
           "id" : "vec-pinned",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.example.id.card"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Pins a national ID signer by its hash"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pins-national",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "5GXjlRiLAvoYFl6xHewtstKiEGe0pwEz746bR1YqWNo"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Pins a Document Signer by its hash"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pins-noeku",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "VFDAG-euSRTw23X7tUrindld0FgH-TTI8xHJVVY6uwc"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIICHjCCAcOgAwIBAgIJAJfHAMxXYYcXMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMDEwNDQ2MjFaFw00NTEyMzEwNDQ2MjFaMEAxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRwwGgYDVQQDDBNVdG9waWEgRFMgKHJldm9rZWQpMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs6gSBFHDywDmvem5UALNogsZic822hNfFaXlcRxveIL4f0sUtnB1uZY/fCMrOT8igyPtG84p3cpCt1XeI6gmiaOBrTCBqjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBTvNABBRIFi3n98OXzv9GGN1+E8OzAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAzBgNVHR8ELDAqMCigJqAkhiJodHRwOi8vY3JsLnV0b3BpYS5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQD8jmUSBO1SXmc2h8EnyP1V6Kw4OsstizY2g7jM5G3+dgIhANeLFh7cSb/VQ+RTlukYYFHoZY/4KfVzCDFrLJ2cougD",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2045-12-31T04:46:21Z",
+              "notBefore" : "2026-11-01T04:46:21Z",
+              "serialNumber" : "97c700cc57618717",
+              "sha256" : "GC1VDMhKxUwZDLobdM2xg7AOEU48DlKljJJwCCtRh2s",
+              "subject" : "CN=Utopia DS (revoked),O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "7zQAQUSBYt5_fDl87_RhjdfhPDs"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Pins a revoked Document Signer"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pins-revoked",
           "identifiers" : [ ],
           "metadataTypes" : [ ],
           "provenance" : {
@@ -3878,6 +4484,126 @@
           ],
           "frameworkId" : "vectors",
           "id" : "vec-pinned",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.example.id.card"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Pins a national ID signer by its hash"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pins-national",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "5GXjlRiLAvoYFl6xHewtstKiEGe0pwEz746bR1YqWNo"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Pins a Document Signer by its hash"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pins-noeku",
+          "identifiers" : [
+            {
+              "type" : "X509_SHA256",
+              "value" : "VFDAG-euSRTw23X7tUrindld0FgH-TTI8xHJVVY6uwc"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "CREDENTIAL_ISSUER"
+          ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [
+            {
+              "constraints" : { },
+              "format" : "mso_mdoc",
+              "type" : "org.iso.18013.5.1.mDL"
+            }
+          ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "qHsWZVMT88NapzfT7R_CPnuJSmA",
+              "ca" : false,
+              "certificate" : "MIICHjCCAcOgAwIBAgIJAJfHAMxXYYcXMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjExMDEwNDQ2MjFaFw00NTEyMzEwNDQ2MjFaMEAxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRwwGgYDVQQDDBNVdG9waWEgRFMgKHJldm9rZWQpMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs6gSBFHDywDmvem5UALNogsZic822hNfFaXlcRxveIL4f0sUtnB1uZY/fCMrOT8igyPtG84p3cpCt1XeI6gmiaOBrTCBqjAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBTvNABBRIFi3n98OXzv9GGN1+E8OzAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAzBgNVHR8ELDAqMCigJqAkhiJodHRwOi8vY3JsLnV0b3BpYS5leGFtcGxlL2lhY2EuY3JsMAoGCCqGSM49BAMCA0kAMEYCIQD8jmUSBO1SXmc2h8EnyP1V6Kw4OsstizY2g7jM5G3+dgIhANeLFh7cSb/VQ+RTlukYYFHoZY/4KfVzCDFrLJ2cougD",
+              "dnsNames" : [ ],
+              "issuer" : "CN=Utopia IACA,O=Utopia DMV,C=UT",
+              "notAfter" : "2045-12-31T04:46:21Z",
+              "notBefore" : "2026-11-01T04:46:21Z",
+              "serialNumber" : "97c700cc57618717",
+              "sha256" : "GC1VDMhKxUwZDLobdM2xg7AOEU48DlKljJJwCCtRh2s",
+              "subject" : "CN=Utopia DS (revoked),O=Utopia DMV,C=UT",
+              "subjectKeyIdentifier" : "7zQAQUSBYt5_fDl87_RhjdfhPDs"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Pins a revoked Document Signer"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-pins-revoked",
           "identifiers" : [ ],
           "metadataTypes" : [ ],
           "provenance" : {

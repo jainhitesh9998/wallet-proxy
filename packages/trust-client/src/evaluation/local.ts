@@ -173,6 +173,8 @@ interface Evaluation {
 }
 const hasDidKey = (ev: Evaluation) => !!ev.query.subject.kid?.startsWith('did:');
 const hasJwk = (ev: Evaluation) => Object.keys(ev.query.subject.jwk ?? {}).length > 0;
+/** The domain whose anchors count: the question's own, unless the governing mechanism names another in its x509 block. */
+const governingDomain = (ev: Evaluation) => ev.mechanism?.x509?.domain ?? domainFor(ev.role, ev.format);
 
 /**
  * What the query claims. Its identifiers are only claimed by the identifier; those of the KeyProof are proven by the
@@ -371,10 +373,9 @@ export class LocalEvaluator {
     if (claim.expectedHash !== undefined && claim.expectedHash !== leaf.sha256) {
       reasons.push(error('client_id.x509_hash_mismatch', 'x509_hash client_id does not match the SHA-256 hash of the leaf certificate'));
     }
-    // The question's own domain, unless the governing mechanism names the domain whose anchors count instead.
     const questionDomain = domainFor(ev.role, ev.format);
     const rule = ev.mechanism?.x509;
-    const domain = rule?.domain ?? questionDomain;
+    const domain = governingDomain(ev);
     const anchors = ev.data.anchors.filter((a) => a.domain === domain);
     // The built-in profile follows the question (profileDomain), also when its anchors are another domain's: a mechanism
     // adds requirements on top of it and never takes one away.
@@ -495,6 +496,15 @@ export class LocalEvaluator {
       const { now } = ev;
       if (now < leaf.notBefore || now > leaf.notAfter) {
         ev.reasons.push(error('x509.pinned_expired', `The pinned certificate is not valid at ${now.toISOString()}`));
+      }
+      // A mechanism with an x509 block says which anchors count and what their chains must satisfy. A pin is no such
+      // anchor: accepted, it would bring the certificate past every one of those requirements, so that the mechanism
+      // would loosen what it is there to tighten. Certificate material binds an entity under such a mechanism only through
+      // a chain that validated to an anchor of the governing domain.
+      const m = ev.mechanism;
+      if (m?.x509) {
+        ev.reasons.push(error('mechanism.anchor_required', `Trust mechanism '${m.id}' accepts a certificate only through a chain to an anchor of `
+          + `domain '${governingDomain(ev)}'; a pinned certificate does not replace the anchor`));
       }
     }
   }

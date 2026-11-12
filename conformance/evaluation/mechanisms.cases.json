@@ -1,5 +1,5 @@
 {
-  "description": "Cases for the two trust evaluators under an operator's trust mechanisms (TrustMechanisms.java, evaluation/mechanisms.ts). The registry is that of cases.json with one more anchor, of a trust domain of the operator's naming; 'mechanisms' is trust.mechanisms as an operator writes it. References to conformance/pki as in cases.json. A case with 'sameAsFirstPair' asks a question of cases.json and must be decided as it is there (the mechanism aside). mechanisms.vectors.json is generated from this file by the service: see conformance/README.md.",
+  "description": "Cases for the two trust evaluators under an operator's trust mechanisms (TrustMechanisms.java, evaluation/mechanisms.ts). The registry is that of cases.json with one more anchor, of a trust domain of the operator's naming, and three more entities that pin a certificate (vec-pins-*); 'mechanisms' is trust.mechanisms as an operator writes it. References to conformance/pki as in cases.json. A case with 'sameAsFirstPair' asks a question of cases.json and must be decided as it is there (the mechanism aside). mechanisms.vectors.json is generated from this file by the service: see conformance/README.md.",
   "registry": {
     "anchors": {
       "vec-iaca": {
@@ -287,6 +287,57 @@
           {
             "type": "X509_SUBJECT",
             "value": "subject:rsa-leaf"
+          }
+        ]
+      },
+      "vec-pins-revoked": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Pins a revoked Document Signer",
+        "certificates": [
+          "pem:ds-revoked"
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-pins-noeku": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Pins a Document Signer by its hash",
+        "identifiers": [
+          {
+            "type": "X509_SHA256",
+            "value": "sha256:ds-noeku"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.iso.18013.5.1.mDL"
+          }
+        ]
+      },
+      "vec-pins-national": {
+        "roles": [
+          "CREDENTIAL_ISSUER"
+        ],
+        "name": "Pins a national ID signer by its hash",
+        "identifiers": [
+          {
+            "type": "X509_SHA256",
+            "value": "sha256:nid-pinned"
+          }
+        ],
+        "authorizations": [
+          {
+            "format": "mso_mdoc",
+            "type": "org.example.id.card"
           }
         ]
       }
@@ -1172,6 +1223,134 @@
         }
       },
       "sameAsFirstPair": "issuer URL, authorized format and type"
+    },
+    {
+      "name": "pin: a revoked document signer an entity pins, for an mDL governed into the national-id domain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-revoked"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "pin: a document signer without the mDL purpose, pinned by its hash, for an mDL governed into the national-id domain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:ds-noeku"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "pin: a pinned certificate under a mechanism with a profile and revocation required, no anchor of its domain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:selfsigned-issuer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "pin: the same pinned certificate under a mechanism that requires revocation in the default domain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:selfsigned-issuer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt",
+          "credentialType": "https://diploma.example/bachelor"
+        }
+      }
+    },
+    {
+      "name": "pin: a verifier registered by its x509_hash client_id, governed by a mechanism with an x509 block",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "identifier": "x509_hash:sha256:selfsigned-verifier",
+          "x5c": [
+            "pki:selfsigned-verifier"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "pin: a pinned certificate that also chains to an anchor of the governing domain",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-pinned"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "pin: the same certificate for an mDL governed into the national-id domain: the mDL profile still applies",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-pinned"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "pin: a certificate listed as an anchor of the governing domain itself is held to the mechanism's profile",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-ca"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
     }
   ]
 }

@@ -342,6 +342,16 @@ How mechanisms apply:
   switches a built-in check off. The built-in profile follows the question (its role and format: an mDL signer still
   needs the mDL extended key usage), also when `x509.domain` names a domain of your own; see the table in
   [X.509 chains](trust-methods.md#x509-chains).
+- **The governing domain's anchors, and nothing else.** Under a mechanism with an `x509` block, a certificate counts
+  only through a chain that validates to an anchor of the governing domain (`x509.domain`, or the question's default
+  domain when the block names none). A chain outside that domain is `UNKNOWN` (`x509.no_anchor`), whatever the
+  default domain would have said about it: trusted, revoked or anything else. A pin does not replace the anchor: an
+  entity that lists the certificate (`certificates`, an `X509_SHA256` identifier, an `x509_hash` client identifier)
+  is not found through the pin alone, and the answer is `NOT_TRUSTED` (`mechanism.anchor_required`), because the pin
+  would bring the certificate past the mechanism's profile and revocation rule. A pinned certificate that also chains to
+  an anchor of the governing domain is accepted, under every requirement. A certificate that is itself an anchor of
+  the governing domain validates as before, and the mechanism's profile applies to it. A mechanism without an `x509`
+  block changes nothing about pins.
 - **Nothing is ignored.** The service reads `trust.mechanisms` at startup and refuses to start on an unknown member
   (member names are kebab-case, as everywhere under `trust.*`), an unknown value, a duplicate id, an empty list or
   block, or a member that would never apply (an `x509` block when `keys` does not accept `x5c`, a `did` block when it
@@ -354,6 +364,7 @@ How mechanisms apply:
 | --- | --- |
 | `mechanism.key_not_accepted` | The key is presented in a way the governing mechanism's `keys` does not list: `NOT_TRUSTED` |
 | `mechanism.did_method_not_accepted` | A DID key of a method the governing mechanism's `did.methods` does not list: `NOT_TRUSTED` |
+| `mechanism.anchor_required` | A certificate an entity pins, without a chain to an anchor of the governing domain, under a mechanism with an `x509` block: `NOT_TRUSTED` |
 | `profile.leaf_is_ca`, `profile.key_usage`, `profile.extended_key_usage`, `profile.country`, `profile.validity`, `profile.crl_distribution_point`, `profile.path_length` | A member of `x509.profile` is not met (table above): `NOT_TRUSTED` |
 | `x509.revocation_unknown` | With `revocation: required`, an error for every client, not only one with `require-revocation-status` |
 | `x509.no_anchor` | No anchor of the governing domain issued the chain: `UNKNOWN`, also when the default domain lists its CA |

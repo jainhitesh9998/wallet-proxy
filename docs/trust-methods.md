@@ -556,7 +556,11 @@ anchors:
    DID key of a method `did.methods` does not list (`mechanism.did_method_not_accepted`). An identifier alone is still
    a registry lookup.
 3. **The anchors.** The anchors of `x509.domain` count, and only those: a chain to an anchor of the default domain is
-   `UNKNOWN` for a governed question (`x509.no_anchor`).
+   `UNKNOWN` for a governed question (`x509.no_anchor`), whatever the default domain would have said about it. A pin
+   does not replace the anchor: under a mechanism with an `x509` block, a certificate that an entity lists
+   (`certificates`, an `X509_SHA256` identifier, an `x509_hash` client identifier) counts only when it also chains to
+   an anchor of the governing domain, and is `NOT_TRUSTED` otherwise (`mechanism.anchor_required`). Without
+   `x509.domain`, the governing domain is the question's default one.
 4. **The certificate.** The built-in profile of the question applies (the table in [X.509 chains](#x509-chains)), and
    the mechanism's profile on top, one code per member (`profile.*`).
 5. **Revocation.** With `revocation: required`, an unknown status is an error for every client.
