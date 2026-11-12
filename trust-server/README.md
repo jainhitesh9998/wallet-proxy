@@ -25,11 +25,17 @@ API: [`docs/openapi.json`](../docs/openapi.json), or `/swagger-ui.html` on a run
 | `GET /api/v1/proxy/context?url=` | JSON-LD context relay, byte for byte; neither signed nor vouched for (the device checks the digest its snapshot carries) |
 | `GET /api/v1/frameworks`, `/issuers`, `/verifiers`, `/entities/lookup` | The registry as the client may see it; on-demand lookup of unlisted parties |
 | `POST /api/v1/evaluate` | The service's own decision, for verifier backends; the reference the client library is checked against |
-| `/admin/v1/**` | Sources, registry, anchor CRLs, managed entities and anchors, caches (admin clients) |
+| `/admin/v1/**` | Sources, registry, anchor CRLs (`GET /admin/v1/crls`), managed entities and anchors, caches (admin clients) |
 
 Configuration: [`docs/configuration.md`](../docs/configuration.md). How it works: [`docs/architecture.md`](../docs/architecture.md).
-Method by method (X.509 chains, CRLs, status lists, DIDs), with an example configuration to run:
-[`docs/trust-methods.md`](../docs/trust-methods.md).
+Method by method (X.509 chains, CRLs, status lists, DIDs, trust mechanisms of your own), with an example configuration
+to run: [`docs/trust-methods.md`](../docs/trust-methods.md).
+
+An operator's own rules for classes of questions (which proof of key is accepted, which anchors count, what the
+certificate must look like, whether its revocation status must be known) are
+[trust mechanisms](../docs/configuration.md#trust-mechanisms), `trust.mechanisms`. The evaluator applies them, and the
+snapshot carries them (format 5) so that the client library applies them alike; the service does not start with one it
+cannot read exactly.
 
 ## Adding a trust list format
 
@@ -44,4 +50,6 @@ Method by method (X.509 chains, CRLs, status lists, DIDs), with an example confi
 
 `mvn test` runs unit tests of the rules, the adapters against sample lists, and integration tests of the running
 application. `EvaluationVectorsTest` regenerates [`conformance/evaluation/vectors.json`](../conformance) from the
-cases and fails when the checked-in file differs; see [`conformance/README.md`](../conformance/README.md).
+cases and fails when the checked-in file differs; `MechanismVectorsTest` does the same for the second pair,
+`mechanisms.vectors.json` from `mechanisms.cases.json`, with the trust mechanisms that file states. See
+[`conformance/README.md`](../conformance/README.md).

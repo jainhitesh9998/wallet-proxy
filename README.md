@@ -71,7 +71,8 @@ decided: [Trust methods](docs/trust-methods.md).
   when things fail, the security model, the evidence of conformance.
 - [Configuration guide](docs/configuration.md): the service, the client library, the wallet core.
 - [Trust methods](docs/trust-methods.md): X.509 chains, CRLs, status lists, DIDs, issuer metadata and JSON-LD
-  contexts, one by one: what the operator lists, what the device checks, and an example to run.
+  contexts, one by one, and trust mechanisms of the operator's own: what the operator lists, what the device checks,
+  and an example to run.
 - [API description](docs/openapi.json) (also served at `/swagger-ui.html`).
 
 ## Repository
@@ -163,8 +164,8 @@ scripts/test-all.sh               # plus the live suites (needs the internet and
 
 | Suite | What it covers | Needs |
 | --- | --- | --- |
-| `trust-server` (JUnit) | Evaluator, X.509 and CRLs, DID drivers, list adapters, API, authentication, caches; generates and checks the evaluation vectors | nothing |
-| `packages/trust-client` (Vitest) | The client: snapshot handling, proxy and fallback, strict parsers, the evaluation vectors | nothing |
+| `trust-server` (JUnit) | Evaluator, X.509 and CRLs, DID drivers, list adapters, API, authentication, caches; generates and checks the evaluation vectors, and the second pair under trust mechanisms | nothing |
+| `packages/trust-client` (Vitest) | The client: snapshot handling, proxy and fallback, strict parsers, the evaluation vectors and the second pair under trust mechanisms | nothing |
 | `packages/trust-client`, x509-limbo | X.509 path validation against the C2SP limbo suite | `LIMBO_JSON=$(sh packages/trust-client/scripts/fetch-limbo.sh)` |
 | `test-ecosystem` (Vitest) | The reference issuer and verifier against their own third-party clients | nothing |
 | `packages/wallet-core` (Vitest) | Strict credential verification, OpenID4VCI / OpenID4VP flows, the wallet against the reference ecosystem, credentials real issuers issued | nothing |

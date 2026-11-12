@@ -9,7 +9,7 @@ The client library of [Wallet Proxy](../../README.md): how a wallet or verifier 
   that does not verify, the library uses the standard mechanism of the specification instead.
 - **No service, no trust by accident.** Without a usable snapshot only what the app pins decides; with nothing
   pinned, the answer is `UNKNOWN`. The rules do not lapse with the snapshot: the app's own minimum and the client
-  profile of the last snapshot that verified stay in force.
+  profile and trust mechanisms of the last snapshot that verified stay in force.
 
 TypeScript, ES modules. Runs in Node 20+, browsers and React Native (Hermes). It depends on `@noble/curves`,
 `@noble/hashes` and `fflate` only: CBOR, DER, X.509, CRL and JOSE handling are its own and strict.
@@ -54,7 +54,8 @@ A decision is `TRUSTED`, `NOT_TRUSTED` or `UNKNOWN`, with:
 - `reasons`: codes with a severity and a message (`x509.revoked`, `identifier.unbound`, `entity.not_authorized`, ...);
 - `entity` and `framework`: who the registry says it is;
 - `evidence`: the path validation result, the revocation status of every certificate, DID checks,
-  `trusted_authorities` matches;
+  `trusted_authorities` matches, and the trust mechanism that governed the question (`mechanism`, absent when none
+  did);
 - `source`: `snapshot` or `pinned`, and the snapshot it was made from; `snapshot.stale` when that snapshot has
   expired and could not be refreshed.
 
@@ -66,6 +67,14 @@ describes them. Two of them matter to every caller:
   knows, or to someone else, is `NOT_TRUSTED`.
 - **Identifiers are compared exactly.** `https://issuer.example.org` and `https://issuer.example.org/` are
   different issuers, as OpenID4VCI and RFC 8414 say.
+
+An operator can add rules of its own: [trust mechanisms](../../docs/configuration.md#trust-mechanisms), each for a
+class of questions (which proof of key is accepted, which anchors count, what the certificate must look like, whether
+its revocation status must be known). They travel in the snapshot (format 5), and the library applies them as the
+service does. It refuses a snapshot whose mechanisms it cannot read exactly, as a library from before mechanisms
+refuses every format 5 snapshot: update apps before the operator configures the first one. The option `mechanisms`
+states the app's own, in the form of the snapshot claim (camelCase), and holds only while no snapshot has ever
+verified (with the same `storage`): once one has, its list is in force, also when it is empty.
 
 ## Look up
 
@@ -99,10 +108,13 @@ a `credential_issuer` identical to the one asked for, https.
 ```ts
 const s = await trust.status();
 // { service: 'online' | 'offline' | 'unconfigured', snapshot: { id, issuedAt, expiresAt, stale, entities, anchors, ... } | null,
-//   lastSyncError?, degraded, rules: { requireRevocationStatus, strictAuthorization, requireSignedIssuerMetadata } }
+//   lastSyncError?, degraded, rules: { requireRevocationStatus, strictAuthorization, requireSignedIssuerMetadata },
+//   mechanisms: [{ id, for, keys?, x509?, did? }, ...] }
 trust.onStatusChange((e) => ...);
 await trust.sync();          // refresh the snapshot now
 ```
+
+`rules` and `mechanisms` are what decisions are made under now, in the order the mechanisms are tried.
 
 The snapshot is refreshed in the background (hourly by default; after a failure, not more often than every 30 s),
 never replaced by an older one, and usable for a grace period after it expires (7 days by default), during which
@@ -123,4 +135,6 @@ LIMBO_JSON="$(sh scripts/fetch-limbo.sh)" npx vitest run test/x509-limbo.conform
 ```
 
 `test/vectors.test.ts` runs the queries of `conformance/evaluation/vectors.json` through the client and compares
-with what the service decided: any difference between the two evaluators fails it.
+with what the service decided: any difference between the two evaluators fails it. It does the same with the second
+pair, `mechanisms.vectors.json`, decided by a service with trust mechanisms, where the mechanism that governed each
+query must match too.
