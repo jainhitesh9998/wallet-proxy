@@ -421,8 +421,11 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             return result;
         }
 
-        /** The status and validity a list states for one id: of its strictest record, when it has several. */
-        private record Standing(EntityStatus status, Instant validFrom, Instant validUntil) {
+        /**
+         * The status and validity a list states for one id: of its strictest record, when it has several; and whether a
+         * record of it names no role and is not in good standing, which withdraws the party for every role.
+         */
+        private record Standing(EntityStatus status, Instant validFrom, Instant validUntil, boolean withdrawsEveryRole) {
         }
 
         /** What a loaded list says of each of its ids, and the list's facts, by which a list older than it is told. */
@@ -442,9 +445,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             Map<String, Standing> ids = new java.util.HashMap<>();
             for (TrustedEntity e : result.entities()) {
-                ids.merge(e.id(), new Standing(e.status(), e.validFrom(), e.validUntil()), (a, b) -> new Standing(
-                        b.status().ordinal() > a.status().ordinal() ? b.status() : a.status(), later(a.validFrom(), b.validFrom()),
-                        earlier(a.validUntil(), b.validUntil())));
+                ids.merge(e.id(), new Standing(e.status(), e.validFrom(), e.validUntil(), e.roles().isEmpty() && !e.status().isUsable()),
+                        (a, b) -> new Standing(b.status().ordinal() > a.status().ordinal() ? b.status() : a.status(),
+                                later(a.validFrom(), b.validFrom()), earlier(a.validUntil(), b.validUntil()),
+                                a.withdrawsEveryRole() || b.withdrawsEveryRole()));
             }
             listed = new Listed(result.listInfo(), Map.copyOf(ids));
         }
@@ -462,7 +466,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
          * the registry merges two entries of one id. The answer is about another identifier of the party than those the
          * list gives it (an identifier the list has is found in the registry, and not asked about), and would otherwise
          * stand alone: a party the list revokes would be trusted by its other identifiers. Applied whenever an answer is
-         * handed out, a remembered one too, so that a list loaded since holds it at once.
+         * handed out, a remembered one too, so that a list loaded since holds it at once. When the list's record names
+         * no role and is not in good standing, it withdraws the party for every role, and the answer then names none
+         * either (as the registry merges two such entries): with the answer's roles kept, a question of another role than
+         * those would leave the entry out, and the chain to the CA would decide.
          */
         private TrustedEntity heldToTheList(TrustedEntity answer) {
             Listed held = listed;
@@ -473,10 +480,12 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             EntityStatus status = s.status().ordinal() > answer.status().ordinal() ? s.status() : answer.status();
             Instant from = later(answer.validFrom(), s.validFrom());
             Instant until = earlier(answer.validUntil(), s.validUntil());
-            if (status == answer.status() && Objects.equals(from, answer.validFrom()) && Objects.equals(until, answer.validUntil())) {
+            boolean roleless = s.withdrawsEveryRole() && !answer.roles().isEmpty();
+            if (status == answer.status() && Objects.equals(from, answer.validFrom()) && Objects.equals(until, answer.validUntil()) && !roleless) {
                 return answer;
             }
-            return answer.toBuilder().status(status).validFrom(from).validUntil(until).build();
+            TrustedEntity.Builder b = answer.toBuilder().status(status).validFrom(from).validUntil(until);
+            return (roleless ? b.replaceRoles(List.of()) : b).build();
         }
 
         /**

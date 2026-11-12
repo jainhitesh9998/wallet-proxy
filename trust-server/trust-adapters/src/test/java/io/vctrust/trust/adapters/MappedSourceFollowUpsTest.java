@@ -1,9 +1,18 @@
 package io.vctrust.trust.adapters;
 
 import io.vctrust.trust.core.evaluation.Decision;
+import io.vctrust.trust.core.evaluation.Reason;
+import io.vctrust.trust.core.evaluation.TrustDecision;
 import io.vctrust.trust.core.json.Json;
+import io.vctrust.trust.core.model.EntityRole;
+import io.vctrust.trust.core.model.EntityStatus;
+import io.vctrust.trust.core.model.Identifier;
+import io.vctrust.trust.core.model.IdentifierType;
+import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
+import io.vctrust.trust.core.spi.OnDemandResolver;
+import io.vctrust.trust.core.spi.TrustSource;
 import org.junit.jupiter.api.Test;
 
 import java.util.Base64;
@@ -113,5 +122,42 @@ class MappedSourceFollowUpsTest {
                     + "is skipped: certificate: a PEM block holds more than one certificate");
             assertThat(MappedSourceValidationTest.decide(other.getKey(), MDL)).isEqualTo(Decision.TRUSTED);
         }
+    }
+
+    // 5: a lookup answer of an id the list withdraws for every role -------------------------------------------------------
+
+    static final Identifier VERIFIER_DNS = Identifier.of(IdentifierType.DNS, "verifier.example");
+
+    /** The partner's list with "Verifier Inc" REVOKED as {@code roles}, and its answer about verifier.example: active, an issuer. */
+    static TrustSource withdrawnInTheList(TestContext ctx, List<String> roles) {
+        serveJson(ctx, Map.of("version", 1, "parties", List.of(
+                        Map.of("id", "Verifier Inc", "roles", roles, "dns", List.of("old.example"), "state", "revoked"),
+                        Map.of("id", "other-verifier", "roles", List.of("VERIFIER"), "dns", List.of("other.example"), "state", "active")),
+                "cas", List.of(Map.of("kid", "rp-ca", "certificate", der("rp-ca")))));
+        ctx.http.json("https://registry.partner.example/v1/parties/verifier.example", Json.write(Map.of("id", "Verifier Inc",
+                "roles", List.of("CREDENTIAL_ISSUER"), "dns", List.of("verifier.example"), "state", "active")));
+        return source(ctx, props("mapping", OnDemandAnswerMergeTest.mapping()));
+    }
+
+    @Test
+    void item5_aLookupAnswerOfAnIdTheListWithdrawsForEveryRoleNamesNoRole() throws Exception {
+        TrustSource partner = withdrawnInTheList(ctx(), List.of());
+        partner.load();
+        TrustedEntity answer = ((OnDemandResolver) partner).resolve(VERIFIER_DNS).orElseThrow();
+        // The answer kept its role: asked as a verifier, it was left out, and the chain to the partner's CA decided.
+        assertThat(answer.status()).isEqualTo(EntityStatus.REVOKED);
+        assertThat(answer.roles()).isEmpty();
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, partner)) {
+            TrustDecision d = OnDemandAnswerMergeTest.verifier(registry, m);
+            assertThat(d.decision()).as(d.summary()).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(d.reasons()).filteredOn(Reason::isError).extracting(Reason::code).containsExactly("entity.status");
+        }
+        // A withdrawal that names a role holds the answer's status and validity, and leaves its roles as they are.
+        TrustSource named = withdrawnInTheList(ctx(), List.of("VERIFIER"));
+        named.load();
+        TrustedEntity held = ((OnDemandResolver) named).resolve(VERIFIER_DNS).orElseThrow();
+        assertThat(held.status()).isEqualTo(EntityStatus.REVOKED);
+        assertThat(held.roles()).containsExactly(EntityRole.CREDENTIAL_ISSUER);
     }
 }

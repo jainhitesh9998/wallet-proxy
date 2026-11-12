@@ -754,7 +754,9 @@ configuration is read.
   an answer do, the first holds, with the strictest status, the latest `validFrom` and the earliest `validUntil` of
   them all. When the answer's id is one that the source's last loaded list also holds (a party asked about by an
   identifier the list does not give it), the stricter status and validity of the two stand, as the registry merges two
-  entries of one id: a party the list revokes is not trusted by its other identifiers. This holds for a kept answer as
+  entries of one id: a party the list revokes is not trusted by its other identifiers. When the list's record names no
+  role and is not `ACTIVE`, it withdraws the party for every role, and the answer names no role either: with its own
+  roles, it would be left out of a question of another role. This holds for a kept answer as
   soon as a list is loaded; a list older than the one loaded, which the registry refuses, does not count. The registry
   then merges every answer it hands out with its own entry of the answer's id in the source's framework, as it lists
   that id (`<id>@<framework>` when another framework has the id), as two entries of one id are merged
