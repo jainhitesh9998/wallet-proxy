@@ -1,5 +1,6 @@
 package io.vctrust.trust.core.did;
 
+import io.vctrust.trust.core.spi.HttpFetcher;
 import io.vctrust.trust.core.testing.FakeHttp;
 import io.vctrust.trust.core.util.Base64Url;
 import org.junit.jupiter.api.Test;
@@ -104,6 +105,106 @@ class DidDriversTest {
         var bad = d.resolve(Did.parse("did:web:evil.example"));
         assertThat(bad.error()).contains(DidResolutionResult.INVALID_DID_DOCUMENT);
         assertThat(d.resolve(Did.parse("did:web:missing.example")).error()).contains(DidResolutionResult.NOT_FOUND);
+    }
+
+    /** An outbound client that cannot reach anything, as the service's own reports it. */
+    static HttpFetcher failing(java.io.IOException e) {
+        return request -> {
+            throw e;
+        };
+    }
+
+    @Test
+    void didWebTellsAFailureOfItsHostFromAnAnswerAboutTheDid() {
+        var http = new FakeHttp()
+                .respond("https://failing.example/.well-known/did.json", 500, "text/plain", "oops".getBytes(StandardCharsets.UTF_8))
+                .respond("https://busy.example/.well-known/did.json", 429, "text/plain", new byte[0])
+                .respond("https://gone.example/.well-known/did.json", 410, "text/plain", new byte[0])
+                .respond("https://page.example/.well-known/did.json", 200, "text/html", "<html></html>".getBytes(StandardCharsets.UTF_8))
+                .json("https://evil.example/.well-known/did.json", "{\"id\":\"did:web:other.example\"}");
+        var d = new DidWebDriver(http, Set.of());
+        // Where the DID lives gave no usable answer: an error status other than "not there", or not the DID's document.
+        for (String did : List.of("did:web:failing.example", "did:web:busy.example", "did:web:page.example", "did:web:evil.example")) {
+            assertThat(d.resolve(Did.parse(did)).upstreamFailed()).as(did).isTrue();
+        }
+        assertThat(d.resolve(Did.parse("did:web:failing.example")).error()).contains(DidResolutionResult.INTERNAL_ERROR);
+        assertThat(d.resolve(Did.parse("did:web:page.example")).error()).contains(DidResolutionResult.INVALID_DID_DOCUMENT);
+        assertThat(new DidWebDriver(failing(new java.net.ConnectException("refused")), Set.of()).resolve(Did.parse("did:web:down.example")).upstreamFailed()).isTrue();
+        assertThat(new DidWebDriver(failing(new java.net.http.HttpTimeoutException("timed out")), Set.of()).resolve(Did.parse("did:web:slow.example")).upstreamFailed()).isTrue();
+        assertThat(new DidWebDriver(failing(new java.net.UnknownHostException("nowhere.example")), Set.of()).resolve(Did.parse("did:web:nowhere.example")).upstreamFailed()).isTrue();
+        // Answers about the DID: it is not there, it is not a DID this method reads, or it names a host the service does not ask.
+        for (String did : List.of("did:web:missing.example", "did:web:gone.example", "did:web:user%40victim.example")) {
+            assertThat(d.resolve(Did.parse(did)).upstreamFailed()).as(did).isFalse();
+        }
+        var blocked = new DidWebDriver(failing(new HttpFetcher.BlockedException("private address")), Set.of()).resolve(Did.parse("did:web:internal.example"));
+        assertThat(blocked.error()).contains(DidResolutionResult.INVALID_DID);
+        assertThat(blocked.upstreamFailed()).isFalse();
+    }
+
+    @Test
+    void registryAndUniversalResolverTellAFailureUpstreamFromAnAnswer() {
+        String did = "did:ebsi:z23";
+        String registry = "https://registry.example/identifiers/{did}";
+        String at = "https://registry.example/identifiers/did%3Aebsi%3Az23";
+        var r = new HttpRegistryDidDriver(new FakeHttp().respond(at, 503, "text/plain", new byte[0]), "ebsi", registry);
+        assertThat(r.resolve(Did.parse(did)).upstreamFailed()).isTrue();
+        assertThat(new HttpRegistryDidDriver(new FakeHttp().respond(at, 200, "text/html", "<html/>".getBytes(StandardCharsets.UTF_8)), "ebsi", registry)
+                .resolve(Did.parse(did)).upstreamFailed()).isTrue();
+        assertThat(new HttpRegistryDidDriver(new FakeHttp().json(at, "{\"id\":\"did:ebsi:other\"}"), "ebsi", registry).resolve(Did.parse(did)).upstreamFailed()).isTrue();
+        assertThat(new HttpRegistryDidDriver(failing(new java.net.ConnectException("refused")), "ebsi", registry).resolve(Did.parse(did)).upstreamFailed()).isTrue();
+        var missing = new HttpRegistryDidDriver(new FakeHttp(), "ebsi", registry).resolve(Did.parse(did));
+        assertThat(missing.error()).contains(DidResolutionResult.NOT_FOUND);
+        assertThat(missing.upstreamFailed()).isFalse();
+
+        String ur = "https://resolver.example/1.0/identifiers/did%3Aexample%3A123";
+        java.util.function.Function<FakeHttp, DidResolutionResult> resolve = http ->
+                new UniversalResolverDriver(http, java.net.URI.create("https://resolver.example"), Set.of("*")).resolve(Did.parse("did:example:123"));
+        java.util.function.Function<String, String> reporting = error -> "{\"didDocument\":null,\"didResolutionMetadata\":{\"error\":\"" + error + "\"}}";
+        // The resolver failed, or reports a failure of where the DID lives, or answers with something that is no DID document.
+        Map<String, FakeHttp> failures = Map.of(
+                "a gateway page", new FakeHttp().respond(ur, 502, "text/html", "<html>Bad Gateway</html>".getBytes(StandardCharsets.UTF_8)),
+                "an error of its own", new FakeHttp().respond(ur, 500, "application/json", "{\"message\":\"boom\"}".getBytes(StandardCharsets.UTF_8)),
+                "internalError", new FakeHttp().respond(ur, 500, "application/json", reporting.apply("internalError").getBytes(StandardCharsets.UTF_8)),
+                "invalidDidDocument", new FakeHttp().respond(ur, 200, "application/json", reporting.apply("invalidDidDocument").getBytes(StandardCharsets.UTF_8)),
+                "a code this service does not know", new FakeHttp().respond(ur, 500, "application/json", reporting.apply("someErrorOfItsOwn").getBytes(StandardCharsets.UTF_8)),
+                "a document that is not an object", new FakeHttp().json(ur, "{\"didDocument\":\"not a document\",\"didResolutionMetadata\":{}}"),
+                "another DID's document", new FakeHttp().json(ur, "{\"didDocument\":{\"id\":\"did:example:other\"},\"didResolutionMetadata\":{}}"));
+        failures.forEach((name, http) -> assertThat(resolve.apply(http).upstreamFailed()).as(name).isTrue());
+        assertThat(new UniversalResolverDriver(failing(new java.net.ConnectException("refused")), java.net.URI.create("https://resolver.example"), Set.of("*"))
+                .resolve(Did.parse("did:example:123")).upstreamFailed()).isTrue();
+        // What the resolver says about the DID.
+        for (String error : List.of("notFound", "invalidDid", "methodNotSupported")) {
+            var answer = resolve.apply(new FakeHttp().respond(ur, 404, "application/json", reporting.apply(error).getBytes(StandardCharsets.UTF_8)));
+            assertThat(answer.upstreamFailed()).as(error).isFalse();
+            assertThat(DidResolutionResult.httpStatus(answer.error().orElseThrow())).as(error).isNotEqualTo(500);
+        }
+        var notThere = resolve.apply(new FakeHttp().respond(ur, 404, "application/json", "{\"message\":\"no such DID\"}".getBytes(StandardCharsets.UTF_8)));
+        assertThat(notThere.error()).contains(DidResolutionResult.NOT_FOUND);
+        assertThat(notThere.upstreamFailed()).isFalse();
+    }
+
+    @Test
+    void aDriverThatThrowsIsAFailureOfTheServiceNotOfWhereTheDidLives() {
+        DidMethodDriver broken = new DidMethodDriver() {
+            @Override
+            public Set<String> methods() {
+                return Set.of("web");
+            }
+
+            @Override
+            public DidResolutionResult resolve(Did did) {
+                throw new IllegalStateException("a bug");
+            }
+        };
+        var r = new DidResolver(List.of(broken)).resolve("did:web:issuer.example");
+        assertThat(r.error()).contains(DidResolutionResult.INTERNAL_ERROR);
+        assertThat(r.upstreamFailed()).isFalse();
+        // The mark is the service's knowledge: it survives added metadata and is not part of the JSON form.
+        var marked = DidResolutionResult.upstreamError(DidResolutionResult.INTERNAL_ERROR, "HTTP 500 from https://issuer.example/.well-known/did.json")
+                .withResolutionMetadata("cache", Map.of());
+        assertThat(marked.upstreamFailed()).isTrue();
+        assertThat(marked.errorDetail()).contains("HTTP 500 from https://issuer.example/.well-known/did.json");
+        assertThat(marked.toJson()).containsOnlyKeys("@context", "didDocument", "didResolutionMetadata", "didDocumentMetadata");
     }
 
     @Test

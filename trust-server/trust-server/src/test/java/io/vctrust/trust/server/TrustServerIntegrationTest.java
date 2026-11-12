@@ -98,6 +98,11 @@ class TrustServerIntegrationTest {
             raw("/contexts/not-a-context.json", "application/ld+json", "{\"internal\":\"what an admin console might say\"}".getBytes(StandardCharsets.UTF_8));
             raw("/contexts/not-json", "application/ld+json", "<html>what an admin console might say</html>".getBytes(StandardCharsets.UTF_8));
             raw("/contexts/oversized", "application/ld+json", ("{\"@context\":{},\"pad\":\"" + "x".repeat(1024 * 1024) + "\"}").getBytes(StandardCharsets.UTF_8));
+            // DID documents: did:web:localhost%3A<port>:did:<name> is read from /did/<name>/did.json.
+            status("/did/failing/did.json", 500);
+            status("/did/gone/did.json", 404);
+            raw("/did/not-json/did.json", "application/json", "<html>what an admin console might say</html>".getBytes(StandardCharsets.UTF_8));
+            route("/did/other/did.json", "{\"id\":\"did:web:elsewhere.example\",\"verificationMethod\":[]}");
             UPSTREAM.start();
         } catch (IOException | java.security.cert.CRLException e) {
             throw new IllegalStateException(e);
@@ -110,6 +115,13 @@ class TrustServerIntegrationTest {
             ex.getResponseHeaders().add("Cache-Control", "max-age=60");
             ex.sendResponseHeaders(200, body.length);
             ex.getResponseBody().write(body);
+            ex.close();
+        });
+    }
+
+    static void status(String path, int status) {
+        UPSTREAM.createContext(path, ex -> {
+            ex.sendResponseHeaders(status, -1);
             ex.close();
         });
     }
@@ -446,6 +458,50 @@ class TrustServerIntegrationTest {
         assertThat(get("/api/v1/proxy/did/not-a-did", "key-a").statusCode()).isEqualTo(400);
         // The W3C DID resolver binding of earlier versions is gone; nothing answers there.
         assertThat(get("/1.0/identifiers/" + did, "key-a").statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void didRelayAnswersAFailedUpstreamAsEveryRelayDoes() throws Exception {
+        String upstream = "did:web:" + UPSTREAM_BASE.substring("http://".length()).replace(":", "%3A");
+        int closed;
+        try (var socket = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+            closed = socket.getLocalPort();
+        }
+        // Where the DID lives gave no answer about it: its host fails, cannot be reached, or serves something that is not
+        // the DID's document. The service itself works, and says so as the other relays do; a device then asks the host
+        // itself and does not count the service as down.
+        for (String failed : List.of(upstream + ":did:failing", "did:web:localhost%3A" + closed, upstream + ":did:not-json", upstream + ":did:other")) {
+            for (String accept : List.of("application/json", "application/jwt")) {
+                var r = get("/api/v1/proxy/did/" + failed, "key-a", "Accept", accept);
+                assertThat(r.statusCode()).as(failed + " " + accept).isEqualTo(502);
+                assertThat(r.headers().firstValue("Content-Type").orElse("")).as(failed + " " + accept).startsWith("application/problem+json");
+                assertThat(json(r).get("code")).as(failed + " " + accept).isEqualTo("upstream_unavailable");
+                assertThat(r.body()).as(failed + " " + accept).doesNotContain("admin console");
+            }
+        }
+        // What the method says about the DID stays its answer: a DID resolution result with the status of the DID
+        // Resolution HTTP binding, signed when a JWT is asked for.
+        Map<String, List<Object>> answers = Map.of(
+                upstream + ":did:gone", List.of(404, "NOT_FOUND"),
+                "not-a-did", List.of(400, "INVALID_DID"),
+                "did:web:user%40victim.example", List.of(400, "INVALID_DID"),
+                "did:example:123", List.of(501, "METHOD_NOT_SUPPORTED"));
+        for (var a : answers.entrySet()) {
+            String path = "/api/v1/proxy/did/" + a.getKey();
+            var plain = get(path, "key-a");
+            assertThat(plain.statusCode()).as(a.getKey()).isEqualTo(a.getValue().get(0));
+            assertThat(plain.headers().firstValue("Content-Type").orElse("")).as(a.getKey()).startsWith("application/json");
+            Map<String, Object> metadata = (Map<String, Object>) json(plain).get("didResolutionMetadata");
+            assertThat(((Map<String, Object>) metadata.get("error")).get("title")).as(a.getKey()).isEqualTo(a.getValue().get(1));
+            var signed = get(path, "key-a", "Accept", "application/jwt");
+            assertThat(signed.statusCode()).as(a.getKey()).isEqualTo(a.getValue().get(0));
+            SignedJWT jwt = SignedJWT.parse(signed.body());
+            assertThat(jwt.getHeader().getType().toString()).isEqualTo("trust-did-resolution+jwt");
+            Map<String, Object> data = jwt.getJWTClaimsSet().getJSONObjectClaim("data");
+            assertThat(((Map<String, Object>) ((Map<String, Object>) data.get("didResolutionMetadata")).get("error")).get("title"))
+                    .as(a.getKey()).isEqualTo(a.getValue().get(1));
+        }
     }
 
     @Test

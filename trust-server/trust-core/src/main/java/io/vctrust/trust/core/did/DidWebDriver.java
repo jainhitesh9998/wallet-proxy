@@ -80,26 +80,26 @@ public final class DidWebDriver implements DidMethodDriver {
         } catch (java.net.UnknownHostException e) {
             // A name that does not resolve right now is an outage until proven otherwise: only the host itself,
             // answering 404 or 410, says that the document is gone.
-            return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, "Host of " + url + " does not resolve");
+            return DidResolutionResult.upstreamError(DidResolutionResult.INTERNAL_ERROR, "Host of " + url + " does not resolve");
         } catch (HttpFetcher.BlockedException e) {
             return DidResolutionResult.error(DidResolutionResult.INVALID_DID, e.getMessage());
         } catch (IOException e) {
-            return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, "Fetching " + url + " failed: " + e.getMessage());
+            return DidResolutionResult.upstreamError(DidResolutionResult.INTERNAL_ERROR, "Fetching " + url + " failed: " + e.getMessage());
         }
         if (r.status() == 404 || r.status() == 410) {
             return DidResolutionResult.error(DidResolutionResult.NOT_FOUND, "HTTP " + r.status() + " from " + url);
         }
         if (!r.isSuccess()) {
-            return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, "HTTP " + r.status() + " from " + url);
+            return DidResolutionResult.upstreamError(DidResolutionResult.INTERNAL_ERROR, "HTTP " + r.status() + " from " + url);
         }
         Map<String, Object> doc;
         try {
             doc = Json.parseObject(r.body());
         } catch (RuntimeException e) {
-            return DidResolutionResult.error(DidResolutionResult.INVALID_DID_DOCUMENT, "did.json is not a JSON object");
+            return DidResolutionResult.upstreamError(DidResolutionResult.INVALID_DID_DOCUMENT, "did.json is not a JSON object");
         }
         if (!did.did().equals(doc.get("id"))) {
-            return DidResolutionResult.error(DidResolutionResult.INVALID_DID_DOCUMENT,
+            return DidResolutionResult.upstreamError(DidResolutionResult.INVALID_DID_DOCUMENT,
                     "DID document id '" + doc.get("id") + "' does not match " + did.did());
         }
         Map<String, Object> rm = new LinkedHashMap<>();

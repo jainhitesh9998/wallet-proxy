@@ -8,8 +8,8 @@ const MAX_SERVICE_BODY_BYTES = 64 * 1024 * 1024;
 
 /**
  * The codes of the service's {@code 502} problem documents: the party it asked on the caller's behalf (a CRL
- * distribution point, a status list or context host, an issuer) did not answer, or answered with something it does
- * not pass on. Such an answer comes from a service that works; the lookup goes to the standard mechanism, and the
+ * distribution point, a status list or context host, an issuer, a DID's host or registry) did not answer, or answered
+ * with something it does not pass on. Such an answer comes from a service that works; the lookup goes to the standard mechanism, and the
  * service is not counted as down for it.
  */
 const UPSTREAM_FAILURES = new Set(['upstream_unavailable', 'invalid_crl', 'invalid_status_list', 'invalid_context', 'fetch_failed']);

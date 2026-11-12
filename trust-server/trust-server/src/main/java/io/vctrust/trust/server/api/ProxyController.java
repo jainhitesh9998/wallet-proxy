@@ -67,7 +67,11 @@ public class ProxyController {
                 .header("X-Trust-Source", env.stale() ? "cache-stale" : "trust-service"));
     }
 
-    /** DID resolution: {@code /api/v1/proxy/did/did:web:issuer.example}; the result has the W3C DID Resolution shape. */
+    /**
+     * DID resolution: {@code /api/v1/proxy/did/did:web:issuer.example}; the result has the W3C DID Resolution shape and
+     * the status of its HTTP binding. When where the DID lives gives no usable answer, the answer is a failure upstream
+     * instead ({@code 502 upstream_unavailable}), as on every relay.
+     */
     @GetMapping("/did/**")
     public ResponseEntity<Object> did(ClientProfile client, HttpServletRequest req) {
         String raw = req.getRequestURI();

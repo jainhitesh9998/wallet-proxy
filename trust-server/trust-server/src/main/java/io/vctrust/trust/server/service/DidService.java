@@ -64,7 +64,10 @@ public class DidService {
                     throw new Unavailable(r);
                 }
                 if (weight(r) > cfg.getMaxDocumentBytes()) {
-                    return DidResolutionResult.error(DidResolutionResult.INVALID_DID_DOCUMENT, "The DID document exceeds " + cfg.getMaxDocumentBytes() + " bytes");
+                    // Larger than any document this service passes on: the host gave nothing usable, like any other
+                    // answer that is not a DID document.
+                    return DidResolutionResult.upstreamError(DidResolutionResult.INVALID_DID_DOCUMENT,
+                            "The DID document exceeds " + cfg.getMaxDocumentBytes() + " bytes");
                 }
                 return r;
             }, this::ttl);
@@ -76,6 +79,7 @@ public class DidService {
         } catch (Unavailable e) {
             return e.result;
         } catch (Exception e) {
+            // A failure of this code, not of where the DID lives.
             return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, e.getMessage());
         }
     }
@@ -83,12 +87,25 @@ public class DidService {
     /**
      * Resolves a DID as a client names it in a URL path: as it stands, or percent-encoded as a whole
      * ({@code did%3Aweb%3A...}).
+     *
+     * <p>What the method says about the DID is the answer, also when it is an error: the DID does not exist, is not
+     * valid, or is of a method this service does not resolve. When where the DID lives gave no usable answer (its
+     * host, registry or resolver could not be reached, failed, or served something that is not the DID's document) and
+     * no earlier document stands in, the relay failed upstream, and says so as every relay of this service does: the
+     * service works, and the client may ask where the DID lives itself. A failure of this service's own code stays an
+     * internal error of the DID resolution.
+     *
+     * @throws ServiceException {@code upstream_unavailable} when where the DID lives gave no usable answer
      */
     public Answer resolveFromPath(String did) {
         if (did.startsWith("did%3A") || did.startsWith("did%3a")) {
             did = URLDecoder.decode(did, StandardCharsets.UTF_8);
         }
         DidResolutionResult r = resolve(did);
+        if (r.upstreamFailed()) {
+            throw ServiceException.upstreamFailed("upstream_unavailable",
+                    "DID document unavailable: " + r.errorDetail().orElse(r.error().orElse("no answer")));
+        }
         return new Answer(r, maxAge(r));
     }
 

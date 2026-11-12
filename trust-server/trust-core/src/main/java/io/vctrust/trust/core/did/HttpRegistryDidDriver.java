@@ -41,23 +41,23 @@ public final class HttpRegistryDidDriver implements DidMethodDriver {
         try {
             r = http.get(url, "application/did+ld+json, application/did-resolution, application/json");
         } catch (IOException e) {
-            return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, "Registry unreachable: " + e.getMessage());
+            return DidResolutionResult.upstreamError(DidResolutionResult.INTERNAL_ERROR, "Registry unreachable: " + e.getMessage());
         }
         if (r.status() == 404 || r.status() == 400) {
             return DidResolutionResult.error(DidResolutionResult.NOT_FOUND, "Registry returned HTTP " + r.status());
         }
         if (!r.isSuccess()) {
-            return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, "Registry returned HTTP " + r.status());
+            return DidResolutionResult.upstreamError(DidResolutionResult.INTERNAL_ERROR, "Registry returned HTTP " + r.status());
         }
         Map<String, Object> body;
         try {
             body = Json.parseObject(r.body());
         } catch (RuntimeException e) {
-            return DidResolutionResult.error(DidResolutionResult.INVALID_DID_DOCUMENT, "Registry response is not JSON");
+            return DidResolutionResult.upstreamError(DidResolutionResult.INVALID_DID_DOCUMENT, "Registry response is not JSON");
         }
         Map<String, Object> doc = body.get("didDocument") instanceof Map<?, ?> m ? (Map<String, Object>) m : body;
         if (!did.did().equals(doc.get("id"))) {
-            return DidResolutionResult.error(DidResolutionResult.INVALID_DID_DOCUMENT, "Registry document id does not match DID");
+            return DidResolutionResult.upstreamError(DidResolutionResult.INVALID_DID_DOCUMENT, "Registry document id does not match DID");
         }
         Map<String, Object> rm = new LinkedHashMap<>();
         rm.put("registry", url.getHost());

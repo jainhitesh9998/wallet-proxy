@@ -46,6 +46,7 @@ public class DidResolver {
         try {
             return driver.resolve(new Did(did.method(), did.methodSpecificId(), null, null, null));
         } catch (RuntimeException e) {
+            // A driver that throws failed in this code, not where the DID lives: not an upstream error.
             return DidResolutionResult.error(DidResolutionResult.INTERNAL_ERROR, e.getMessage());
         }
     }

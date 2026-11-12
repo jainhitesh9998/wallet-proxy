@@ -9,9 +9,16 @@ import java.util.Optional;
 /**
  * W3C DID Resolution result: {@code didDocument}, {@code didResolutionMetadata}, {@code didDocumentMetadata}.
  * Documents are kept as generic JSON maps so that any DID method's extensions survive the proxy unchanged.
+ *
+ * <p>{@code upstreamFailed} is what the resolution metadata cannot say: the resolution failed because no usable answer
+ * could be had from where the DID lives (its host, its registry, a universal resolver), which was unreachable, timed
+ * out, answered with an HTTP error other than "not there", or with something that is not the DID's document. Such a
+ * failure says nothing about the DID. Only the code that asked knows this, so it is set there ({@link #upstreamError});
+ * an answer about the DID (not found, invalid, method not supported) and a failure of this code itself leave it false.
+ * It is not part of the JSON form.
  */
 public record DidResolutionResult(Map<String, Object> didDocument, Map<String, Object> didResolutionMetadata,
-                                  Map<String, Object> didDocumentMetadata) {
+                                  Map<String, Object> didDocumentMetadata, boolean upstreamFailed) {
 
     public static final String CONTEXT = "https://w3id.org/did-resolution/v1";
 
@@ -34,6 +41,11 @@ public record DidResolutionResult(Map<String, Object> didDocument, Map<String, O
         didDocumentMetadata = didDocumentMetadata == null ? Map.of() : didDocumentMetadata;
     }
 
+    public DidResolutionResult(Map<String, Object> didDocument, Map<String, Object> didResolutionMetadata,
+                               Map<String, Object> didDocumentMetadata) {
+        this(didDocument, didResolutionMetadata, didDocumentMetadata, false);
+    }
+
     public static DidResolutionResult success(Map<String, Object> doc, Map<String, Object> resolutionMetadata,
                                               Map<String, Object> documentMetadata) {
         Map<String, Object> rm = new LinkedHashMap<>();
@@ -54,9 +66,24 @@ public record DidResolutionResult(Map<String, Object> didDocument, Map<String, O
         return new DidResolutionResult(null, rm, Map.of());
     }
 
+    /**
+     * An error because where the DID lives gave no usable answer ({@link #upstreamFailed}): {@code code} is what the
+     * resolution metadata reports, {@link #INTERNAL_ERROR} for no answer, {@link #INVALID_DID_DOCUMENT} for one that is
+     * not the DID's document.
+     */
+    public static DidResolutionResult upstreamError(String code, String message) {
+        DidResolutionResult r = error(code, message);
+        return new DidResolutionResult(null, r.didResolutionMetadata(), r.didDocumentMetadata(), true);
+    }
+
     /** The error code (e.g. {@code NOT_FOUND}); accepts both RFC 9457 objects and legacy camelCase strings. */
     public Optional<String> error() {
         return Optional.ofNullable(normalizeError(didResolutionMetadata.get("error")));
+    }
+
+    /** The error's {@code detail}, when it has one. */
+    public Optional<String> errorDetail() {
+        return didResolutionMetadata.get("error") instanceof Map<?, ?> m && m.get("detail") instanceof String d ? Optional.of(d) : Optional.empty();
     }
 
     public static String normalizeError(Object error) {
@@ -107,7 +134,7 @@ public record DidResolutionResult(Map<String, Object> didDocument, Map<String, O
     public DidResolutionResult withResolutionMetadata(String key, Object value) {
         Map<String, Object> rm = new LinkedHashMap<>(didResolutionMetadata);
         rm.put(key, value);
-        return new DidResolutionResult(didDocument, rm, didDocumentMetadata);
+        return new DidResolutionResult(didDocument, rm, didDocumentMetadata, upstreamFailed);
     }
 
     /**
