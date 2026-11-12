@@ -154,7 +154,9 @@ describe('issuance (OID4VCI 1.0 / HAIP)', () => {
   });
 
   it('refuses a credential that fails verification or whose x5c issuer is untrusted, and tells the issuer', async () => {
-    const tampered = mockIssuer({ credential: (jwk) => issueFor(jwk).replace(/^([^.]+\.[^.]+\.)./, '$1A') });
+    // The first character of the signature is replaced by another one: by 'A', or by 'B' where it is 'A' already.
+    const tampered = mockIssuer({ credential: (jwk) => issueFor(jwk)
+      .replace(/^([^.]+\.[^.]+\.)(.)/, (_all: string, head: string, c: string) => head + (c === 'A' ? 'B' : 'A')) });
     const err = await (await walletFor(tampered).receive(offer)).acceptPreAuthorized().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(IssuanceError);
     expect((err as IssuanceError).code).toBe('invalid_credential');

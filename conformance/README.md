@@ -79,6 +79,10 @@ case. `generate-reissued.sh` adds a CA with two certificates of the same name an
 CRL distribution point, and `reissued-ca-2`), a Document Signer under it (`reissued-ds`) and two CRLs of the CA
 (`reissued-ca-old.crl` revokes nothing, `reissued-ca.crl` revokes the signer): `ReissuedCaCrlsTest` and
 `reissued-ca.test.ts` hold the service and the device to matching a CRL by its issuer's name and key.
+`generate-standing.sh` and `generate-roles.sh` add signers for the cases about which entity a decision is about:
+certificates that a revoked, a suspended, an ended, or both a revoked and an active entity pin or name by hash
+(`ds-pin-*`, `rp-pin-both`, `rp-named-*`), and certificates of entries that name no role or another role
+(`rp-noroles-*`, `rp-verifier-*`).
 The private keys are here because they are test keys; they protect nothing. Two certificates are real, for name
 handling: `real-eudi-pid-ca.pem` and `real-waltid-pid-provider.pem` (see `real-world/`).
 
