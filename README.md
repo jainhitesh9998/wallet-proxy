@@ -63,7 +63,8 @@ test-ecosystem (reference issuer, verifier)  ──►  third-party implementati
 | JSON-LD contexts | In the snapshot for the listed parties; through the proxy for others, held to the digest the snapshot carries | The context's URL. Either way, a context the snapshot has no digest for is reported as not vouched for |
 
 Whatever is relayed is verified on the device: a CRL against the CA that issued it, a status list against its signer,
-everything else against the pinned key of the service. OCSP is not used. How each of these is configured and
+a JSON-LD context against the digest in the snapshot, everything else against the pinned key of the service. OCSP is
+not used. How each of these is configured and
 decided: [Trust methods](docs/trust-methods.md).
 
 - [Architecture](docs/architecture.md): the registry, the snapshot, how a decision is made, the proxy, what happens
