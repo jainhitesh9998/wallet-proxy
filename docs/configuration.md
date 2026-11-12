@@ -595,17 +595,26 @@ What then happens depends on the record:
 - **An entity whose `id`, `roles`, `identifiers` or `certificates` cannot be read**, or that yields no `id`, or no
   role (unless its roles are there and empty under `allowEmpty`), **fails the load**, with a message that names the
   block, the record and the member. These say whom the record is about. The source keeps its last good content.
-- **An id is a label.** One rule gives the id of an entity, of an anchor, of a lookup answer, and the id an anchor's
-  `entity` names. An id the admin API's rule accepts (1 to 128 letters, digits or `. _ : @ ~ -`, starting with a letter
-  or digit) is kept as written, `@` included (an email address is a common id; one that ends in `@` and another
-  framework's id, `acme@other`, is the registry's to place, under the source's framework: `acme@other@national`). Any
-  other id (a URL, a DID with `%3A`, a name with a space or a letter outside ASCII, a base64 key identifier) is
-  replaced by its derived id: `sha256:` and the whole SHA-256 of the id as written (UTF-8), in hexadecimal; so is an
-  id the list writes in that very form, so that no id the list writes can be the one another becomes. Nothing else
-  about the record changes: its status is the one the list states, and a CA tied to `utopia dmv` is tied to the
-  entity `utopia dmv` became. Two different ids never become one entry; one id twice is one entry (the strictest of
-  its records standing). One warning a load says how many ids were replaced, and the first with its derived id; the
-  party's `name` and `display` are shown as before.
+- **Ids are kept as written.** One rule gives the id of an entity, of an anchor, of a lookup answer, and the id an
+  anchor's `entity` names: the id exactly as the list (and the mapping's template) yields it, whenever it is plain text
+  an entry can carry: 1 to 512 characters, not only white space, none of them a control, format, line separator or
+  paragraph separator character, nor half of a surrogate pair standing alone (what a source state and a log line would
+  show escaped). A URL, a DID with `%3A`, a name with spaces or letters outside ASCII, an email address and a base64
+  key identifier are kept. So another source of the framework names a mapped party, or owns a mapped CA, by the id as
+  the list writes it: a `static` registry that withdraws `https://dmv.utopia.example` withdraws the party the mapped
+  list has under that id (the two are one entry, merged by the registry, the stricter status standing), and a mapped
+  CA whose `entity` is `Utopia DMV` belongs to the entity `Utopia DMV` of whichever source of the framework lists it.
+  An id that ends in `@` and another framework's id (`acme@other`) is the registry's to place, under the source's
+  framework (`acme@other@national`). The admin API's stricter rule for an entry's id does not apply here: an entry
+  written through it becomes a path segment, a database key and a field of the audit log, and a mapped record none of
+  these. Any other id (one with a line break or a bidi override in it, or longer than 512 characters) is replaced by
+  its derived id: `sha256:` and the whole SHA-256 of the id as written (UTF-8), in hexadecimal; so is an id the list
+  writes in that very form, so that no id the list writes can be the one another becomes. A derived id is this
+  source's alone, and no other source names the party by it; nothing else about the record changes: its status is
+  the one the list states, and a CA tied to such an id is tied to the entity it became. Two different ids never become
+  one entry; one id twice is one entry (the strictest of its records standing). One warning a load says how many ids
+  were replaced, and the first with its derived id. A message quotes an id as it quotes any text of the list: escaped,
+  and cut at 40 characters.
 - **An entity in which anything else cannot be read is listed `SUSPENDED`**, with what identifies it and every member
   that could be read, but none that could not, and a warning that names the record, the members and why. A status
   stricter than `SUSPENDED` that the record states (`REVOKED`, `EXPIRED`) is kept. `SUSPENDED` means here: the list

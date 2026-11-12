@@ -159,9 +159,9 @@ class MappedSourceProbesTest {
                 + "identifiers: identifiers[0]: 'value' is not a SHA-256 digest");
     }
 
-    // 1: an id is a label ------------------------------------------------------------------------------------------
+    // 1: an id is a label (since the fifth round: kept as written whenever an entry can carry it) ----------------------
 
-    /** An id as the source lists it when it cannot be one as written: {@code sha256:} and the whole SHA-256, in hexadecimal. */
+    /** An id as the source lists it when an entry cannot carry it: {@code sha256:} and the whole SHA-256, in hexadecimal. */
     static String derived(String id) {
         try {
             byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -194,7 +194,9 @@ class MappedSourceProbesTest {
     }
 
     @Test
-    void item1_aCaTiedToAnEntityWhoseIdIsReplacedIsTiedToWhatTheIdBecameAndTheEntityKeepsItsStatus() {
+    void item1_aCaTiedToAnEntityIsTiedToItsIdAsWrittenAndTheEntityKeepsItsStatus() {
+        // Round four listed these two under their derived ids, and tied the CA to what the id became; since the fifth
+        // round both are kept as written (MappedSourceRoundFiveTest.item1_...), and the tie holds the same way.
         for (String id : List.of("Utopia DMV", "https://dmv.utopia.example")) {
             Map<String, Map<String, Object>> cases = new LinkedHashMap<>();
             cases.put("revoked", Map.of("state", "revoked"));
@@ -207,10 +209,10 @@ class MappedSourceProbesTest {
                 try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", tiedByTheCa())))) {
                     String as = id + ", " + what;
                     assertThat(state(m, "partner").lastError()).as(as).isNull();
-                    TrustedEntity listed = registry.snapshot().entity(derived(id)).orElseThrow();
+                    TrustedEntity listed = registry.snapshot().entity(id).orElseThrow();
                     assertThat(listed.status()).as(as).isEqualTo(what.equals("revoked") ? EntityStatus.REVOKED
                             : what.equals("active") ? EntityStatus.ACTIVE : EntityStatus.SUSPENDED);
-                    assertThat(registry.snapshot().allAnchors()).singleElement().satisfies(a -> assertThat(a.entityId()).isEqualTo(derived(id)));
+                    assertThat(registry.snapshot().allAnchors()).singleElement().satisfies(a -> assertThat(a.entityId()).isEqualTo(id));
                     // The chain to the CA is the entity's: revoked or suspended, kept out; active, as it is authorized.
                     assertThat(MappedSourceValidationTest.decide(registry, MappedSourceValidationTest.PID)).as(as).isEqualTo(Decision.NOT_TRUSTED);
                     assertThat(MappedSourceValidationTest.decide(registry, MDL)).as(as)
@@ -235,18 +237,16 @@ class MappedSourceProbesTest {
         TrustRegistry registry = new TrustRegistry();
         try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", tiedByTheCa())))) {
             assertThat(state(m, "partner").lastError()).isNull();
+            // Since the fifth round, as written: round four listed each under its derived id, with one warning a load.
             assertThat(registry.snapshot().entities()).extracting(e -> e.id() + " " + e.status())
-                    .containsExactlyInAnyOrder(derived("https://dmv.utopia.example") + " ACTIVE", derived("https://college.example/issuer") + " ACTIVE");
+                    .containsExactlyInAnyOrder("https://dmv.utopia.example ACTIVE", "https://college.example/issuer ACTIVE");
             assertThat(registry.snapshot().allAnchors()).singleElement().satisfies(a -> {
-                assertThat(a.id()).isEqualTo(derived("q83vEjRWeJ+/kQ=="));
-                assertThat(a.entityId()).isEqualTo(derived("https://dmv.utopia.example"));
+                assertThat(a.id()).isEqualTo("q83vEjRWeJ+/kQ==");
+                assertThat(a.entityId()).isEqualTo("https://dmv.utopia.example");
             });
             assertThat(MappedSourceValidationTest.decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
             assertThat(MappedSourceValidationTest.decide(registry, MappedSourceValidationTest.PID)).isEqualTo(Decision.NOT_TRUSTED);
-            // One warning for the load, not one a record.
-            assertThat(state(m, "partner").warnings()).containsExactly("3 ids are listed under derived ids (sha256: and the SHA-256 of the "
-                    + "id written), not being 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit: the first, "
-                    + "'https://dmv.utopia.example', as '" + derived("https://dmv.utopia.example") + "'");
+            assertThat(state(m, "partner").warnings()).isEmpty();
         }
     }
 
@@ -263,9 +263,10 @@ class MappedSourceProbesTest {
         serveJson(ctx, d);
         TrustRegistry registry = new TrustRegistry();
         try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", tiedByTheCa())))) {
+            // Since the fifth round the first two are kept as written; one written in the derived form is derived still.
             assertThat(registry.snapshot().entities()).extracting(e -> e.id() + " " + e.status()).containsExactlyInAnyOrder(
-                    derived("utopia dmv") + " REVOKED", derived("Utopia DMV") + " ACTIVE", derived(derived("utopia dmv")) + " ACTIVE");
-            assertThat(registry.snapshot().entity(derived("utopia dmv")).orElseThrow().identifiers()).hasSize(2);
+                    "utopia dmv REVOKED", "Utopia DMV ACTIVE", derived(derived("utopia dmv")) + " ACTIVE");
+            assertThat(registry.snapshot().entity("utopia dmv").orElseThrow().identifiers()).hasSize(2);
         }
     }
 

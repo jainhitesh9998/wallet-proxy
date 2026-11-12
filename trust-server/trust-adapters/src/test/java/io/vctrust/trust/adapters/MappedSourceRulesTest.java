@@ -780,17 +780,20 @@ class MappedSourceRulesTest {
             serveJson(ctx, d);
             assertThat(loadError(source(ctx, props("mapping", m)))).as(message).startsWith("mapping.entities[0]: " + message + "; ");
         });
-        // An id the registry format refuses is listed under an id derived from it, not in good standing (third round,
-        // item 8; the load failed before): MappedSourceEdgesTest.item8_anEntityWhoseIdTheRegistryCannotTake...
+        // An id with a space failed the load, was then listed under an id derived from it (third and fourth rounds), and
+        // since the fifth round is kept as written: the registry holds such ids from its other sources already.
         d.put("issuers", List.of(ok, Map.of("id", "bad role", "roles", List.of("VERIFIER"))));
         serveJson(ctx, d);
-        assertThat(source(ctx, props("mapping", m)).load().entities()).extracting(e -> e.id().startsWith("sha256:") + " " + e.status())
-                .containsExactly("false SUSPENDED", "true REVOKED");   // no state: the mapping's default
+        assertThat(source(ctx, props("mapping", m)).load().entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:ok SUSPENDED", "partner:bad role REVOKED");   // no state: the mapping's default
     }
 
     @Test
-    void anIdIsHeldToTheRuleOfTheAdminApi() throws Exception {
-        // The admin API's rule (ManagedEntryService), from the same place: an id starts with a letter or a digit.
+    void anIdIsKeptAsWrittenWhenAnEntryCanCarryIt() throws Exception {
+        // Ids were held to the admin API's rule (ManagedEntryService: an id starts with a letter or a digit, ...) and
+        // replaced when they broke it (fourth round). Since the fifth round that rule does not apply to a mapped id:
+        // an admin API entry becomes a path segment, a database key and a field of the audit log, a mapped record none
+        // of these, and another source of the framework knows the party by the id as written.
         TestContext ctx = ctx();
         Map<String, Object> m = mapping();
         ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("id", "$.id");
@@ -802,20 +805,23 @@ class MappedSourceRulesTest {
         serveJson(ctx, d);
         SourceLoadResult r = source(ctx, props("mapping", m)).load();
         assertThat(r.entities()).extracting(TrustedEntity::id).containsExactly("a", "9.nine");
-        // Fourth round (item 1): an id is a label. One the rule refuses is listed under its derived id, an anchor's as
-        // an entity's, and nothing else about the record changes (an anchor was skipped, and an entity suspended).
-        assertThat(r.anchors()).extracting(a -> a.id()).containsExactly(MappedSourceProbesTest.derived("@iaca"), "iaca");
-        assertThat(r.warnings()).containsExactly("1 id is listed under derived ids (sha256: and the SHA-256 of the id written), not "
-                + "being 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit: the first, '@iaca', as '"
-                + MappedSourceProbesTest.derived("@iaca") + "'");
-        for (String id : List.of("-dash", ".dot", "~tilde", "a".repeat(129))) {
-            Map<String, Object> bad = doc("a", id);
-            bad.put("authorities", d.get("authorities"));
-            serveJson(ctx, bad);
+        assertThat(r.anchors()).extracting(a -> a.id()).containsExactly("@iaca", "iaca");
+        assertThat(r.warnings()).isEmpty();
+        for (String id : List.of("-dash", ".dot", "~tilde", "a".repeat(129), "a".repeat(512))) {
+            Map<String, Object> written = doc("a", id);
+            written.put("authorities", d.get("authorities"));
+            serveJson(ctx, written);
             SourceLoadResult loaded = source(ctx, props("mapping", m)).load();
-            assertThat(loaded.entities()).as(id).extracting(e -> e.id() + " " + e.status())
-                    .containsExactly("a ACTIVE", MappedSourceProbesTest.derived(id) + " ACTIVE");
-            assertThat(loaded.warnings()).as(id).singleElement().asString().startsWith("2 ids are listed under derived ids");
+            assertThat(loaded.entities()).as(id).extracting(e -> e.id() + " " + e.status()).containsExactly("a ACTIVE", id + " ACTIVE");
+            assertThat(loaded.warnings()).as(id).isEmpty();
         }
+        // More than 512 characters is no name another source gives a party: replaced, nothing else changing.
+        Map<String, Object> tooLong = doc("a", "a".repeat(513));
+        tooLong.put("authorities", d.get("authorities"));
+        serveJson(ctx, tooLong);
+        SourceLoadResult loaded = source(ctx, props("mapping", m)).load();
+        assertThat(loaded.entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("a ACTIVE", MappedSourceProbesTest.derived("a".repeat(513)) + " ACTIVE");
+        assertThat(loaded.warnings()).singleElement().asString().startsWith("1 id is listed under derived ids");
     }
 }

@@ -572,8 +572,9 @@ class MappedSourceEdgesTest {
                 }
             }
         });
-        // "row 7", an id the rule refuses, was a case above (such an anchor was skipped). Since the fourth round an id is a
-        // label: the row is listed under its derived id, and two readable rows about one certificate must agree.
+        // "row 7", an id the admin API's rule refuses, was a case above (such an anchor was skipped). Since the fourth
+        // round the row is read (since the fifth, under its id as written), and two readable rows about one certificate
+        // must agree.
         Map<String, Object> d7 = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates", null));
         d7.put("authorities", List.of(Map.of("kid", "row-1", "certificate", der("iaca"), "state", "active"),
                 Map.of("kid", "row 7", "certificate", der("iaca"), "state", "withdrawn")));
@@ -582,7 +583,7 @@ class MappedSourceEdgesTest {
         TrustRegistry r7 = new TrustRegistry();
         try (TrustSourceManager manager = manager(r7, source(c7, props("mapping", m)))) {
             assertThat(decide(r7, MDL)).isNotEqualTo(Decision.TRUSTED);
-            assertThat(state(manager, "partner").lastError()).startsWith("Anchors 'row-1' and '" + derived("row 7").substring(0, 40) + "…' "
+            assertThat(state(manager, "partner").lastError()).startsWith("Anchors 'row-1' and 'row 7' "
                     + "have the same certificate in domain mdoc-iaca and a different status");
         }
         // An unreadable row of another certificate is skipped, as before; so is one whose certificate cannot be read.
@@ -722,12 +723,15 @@ class MappedSourceEdgesTest {
 
     @Test
     void item8_anEntityWhoseIdTheRegistryCannotTakeIsListedUnderADerivedIdAndKeptOut() throws Exception {
-        // The revoked issuer, bound by its signing certificate under the shared IACA, with an id the rule refuses.
+        // The revoked issuer, bound by its signing certificate under the shared IACA, with an id an entry cannot carry.
         // Fourth round (item 1): such an id is a label, replaced by its derived id, and nothing else changes: the status
-        // is the document's (it was SUSPENDED, or the stricter status stated, with a warning a record).
+        // is the document's (it was SUSPENDED, or the stricter status stated, with a warning a record). The cases were
+        // "dmv two" and 130 characters, which the admin API's rule refuses; since the fifth round those are kept as
+        // written (below), and only an id with a control, format or separator character, or of more than 512
+        // characters, is replaced.
         Map<String, String> why = new LinkedHashMap<>();
-        why.put("dmv two", "not being 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit");
-        why.put("d".repeat(130), "not being 1 to 128 letters");
+        why.put("dmv\ntwo", "not being 1 to 512 characters free of control, format and separator characters");
+        why.put("d".repeat(513), "not being 1 to 512 characters");
         why.forEach((id, reason) -> {
             TestContext ctx = ctx();
             serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", id, "state", "revoked")));
@@ -755,24 +759,35 @@ class MappedSourceEdgesTest {
             assertThat(placed.snapshot().entity("partner:dmv@other@partner").orElseThrow().status()).isEqualTo(EntityStatus.REVOKED);
         }
         // In good standing, it is listed so (it was SUSPENDED until the fourth round); an @ followed by the source's own
-        // framework is an id.
+        // framework is an id. "dmv two" and 130 characters: kept as written since the fifth round.
         TestContext ctx = ctx();
-        serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv two")));
+        serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv\ntwo")));
         var r = loadQuietly(source(ctx, props("mapping", boundMapping())));
         assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
-                .containsExactly(derived("partner:dmv two") + " ACTIVE", "partner:college ACTIVE");
+                .containsExactly(derived("partner:dmv\ntwo") + " ACTIVE", "partner:college ACTIVE");
+        for (String id : List.of("dmv two", "d".repeat(130))) {
+            serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", id, "state", "revoked")));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", boundMapping())))) {
+                assertThat(state(manager, "partner").warnings()).as(id).isEmpty();
+                assertThat(registry.snapshot().entity("partner:" + id).orElseThrow().status()).as(id).isEqualTo(EntityStatus.REVOKED);
+                assertThat(decide(registry, MDL)).as(id).isEqualTo(Decision.NOT_TRUSTED);
+            }
+        }
         serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "id", "dmv@partner")));
         r = loadQuietly(source(ctx, props("mapping", boundMapping())));
         assertThat(r.entities()).extracting(e -> e.id() + " " + e.status()).containsExactly("partner:dmv@partner ACTIVE", "partner:college ACTIVE");
         assertThat(r.warnings()).isEmpty();
-        // A lookup answer too.
+        // A lookup answer too: an id with a line break replaced, "b c" kept as written (since the fifth round).
         Map<String, Object> p = lookupOnly();
         OnDemandResolver resolver = (OnDemandResolver) source(ctx, p);
-        ctx.http.json(BASE + "did%3Aexample%3Ab", Json.write(Map.of("id", "b c", "did", "did:example:b")));
+        ctx.http.json(BASE + "did%3Aexample%3Ab", Json.write(Map.of("id", "b\nc", "did", "did:example:b")));
         assertThat(resolver.resolve(Identifier.did("did:example:b"))).hasValueSatisfying(e -> {
-            assertThat(e.id()).isEqualTo(derived("b c"));
+            assertThat(e.id()).isEqualTo(derived("b\nc"));
             assertThat(e.status()).isEqualTo(EntityStatus.ACTIVE);
         });
+        ctx.http.json(BASE + "did%3Aexample%3Ac", Json.write(Map.of("id", "b c", "did", "did:example:c")));
+        assertThat(resolver.resolve(Identifier.did("did:example:c"))).hasValueSatisfying(e -> assertThat(e.id()).isEqualTo("b c"));
     }
 
     @Test

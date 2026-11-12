@@ -150,8 +150,8 @@ class MappedSourceValidationTest {
                 "certificates", List.of(der("ds"), "not a certificate")));
         unreadable.put("its certificates are one text, not a list", members("state", "revoked", "certificates", der("ds")));
         unreadable.put("it yields no id", members("state", "revoked", "id", null, "identifier", "dmv"));
-        // (An id that breaks the admin API's rule was a case here: since the third round (item 8) such a record is listed
-        // under an id derived from it, MappedSourceEdgesTest.item8_anEntityWhoseIdTheRegistryCannotTake...)
+        // (An id that breaks the admin API's rule was a case here: since the third round (item 8) such a record is listed,
+        // and since the fifth under its id as written when an entry can carry it, MappedSourceRoundFiveTest.item1_...)
         Map<String, String> messages = Map.of(
                 "its certificates hold something that is not one", "mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: ",
                 "its certificates are one text, not a list", "mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: certificates: "
