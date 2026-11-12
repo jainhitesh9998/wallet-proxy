@@ -278,18 +278,34 @@ class MappedSourceValidationTest {
     void b_oneMappedTextValueIsAtMost8192Characters() throws Exception {
         // name: ^.publisher repeats the root's text into every record: 2,000 records of a 200 kB publisher were
         // 400,000,000 characters from a 350 kB document.
+        // Third round (item 8): a name, a display member or an attribute only describes the party; over the bound it is
+        // left out with a warning, and the record is otherwise read (it was listed SUSPENDED, and the load failed when
+        // no record was left in good standing). Any other member over the bound still cannot be read.
         TestContext ctx = ctx();
         serveJson(ctx, issuers(3, Map.of("publisher_name", "P".repeat(8_193))));
         Map<String, Object> m = MappedSourceAttacksTest.entities("name", "^.publisher_name");
-        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", m)))).contains("none of the 3 records at $.issuers[*] "
-                + "could be read completely; record 1 (id 'partner:p0') is listed SUSPENDED: name: a value of 8193 characters, "
-                + "more than 8192");
+        var r = source(ctx, props("mapping", m)).load();
+        assertThat(r.entities()).hasSize(3).allSatisfy(e -> {
+            assertThat(e.status()).isEqualTo(EntityStatus.ACTIVE);
+            assertThat(e.display()).isEmpty();
+        });
+        assertThat(r.warnings()).hasSize(3).first().asString().isEqualTo("mapping.entities[0]: record 1 (id 'partner:p0') is listed "
+                + "without text too long to keep: name: a value of 8193 characters, more than 8192");
         serveJson(ctx, issuers(3, Map.of("publisher_name", "P".repeat(8_192))));
-        assertThat(source(ctx, props("mapping", m)).load().entities()).hasSize(3).allSatisfy(e -> assertThat(e.status()).isEqualTo(EntityStatus.ACTIVE));
-        // So inside an attribute that is an object, and for an anchor (skipped) and an identifier (the load fails).
+        r = source(ctx, props("mapping", m)).load();
+        assertThat(r.entities()).hasSize(3).allSatisfy(e -> assertThat(e.status()).isEqualTo(EntityStatus.ACTIVE));
+        assertThat(r.warnings()).isEmpty();
+        assertThat(r.entities().getFirst().displayName("en")).hasSize(8_192);
+        serveJson(ctx, issuers(3, Map.of("state_name", "S".repeat(8_193))));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", MappedSourceAttacksTest.entities("status",
+                "^.state_name"))))).contains("none of the 3 records at $.issuers[*] could be read completely; record 1 (id 'partner:p0') is "
+                + "listed SUSPENDED: status: a value of 8193 characters, more than 8192");
+        // So inside an attribute that is an object, and for an identifier (the load fails).
         serveJson(ctx, issuers(1, Map.of("meta", Map.of("note", "N".repeat(8_193)))));
-        assertThat(MappedSourceRulesTest.loadError(source(ctx, props("mapping", MappedSourceAttacksTest.entities("attributes",
-                Map.of("meta", "^.meta")))))).contains("is listed SUSPENDED: attributes.meta: a value of 8193 characters, more than 8192");
+        r = source(ctx, props("mapping", MappedSourceAttacksTest.entities("attributes", Map.of("meta", "^.meta")))).load();
+        assertThat(r.entities()).singleElement().satisfies(e -> assertThat(e.attributes()).doesNotContainKey("meta"));
+        assertThat(r.warnings()).singleElement().asString().endsWith("is listed without text too long to keep: attributes.meta: a value "
+                + "of 8193 characters, more than 8192");
         Map<String, Object> d = issuers(1, Map.of());
         d.put("issuers", List.of(Map.of("id", "p0", "credential_issuer", "https://p0.example/" + "x".repeat(8_200), "state", "active")));
         serveJson(ctx, d);

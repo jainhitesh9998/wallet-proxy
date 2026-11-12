@@ -1051,12 +1051,15 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     throw unreadable(block, label, message(refused));
                 }
             }
+            // Text that only describes the party and was too long to keep is left out, and said: the record is read.
+            String leftOut = m.leftOut().isEmpty() ? null : "without text too long to keep: " + String.join("; ", m.leftOut());
             if (unusable.isEmpty()) {
-                return entity;
+                return leftOut == null ? entity : new Noted(entity, label + " is listed " + leftOut);
             }
             EntityStatus status = entity.status().ordinal() > EntityStatus.SUSPENDED.ordinal() ? entity.status() : EntityStatus.SUSPENDED;
             return new Incomplete(entity.toBuilder().status(status).build(),
-                    label + " is listed " + status + ": " + Mapping.escape(String.join("; ", unusable.values())));
+                    label + " is listed " + status + ": " + Mapping.escape(String.join("; ", unusable.values()))
+                            + (leftOut == null ? "" : "; and " + leftOut));
         }
 
         /** A record by its number, and by its id when it has one that may be shown. */
@@ -1162,6 +1165,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         private record Incomplete(TrustedEntity entity, String warning) {
         }
 
+        /** An entity read completely, but for text that only describes it and was too long to keep; and the warning. */
+        private record Noted(TrustedEntity entity, String warning) {
+        }
+
         /**
          * What a load (or a lookup answer) has yielded, all its records together, against {@code limits.text}: the
          * characters of its mapped text, and one for each node ({@link Mapping.Weight}), so that nulls and empty lists
@@ -1213,6 +1220,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 } else if (result instanceof Incomplete i) {
                     why = i.warning();
                     pending.add(i.entity());
+                } else if (result instanceof Noted n) {
+                    mapped++;
+                    pending.add(n.entity());
+                    warnings.add(block.where + ": " + n.warning());
                 } else {
                     mapped++;
                     pending.add(result);
@@ -1356,7 +1367,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         // A record about the identifier that cannot be read completely answers with a suspended entity,
                         // not with "not found"; one whose identifying members cannot be read fails the lookup.
                         Object mapped = mapEntity(l.entity(), records.get(i), root, provenance, i + 1, text);
-                        TrustedEntity e = mapped instanceof TrustedEntity te ? te : mapped instanceof Incomplete inc ? inc.entity() : null;
+                        TrustedEntity e = mapped instanceof TrustedEntity te ? te : mapped instanceof Incomplete inc ? inc.entity()
+                                : mapped instanceof Noted n ? n.entity() : null;
                         if (e != null) {
                             if (e.identifiers().contains(identifier)) {
                                 about.add(e);

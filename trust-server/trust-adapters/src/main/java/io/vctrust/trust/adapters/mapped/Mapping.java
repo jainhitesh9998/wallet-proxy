@@ -61,10 +61,40 @@ final class Mapping {
 
     /**
      * What one record yields: its entry in the registry format, with every member that could be read, the members that
-     * could not, each with why (in the order the record was read), and what the entry weighs against the load's budget
+     * could not, each with why (in the order the record was read), the text that only describes the party and was too
+     * long to keep ({@link #DESCRIPTIVE}), each with why, and what the entry weighs against the load's budget
      * ({@code limits.text}): its nodes and the characters of its text ({@link Weight}).
      */
-    record Mapped(Map<String, Object> entry, Map<String, String> unusable, long weight) {
+    record Mapped(Map<String, Object> entry, Map<String, String> unusable, List<String> leftOut, long weight) {
+    }
+
+    /**
+     * The members whose text only describes a party: a name, a display item's members, an attribute. One that is longer
+     * than {@link Value#MAX_TEXT} (a logo written as a {@code data:} URI of 20,000 characters is ordinary) is left out
+     * with a warning; the record is otherwise read. Leaving it out restricts nothing and identifies nobody.
+     */
+    static final Set<String> DESCRIPTIVE = Set.of("name", "display", "attributes");
+
+    /**
+     * The members that hold certificates or a CRL: not text that a path repeats, but material that is as long as it is
+     * (a PEM bundle, a CRL). Up to {@link #MAX_CERTIFICATE_TEXT} characters each; they count toward the load's budget,
+     * not toward the record's characters.
+     */
+    static final Set<String> CERTIFICATES = Set.of("certificates", "certificate", "crl");
+
+    /** The longest certificate, PEM bundle or CRL one value may hold. */
+    static final int MAX_CERTIFICATE_TEXT = 1_048_576;
+
+    /** The longest text a value of {@code member} may be. */
+    static int cap(String member) {
+        return CERTIFICATES.contains(member) ? MAX_CERTIFICATE_TEXT : Value.MAX_TEXT;
+    }
+
+    /** A text longer than its member may hold: what describes a party is left out for it, anything else cannot be read. */
+    static final class TooLong extends IllegalArgumentException {
+        TooLong(String member, int length, int cap) {
+            super(member + ": a value of " + length + " characters, more than " + cap);
+        }
     }
 
     /**
@@ -93,6 +123,8 @@ final class Mapping {
         final long maxCharacters;
         int nodes;
         long characters;
+        /** The characters of certificates and CRLs ({@link #CERTIFICATES}): the load's, not the record's. */
+        long material;
 
         Weight(int maxNodes, long maxCharacters) {
             this.maxNodes = maxNodes;
@@ -116,11 +148,12 @@ final class Mapping {
         void add(Weight w) {
             nodes += w.nodes;
             characters += w.characters;
+            material += w.material;
         }
 
-        /** Against the load's budget, a node weighs one character. */
+        /** Against the load's budget, a node weighs one character, and a certificate's characters count too. */
         long units() {
-            return nodes + characters;
+            return nodes + characters + material;
         }
 
         /** @throws IllegalArgumentException naming {@code member} when it takes the record beyond its budget */
@@ -138,7 +171,7 @@ final class Mapping {
     /**
      * Adds what {@code v} weighs to {@code w}, until {@code w} is past one of its bounds.
      *
-     * @throws IllegalArgumentException naming {@code member}, for a text in it longer than {@link Value#MAX_TEXT}
+     * @throws TooLong naming {@code member}, for a text in it longer than the member may hold ({@link #cap})
      */
     static void weigh(Object v, String member, Weight w) {
         if (w.over()) {
@@ -163,10 +196,14 @@ final class Mapping {
         } else {
             String t = Value.text(v);
             if (t != null) {
-                if (t.length() > Value.MAX_TEXT) {
-                    throw new IllegalArgumentException(member + ": a value of " + t.length() + " characters, more than " + Value.MAX_TEXT);
+                if (t.length() > cap(member)) {
+                    throw new TooLong(member, t.length(), cap(member));
                 }
-                w.characters += t.length();
+                if (CERTIFICATES.contains(member)) {
+                    w.material += t.length();
+                } else {
+                    w.characters += t.length();
+                }
             }
         }
     }
@@ -447,14 +484,15 @@ final class Mapping {
                 r.read("roles", () -> roles(record, root));
                 r.read("identifiers", () -> objects("identifiers", record, root, Set.of("type", "value"), Items.WHOLE));
                 r.read("certificates", () -> texts("certificates", record, root));
-                r.read("name", () -> text("name", record, root));
-                r.read("display", () -> objects("display", record, root, Set.of("name"), Items.LEAVE_OUT));
+                r.read("name", () -> describing(r, () -> text("name", record, root)));
+                r.read("display", () -> objects(items(fields.get("display")), "display", record, root, Set.of("name"), Items.LEAVE_OUT,
+                        r.leftOut));
                 r.read("authorizations", () -> authorizations(record, root));
                 r.read("status", () -> text("status", record, root));
                 r.read("validFrom", () -> instant("validFrom", record, root));
                 r.read("validUntil", () -> instant("validUntil", record, root));
                 r.read("contexts", () -> contexts(record, root));
-                r.read("attributes", () -> attributes(record, root));
+                r.read("attributes", () -> attributes(record, root, r.leftOut));
                 r.read("metadataPolicy", () -> policy(record, root));
             } else {
                 r.read("id", () -> text("id", record, root));
@@ -493,7 +531,7 @@ final class Mapping {
                     out.put("framework", framework);
                 }
             }
-            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable), r.weight.units());
+            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable), List.copyOf(r.leftOut), r.weight.units());
         }
 
         /**
@@ -504,6 +542,8 @@ final class Mapping {
         private static final class Reader {
             final Map<String, Object> values = new LinkedHashMap<>();
             final Map<String, String> unusable = new LinkedHashMap<>();
+            /** Text that only describes the party and is too long to keep ({@link #DESCRIPTIVE}): left out, and why. */
+            final List<String> leftOut = new ArrayList<>();
             final Weight weight = Weight.ofRecord();
 
             void read(String member, java.util.function.Supplier<Object> value) {
@@ -523,16 +563,35 @@ final class Mapping {
             }
         }
 
-        private Map<String, Object> attributes(Object record, Object root) {
+        /**
+         * A member that only describes the party: a text in it too long to keep is left out, and said in
+         * {@code leftOut}, rather than making the record unreadable.
+         */
+        private static Object describing(Reader r, java.util.function.Supplier<Object> value) {
+            try {
+                return value.get();
+            } catch (TooLong e) {
+                r.leftOut.add(e.getMessage());
+                return null;
+            }
+        }
+
+        private Map<String, Object> attributes(Object record, Object root, List<String> leftOut) {
             Map<String, Object> attributes = new LinkedHashMap<>();
             @SuppressWarnings("unchecked")
             Map<String, Value> named = (Map<String, Value>) fields.get("attributes");
             named.forEach((k, v) -> {
                 Object found = first(v, "attributes." + k, record, root);
                 // An object or a list is weighed here, to name the attribute that is too much: its texts are mapped
-                // text, and its nulls and empty lists nodes, as anywhere.
+                // text, and its nulls and empty lists nodes, as anywhere. An attribute only describes the party: one
+                // with a text too long to keep is left out.
                 Weight w = Weight.ofRecord();
-                weigh(found, "attributes." + k, w);
+                try {
+                    weigh(found, "attributes." + k, w);
+                } catch (TooLong e) {
+                    leftOut.add(e.getMessage());
+                    return;
+                }
                 w.check("attributes." + k);
                 put(attributes, k, found);
             });
@@ -663,7 +722,7 @@ final class Mapping {
             for (Item item : items(fields.get("authorizations"))) {
                 JsonPath.Restricted found = item.each == null ? null : restricted(item.each, "authorizations", record, root);
                 List<Map<String, Object>> these = mapItems(item, found == null ? List.of(record) : found.nodes(), "authorizations", root,
-                        Set.of(), Items.STRICT);
+                        Set.of(), Items.STRICT, null);
                 out.addAll(these);
                 bounded(out, "authorizations");
                 if (these.isEmpty() && found != null && found.there()) {
@@ -770,23 +829,28 @@ final class Mapping {
 
         /** Nested items: one per match of the item's {@code each}, or one; {@code needs} are the members an item must have. */
         private List<Map<String, Object>> objects(String member, Object record, Object root, Set<String> needs, Items rule) {
-            return objects(items(fields.get(member)), member, record, root, needs, rule);
+            return objects(items(fields.get(member)), member, record, root, needs, rule, null);
         }
 
         private static List<Map<String, Object>> objects(List<Item> items, String member, Object record, Object root,
-                                                         Set<String> needs, Items rule) {
+                                                         Set<String> needs, Items rule, List<String> leftOut) {
             List<Map<String, Object>> out = new ArrayList<>();
             for (Item item : items) {
                 out.addAll(mapItems(item, item.each == null ? List.of(record) : select(item.each, member, record, root), member, root,
-                        needs, rule));
+                        needs, rule, leftOut));
                 bounded(out, member);
             }
             return out;
         }
 
-        /** The items of one nested {@code each}, one per match. */
+        /**
+         * The items of one nested {@code each}, one per match.
+         *
+         * @param leftOut for the items of a member that only describes the party (display): where a member of an item
+         *                whose text is too long to keep is said, as it is left out; null for any other member
+         */
         private static List<Map<String, Object>> mapItems(Item item, List<Object> matches, String member, Object root, Set<String> needs,
-                                                          Items rule) {
+                                                          Items rule, List<String> leftOut) {
             bounded(matches, member);   // before any is mapped: each costs the evaluation of the item's members
             List<Map<String, Object>> out = new ArrayList<>();
             for (Object match : matches) {
@@ -797,7 +861,17 @@ final class Mapping {
                 List<String> fromDocument = new ArrayList<>();
                 for (Map.Entry<String, Value> e : item.members.entrySet()) {
                     String k = e.getKey();
-                    put(o, k, scalar(first(e.getValue(), member + "." + k, match, root), member + "." + k));
+                    String value;
+                    try {
+                        value = scalar(first(e.getValue(), member + "." + k, match, root), member + "." + k);
+                    } catch (TooLong tooLong) {
+                        if (leftOut == null) {
+                            throw tooLong;
+                        }
+                        leftOut.add(tooLong.getMessage());
+                        value = null;
+                    }
+                    put(o, k, value);
                     if (rule == Items.STRICT && !o.containsKey(k)) {
                         throw new IllegalArgumentException(member + ": an item yields no " + k
                                 + "; an authorization is never left open where the document does not say so");
@@ -832,7 +906,7 @@ final class Mapping {
                     Item item = (Item) e;
                     boolean pinned = item.members().containsKey("sha256");
                     out.addAll(objects(List.of(item), "contexts", record, root, pinned ? Set.of("url", "sha256") : Set.of("url"),
-                            pinned ? Items.WHOLE : Items.LEAVE_OUT));
+                            pinned ? Items.WHOLE : Items.LEAVE_OUT, null));
                 }
                 bounded(out, "contexts");
             }
@@ -847,8 +921,8 @@ final class Mapping {
             if (t == null) {
                 throw new IllegalArgumentException(member + " is " + (v instanceof Map<?, ?> ? "an object" : "a list") + ", not a value");
             }
-            if (t.length() > Value.MAX_TEXT) {
-                throw new IllegalArgumentException(member + ": a value of " + t.length() + " characters, more than " + Value.MAX_TEXT);
+            if (t.length() > cap(member)) {
+                throw new TooLong(member, t.length(), cap(member));
             }
             return t;
         }

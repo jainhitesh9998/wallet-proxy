@@ -590,4 +590,77 @@ class MappedSourceEdgesTest {
             }
         }
     }
+
+    // 8: honest lists that were refused or suspended without need -------------------------------------------------------
+
+    @Test
+    void item8_textThatOnlyDescribesAPartyAndIsOverTheCapIsLeftOutAndThePartyIsRead() {
+        Map<String, Object> m = boundMapping();
+        block(m).put("display", List.of(Map.of("each", "$.display[*]", "locale", "$.language", "name", "$.title", "logoUri", "$.logo")));
+        block(m).put("attributes", Map.of("motto", "$.motto"));
+        String logo = "data:image/png;base64," + "A".repeat(20_000);   // an ordinary logo, written into the list
+        Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "display", List.of(Map.of("language", "en",
+                "title", "Utopia DMV", "logo", logo)), "motto", "M".repeat(8_193)));
+        List<Object> issuers = new ArrayList<>((List<?>) d.get("issuers"));
+        Map<String, Object> college = new LinkedHashMap<>((Map<String, Object>) issuers.get(1));
+        college.put("name", "C".repeat(8_193));
+        issuers.set(1, college);
+        d.put("issuers", issuers);
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            // Suspended before, for a logo: its credentials were not trusted.
+            assertThat(decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
+            var dmv = registry.snapshot().entity("partner:dmv").orElseThrow();
+            assertThat(dmv.status()).isEqualTo(EntityStatus.ACTIVE);
+            assertThat(dmv.displayName("en")).isEqualTo("Utopia DMV");
+            assertThat(dmv.display().getFirst().logoUri()).isNull();
+            assertThat(dmv.attributes()).doesNotContainKey("motto");
+            var other = registry.snapshot().entity("partner:college").orElseThrow();
+            assertThat(other.status()).isEqualTo(EntityStatus.ACTIVE);
+            assertThat(other.display()).isEmpty();
+            assertThat(state(manager, "partner").warnings()).containsExactly(
+                    "mapping.entities[0]: record 1 (id 'partner:dmv') is listed without text too long to keep: display.logoUri: a value of "
+                            + logo.length() + " characters, more than 8192; attributes.motto: a value of 8193 characters, more than 8192",
+                    "mapping.entities[0]: record 2 (id 'partner:college') is listed without text too long to keep: name: a value of 8193 "
+                            + "characters, more than 8192");
+        }
+    }
+
+    @Test
+    void item8_certificatesAndCrlsAreNotTextAndCountTowardTheLoadsBudgetOnly() throws Exception {
+        // A PEM bundle of an issuer's certificates longer than a text value and than a record's text: the load failed.
+        String bundle = String.join("", Collections.nCopies(100, MappedTesting.pem("ds-nl"))) + MappedTesting.pem("ds");
+        assertThat(bundle.length()).isGreaterThan(65_536);
+        Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates", List.of(bundle)));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", boundMapping())))) {
+            assertThat(state(manager, "partner").lastError()).isNull();
+            assertThat(state(manager, "partner").warnings()).isEmpty();
+            assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().certificates()).isNotEmpty();
+            assertThat(decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
+        }
+        // They still count toward the load's budget.
+        assertThat(loadError(source(ctx, props("mapping", boundMapping(), "limits", Map.of("text", 50_000)))))
+                .contains("The list's records yield more than 50000 characters and nodes of mapped text (limits.text)");
+        // A CRL pushed in the list, for an anchor.
+        Map<String, Object> m = boundMapping();
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "crl", "$.crl")));
+        d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER")));
+        String crl = java.util.Base64.getEncoder().encodeToString(new byte[15_000]);
+        d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", der("iaca"), "crl", crl)));
+        serveJson(ctx, d);
+        var r = source(ctx, props("mapping", m)).load();
+        assertThat(r.anchors()).singleElement().satisfies(a -> assertThat(a.constraints()).containsEntry("crl", crl));
+        // Up to a mebibyte.
+        d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", der("iaca"), "crl", "A".repeat(1_048_577)),
+                Map.of("kid", "rp-ca", "certificate", der("rp-ca"))));
+        serveJson(ctx, d);
+        assertThat(source(ctx, props("mapping", m)).load().warnings()).singleElement().asString()
+                .contains("is skipped: crl: a value of 1048577 characters, more than 1048576");
+    }
 }
