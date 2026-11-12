@@ -275,12 +275,13 @@ public class TrustCoreConfiguration {
 
     @Bean
     SnapshotService snapshotService(TrustRegistry registry, ServiceKeyManager keys, JsonMapper mapper, DidService dids,
-                                    CrlService crls, ContextService contexts, TrustProperties props, Clock clock) {
+                                    CrlService crls, ContextService contexts, TrustProperties props, Clock clock,
+                                    TrustMechanisms mechanisms) {
         TrustProperties.Service s = props.getService();
         return new SnapshotService(registry, keys, mapper, dids, props.getRevocation().isEnabled() ? crls : null, contexts,
                 new SnapshotService.Options(s.getSnapshotTtl(), s.isSnapshotDidDocuments(), s.getSnapshotMaxDidDocuments(),
                         s.getSnapshotDidDeadline(), props.getRevocation().getSnapshotMaxCrlBytes(), s.getSnapshotMaxContextBytes(),
-                        s.getSnapshotRecheck()), clock);
+                        s.getSnapshotRecheck()), clock, mechanisms);
     }
 
     @Bean

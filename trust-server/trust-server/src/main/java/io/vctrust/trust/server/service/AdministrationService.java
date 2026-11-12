@@ -2,6 +2,7 @@ package io.vctrust.trust.server.service;
 
 import io.vctrust.trust.core.model.TrustDomain;
 import io.vctrust.trust.core.policy.ClientProfile;
+import io.vctrust.trust.core.policy.TrustMechanisms;
 import io.vctrust.trust.core.registry.RegistrySnapshot;
 import io.vctrust.trust.core.registry.SourceState;
 import io.vctrust.trust.core.registry.TrustRegistry;
@@ -33,6 +34,7 @@ public class AdministrationService {
     private final StatusListRelay statusLists;
     private final CrlService crls;
     private final int snapshotMaxCrlBytes;
+    private final TrustMechanisms mechanisms;
 
     /**
      * @param clients             the configured client profiles
@@ -42,6 +44,13 @@ public class AdministrationService {
     public AdministrationService(TrustSourceManager sources, TrustRegistry registry, Supplier<Collection<ClientProfile>> clients,
                                  DidService dids, MetadataService metadata, ContextService contexts, StatusListRelay statusLists,
                                  CrlService crls, int snapshotMaxCrlBytes) {
+        this(sources, registry, clients, dids, metadata, contexts, statusLists, crls, snapshotMaxCrlBytes, TrustMechanisms.NONE);
+    }
+
+    /** @param mechanisms the operator's trust mechanisms, whose ids the registry summary lists in the order they are tried */
+    public AdministrationService(TrustSourceManager sources, TrustRegistry registry, Supplier<Collection<ClientProfile>> clients,
+                                 DidService dids, MetadataService metadata, ContextService contexts, StatusListRelay statusLists,
+                                 CrlService crls, int snapshotMaxCrlBytes, TrustMechanisms mechanisms) {
         this.sources = sources;
         this.registry = registry;
         this.clients = clients;
@@ -51,6 +60,7 @@ public class AdministrationService {
         this.statusLists = statusLists;
         this.crls = crls;
         this.snapshotMaxCrlBytes = snapshotMaxCrlBytes;
+        this.mechanisms = mechanisms;
     }
 
     /** Refuses (and records) an operator action by a client that is not an operator. */
@@ -102,6 +112,8 @@ public class AdministrationService {
         out.put("entitiesByFramework", byFramework);
         out.put("entitiesByRole", byRole);
         out.put("anchorsByDomain", byDomain);
+        // The trust mechanisms in force, in the order they are tried: what every snapshot carries in "mechanisms".
+        out.put("mechanisms", mechanisms.ids());
         out.put("didCacheSize", dids.cacheSize());
         return out;
     }

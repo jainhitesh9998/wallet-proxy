@@ -1,6 +1,7 @@
 package io.vctrust.trust.server.config;
 
 import io.vctrust.trust.core.did.DidResolver;
+import io.vctrust.trust.core.policy.TrustMechanisms;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.core.spi.ResourceLoader;
@@ -42,8 +43,8 @@ public class UseCaseConfiguration {
 
     @Bean
     ServiceDescription serviceDescription(ServiceKeyManager keys, TrustRegistry registry, TrustSourceManager sources,
-                                          DidResolver didResolver, TrustProperties props) {
-        return new ServiceDescription(keys, registry, sources, didResolver, props);
+                                          DidResolver didResolver, TrustProperties props, TrustMechanisms mechanisms) {
+        return new ServiceDescription(keys, registry, sources, didResolver, props, mechanisms);
     }
 
     @Bean
@@ -64,10 +65,11 @@ public class UseCaseConfiguration {
     @Bean
     AdministrationService administrationService(TrustSourceManager sources, TrustRegistry registry, ClientRegistry clients,
                                                 DidService dids, MetadataService metadata, ContextService contexts,
-                                                StatusListRelay statusLists, CrlService crls, TrustProperties props) {
+                                                StatusListRelay statusLists, CrlService crls, TrustProperties props,
+                                                TrustMechanisms mechanisms) {
         TrustProperties.Revocation revocation = props.getRevocation();
         return new AdministrationService(sources, registry, clients::all, dids, metadata, contexts, statusLists,
-                revocation.isEnabled() ? crls : null, revocation.getSnapshotMaxCrlBytes());
+                revocation.isEnabled() ? crls : null, revocation.getSnapshotMaxCrlBytes(), mechanisms);
     }
 
     @Bean

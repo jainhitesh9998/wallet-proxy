@@ -7,6 +7,7 @@ import io.vctrust.trust.core.model.IdentifierType;
 import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustedEntity;
 import io.vctrust.trust.core.policy.ClientProfile;
+import io.vctrust.trust.core.policy.TrustMechanisms;
 import io.vctrust.trust.core.registry.RegistrySnapshot;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.util.Hashes;
@@ -32,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * The signed trust snapshot ({@code typ: trust-snapshot+jwt}): everything one client needs to make trust
  * decisions on its own device — the frameworks, entities, trust anchors and evaluation policy visible to that
- * client, the DID documents of registered DID identifiers, the JSON-LD contexts their credentials use, and the
+ * client, the operator's trust mechanisms, the DID documents of registered DID identifiers, the JSON-LD contexts their credentials use, and the
  * trust anchors' CRLs. Clients verify it with the pinned service key and evaluate locally, so the service never
  * learns which issuers or verifiers a user deals with, nor which certificates they check for revocation.
  *
@@ -45,6 +46,17 @@ public class SnapshotService {
 
     /** Bumped when the claim layout changes incompatibly. */
     public static final int FORMAT = 4;
+    /**
+     * The layout of a snapshot that carries the operator's trust mechanisms ({@code mechanisms}). A client that predates
+     * them refuses it rather than decide without them; a service with no mechanisms keeps issuing {@link #FORMAT},
+     * unchanged, so that clients which do not know mechanisms keep working where none are configured.
+     */
+    public static final int FORMAT_WITH_MECHANISMS = 5;
+
+    /** The layout this service issues. */
+    public static int format(TrustMechanisms mechanisms) {
+        return mechanisms.isEmpty() ? FORMAT : FORMAT_WITH_MECHANISMS;
+    }
 
     public record Snapshot(String jwt, String etag, Instant issuedAt) {
     }
@@ -70,14 +82,16 @@ public class SnapshotService {
     private final ContextService contexts;
     private final Options options;
     private final Clock clock;
+    private final TrustMechanisms mechanisms;
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
 
     /**
-     * @param crls     anchor CRLs to embed (null: none)
-     * @param contexts JSON-LD contexts to embed (null: none)
+     * @param crls       anchor CRLs to embed (null: none)
+     * @param contexts   JSON-LD contexts to embed (null: none)
+     * @param mechanisms the operator's trust mechanisms, carried to every client in the order they are tried
      */
     public SnapshotService(TrustRegistry registry, ServiceKeyManager keys, JsonMapper mapper, DidService dids,
-                           CrlService crls, ContextService contexts, Options options, Clock clock) {
+                           CrlService crls, ContextService contexts, Options options, Clock clock, TrustMechanisms mechanisms) {
         this.registry = registry;
         this.keys = keys;
         this.mapper = mapper;
@@ -86,6 +100,7 @@ public class SnapshotService {
         this.contexts = contexts;
         this.options = options;
         this.clock = clock;
+        this.mechanisms = mechanisms;
         // A change in the registry or the CRLs is looked at on the next request instead of after the recheck interval.
         registry.onChange(s -> cache.replaceAll((k, c) -> new Cached(c.snapshot(), c.digest(), Instant.MIN)));
         if (crls != null) {
@@ -129,9 +144,13 @@ public class SnapshotService {
         policy.put("requireSignedIssuerMetadata", client.requireSignedIssuerMetadata());
 
         Map<String, Object> claims = new LinkedHashMap<>();
-        claims.put("format", FORMAT);
+        claims.put("format", format(mechanisms));
         claims.put("client_id", client.clientId());
         claims.put("policy", policy);
+        // Rules, like the policy: every client is given all of them, whatever its frameworks.
+        if (!mechanisms.isEmpty()) {
+            claims.put("mechanisms", mechanisms.claim());
+        }
         claims.put("frameworks", frameworks);
         claims.put("entities", entities);
         claims.put("anchors", anchors);

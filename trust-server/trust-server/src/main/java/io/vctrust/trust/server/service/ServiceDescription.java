@@ -2,6 +2,7 @@ package io.vctrust.trust.server.service;
 
 import io.vctrust.trust.core.did.DidResolver;
 import io.vctrust.trust.core.model.CredentialFormats;
+import io.vctrust.trust.core.policy.TrustMechanisms;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
 import io.vctrust.trust.server.config.TrustProperties;
@@ -27,9 +28,10 @@ public class ServiceDescription {
     private final TrustProperties.Cache cache;
     private final TrustProperties.Auth auth;
     private final boolean anonymous;
+    private final TrustMechanisms mechanisms;
 
     public ServiceDescription(ServiceKeyManager keys, TrustRegistry registry, TrustSourceManager sources, DidResolver didResolver,
-                              TrustProperties props) {
+                              TrustProperties props, TrustMechanisms mechanisms) {
         this.keys = keys;
         this.registry = registry;
         this.sources = sources;
@@ -38,6 +40,7 @@ public class ServiceDescription {
         this.cache = props.getCache();
         this.auth = props.getAuth();
         this.anonymous = props.getAnonymous().isEnabled();
+        this.mechanisms = mechanisms;
     }
 
     /** The discovery document. */
@@ -69,7 +72,8 @@ public class ServiceDescription {
         doc.put("signing_key_thumbprints", keys.thumbprints());
         doc.put("endpoints", endpoints);
         doc.put("signed_response_media_type", "application/jwt");
-        doc.put("snapshot_format", SnapshotService.FORMAT);
+        // 5 once mechanisms are configured: a client that reads only 4 cannot apply them, and must be updated first.
+        doc.put("snapshot_format", SnapshotService.format(mechanisms));
         doc.put("ready", sources.ready());
         // Devices check CRLs themselves: anchor CRLs ship in the snapshot, others come from the CA or through the proxy.
         Map<String, Object> rev = new LinkedHashMap<>();
