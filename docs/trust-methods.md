@@ -500,21 +500,34 @@ Pinned anchors and entities decide only while no snapshot is usable: before the 
 held one is past its expiry and its grace period. With a snapshot, the service is the authority and a pinned anchor
 overrides nothing. A decision from pinned trust says so (`source: 'pinned'`, warning `local.pinned`).
 
-Pinned trust has no CRLs of its own and no client profile. Revocation then rests on the certificates' distribution
-points (`lookups.crl`), and an unknown status is a warning: `node docs/examples/trust-methods/library.mjs pinned`
-shows the revoked Document Signer of the example accepted with `x509.revocation_unknown`, because its distribution
-point does not answer. The strict rules of a client profile (`require-revocation-status`, `strict-authorization`)
-arrive with the snapshot and apply only to decisions made from it.
+Pinned trust has no CRLs of its own and no client profile of its own. Revocation then rests on the certificates'
+distribution points (`lookups.crl`). The rules do not lapse with the snapshot: a decision from pinned trust is made
+under the rules in force, which are the app's own minimum (the library option `policy`) made stricter by the client
+profile of the last snapshot that verified. A profile with `require-revocation-status`, `strict-authorization` or
+`require-signed-issuer-metadata` therefore stays strict after its snapshot has expired, also when the app restarts;
+only the snapshot's data (its anchors, entities and CRLs) is no longer used. Rules are taken only from a snapshot whose
+signature and audience verify against the pinned service keys: a store that was cleared, or that holds a snapshot that
+no longer verifies, states none. An app that must stay strict whatever happens to its storage states its own minimum.
+`status().rules` says which rules are in force.
+
+```sh
+node docs/examples/trust-methods/library.mjs pinned          # rules in force: none
+node docs/examples/trust-methods/library.mjs pinned strict   # policy: { requireRevocationStatus: true }
+```
+
+The distribution point of the revoked Document Signer does not answer, so its status is unknown: without rules it is
+`TRUSTED` with the warning `x509.revocation_unknown`; with the app's minimum it is `NOT_TRUSTED`, and so is the
+Document Signer that names no distribution point at all.
 
 ## Which setting belongs to which method
 
 | Method | Service | Client profile | Library |
 | --- | --- | --- | --- |
-| X.509 chains | Anchors (`domain`, `entity`, `constraints.docTypes`) from any source | `frameworks`, `strict-authorization` | `pinned.anchors` |
-| CRLs | Anchor `constraints.crlUrls` / `crl`; `trust.revocation.enabled`, `refresh`, `fetch-anchor-crls`, `fetch-on-demand`, `relay-crls`, `max-crl-bytes`, `snapshot-max-crl-bytes` | `require-revocation-status` | `lookups.crl` |
+| X.509 chains | Anchors (`domain`, `entity`, `constraints.docTypes`) from any source | `frameworks`, `strict-authorization` | `pinned.anchors`, `policy.strictAuthorization` |
+| CRLs | Anchor `constraints.crlUrls` / `crl`; `trust.revocation.enabled`, `refresh`, `fetch-anchor-crls`, `fetch-on-demand`, `relay-crls`, `max-crl-bytes`, `snapshot-max-crl-bytes` | `require-revocation-status` | `lookups.crl`, `policy.requireRevocationStatus` |
 | Status lists | `trust.revocation.relay-status-lists`, `status-list-default-ttl`, `status-list-max-ttl`, `max-status-list-bytes`; anchors of domain `status-list` | | `lookups.statusLists` |
 | DIDs | Entity identifiers; `trust.service.snapshot-did-documents` and its limits; `trust.did.*`; `trust.cache.did-ttl` | | `lookups.did` |
-| Identifiers, issuer metadata | Entity identifiers, `metadataPolicy`; `trust.cache.metadata-*` | `allow-unregistered-metadata`, `require-signed-issuer-metadata` | `lookups.metadata`, `issuerMetadata.signed` |
+| Identifiers, issuer metadata | Entity identifiers, `metadataPolicy`; `trust.cache.metadata-*` | `allow-unregistered-metadata`, `require-signed-issuer-metadata` | `lookups.metadata`, `issuerMetadata.signed`, `policy.requireSignedIssuerMetadata` |
 | JSON-LD contexts | Entity `contexts`, `oid4vci-discovery` sources; `trust.service.snapshot-max-context-bytes`; `trust.cache.context-ttl` | | |
 | Unknown parties | `openid-federation`, `ebsi-tir` sources | | `lookups.unknownParties` |
 

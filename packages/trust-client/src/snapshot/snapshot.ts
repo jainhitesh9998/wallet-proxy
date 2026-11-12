@@ -71,6 +71,12 @@ export interface SnapshotData {
   stale: boolean;
 }
 
+/**
+ * What of a snapshot outlives its data: the rules it states (its policy), and which snapshot stated them. See
+ * evaluation/rules.ts; a further kind of rule a snapshot carries is added here and there.
+ */
+export type SnapshotRules = Pick<SnapshotData, 'id' | 'issuedAt' | 'policy'>;
+
 export function snapshotRef(s: SnapshotData): SnapshotRef {
   return { id: s.id, issuedAt: s.issuedAt.toISOString(), expiresAt: s.expiresAt.toISOString(), stale: s.stale };
 }
@@ -136,6 +142,18 @@ export class SnapshotManager {
     const t = this.now();
     if (t > this.parsed.expiresAt.getTime() + this.graceMs) return null;
     return { ...this.parsed, stale: t > this.parsed.expiresAt.getTime() };
+  }
+
+  /**
+   * The rules stated by the most recent snapshot that verified, also once its data can no longer be used (past its
+   * expiry and grace period) and after a restart: the stored snapshot is verified again when it is loaded, and one
+   * that does not verify is dropped. Only its rules leave this way, never the data of a snapshot that is not usable.
+   * Null when no snapshot verified.
+   */
+  async lastRules(): Promise<SnapshotRules | null> {
+    await this.load();
+    const p = this.parsed;
+    return p ? { id: p.id, issuedAt: p.issuedAt, policy: p.policy } : null;
   }
 
   private async load(): Promise<void> {

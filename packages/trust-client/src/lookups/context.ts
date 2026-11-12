@@ -1,6 +1,7 @@
 /** What the lookups have in common: what the client hands each of them, and the rule "proxy first, then the standard mechanism". */
 import type { ExpiringCache } from '../cache/store.js';
 import type { Logger, LookupPolicy, LookupVia } from '../client.js';
+import type { RulesInForce } from '../evaluation/rules.js';
 import type { SnapshotRefresher } from '../snapshot/refresh.js';
 import type { SnapshotManager } from '../snapshot/snapshot.js';
 import type { HttpTransport } from '../transport/http.js';
@@ -12,6 +13,8 @@ export interface LookupContext {
   snapshots: SnapshotManager;
   /** The snapshot to decide from, refreshed when due. */
   refresher: SnapshotRefresher;
+  /** The rules in force: the app's minimum and the service's last word. */
+  rules: RulesInForce;
   cache: ExpiringCache;
   lookups: Required<LookupPolicy>;
   /** For requests to a counterparty. */

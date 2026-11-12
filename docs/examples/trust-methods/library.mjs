@@ -1,8 +1,9 @@
 // The device side of docs/trust-methods.md: the same questions, decided by the client library from the snapshot.
 // From the repository root, with the example service running (see application.yml) and the packages built:
 //
-//   node docs/examples/trust-methods/library.mjs            # decisions from the service's snapshot
-//   node docs/examples/trust-methods/library.mjs pinned     # no service: only trust pinned in the app
+//   node docs/examples/trust-methods/library.mjs                  # decisions from the service's snapshot
+//   node docs/examples/trust-methods/library.mjs pinned           # no service: only trust pinned in the app
+//   node docs/examples/trust-methods/library.mjs pinned strict    # the same, with the app's own minimum rules
 import { readFileSync } from 'node:fs';
 import { createTrustClient } from '@vctrust/trust-client';
 
@@ -19,8 +20,13 @@ const show = (what, d) => {
 };
 
 const pinnedOnly = process.argv[2] === 'pinned';
+const strict = process.argv[3] === 'strict';
 const trust = createTrustClient(pinnedOnly
-  ? { pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: pem('iaca'), constraints: { docTypes: [mdl.credentialType] } }] } }
+  ? {
+    pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: pem('iaca'), constraints: { docTypes: [mdl.credentialType] } }] },
+    // The app's own minimum: in force with or without a snapshot, whatever the client profile says.
+    ...(strict ? { policy: { requireRevocationStatus: true } } : {}),
+  }
   : {
     // trustOnFirstUse and insecureHosts are for a service on localhost; an app ships keys: { thumbprints: [...] }.
     service: { url: 'http://localhost:8095', clientId: 'wallet', apiKey: 'wallet-key', keys: { trustOnFirstUse: true } },
@@ -31,6 +37,8 @@ if (!pinnedOnly) {
   const snapshot = await trust.sync();
   console.log(`snapshot: ${snapshot.anchors} anchors, ${snapshot.entities} entities, ${snapshot.crls} CRLs, ${snapshot.didDocuments} DID documents`);
 }
+const { rules } = await trust.status();
+console.log(`rules in force: ${Object.keys(rules).filter((r) => rules[r]).join(', ') || 'none'}`);
 
 // X.509 chains: an mdoc Document Signer under the IACA, one that was revoked, and one under nobody's IACA.
 show('Document Signer', await trust.evaluate({ role: 'issuer', subject: { x5c: [x5c('ds')] }, context: mdl }));

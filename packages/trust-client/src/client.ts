@@ -12,7 +12,8 @@
  * signed by the service and verified with the pinned service keys (issuer metadata, DID documents).
  *
  * Without a usable snapshot the client decides from the trust pinned in the app, and says so in every decision; it
- * never answers TRUSTED without verified data.
+ * never answers TRUSTED without verified data. The rules do not lapse with the data: the app's own minimum and the
+ * client profile of the last snapshot that verified stay in force (evaluation/rules.ts).
  */
 import { CircuitBreaker } from './transport/circuit.js';
 import { HttpTransport } from './transport/http.js';
@@ -20,6 +21,7 @@ import { ExpiringCache, MemoryCacheStore, type CacheStore } from './cache/store.
 import { SnapshotManager, snapshotInfo, snapshotRef, type ServiceKeyPolicy, type SnapshotInfo } from './snapshot/snapshot.js';
 import { SnapshotRefresher } from './snapshot/refresh.js';
 import { LocalEvaluator, type LocalTrustData, identifierKey, validateChainOnDevice } from './evaluation/local.js';
+import { minimumRules, RulesInForce, type MinimumRules, type TrustRules } from './evaluation/rules.js';
 import type { LookupContext } from './lookups/context.js';
 import { CrlLookup } from './lookups/crl.js';
 import { DidLookup } from './lookups/did.js';
@@ -35,6 +37,7 @@ import type { DidResolutionResult, EntityFilter, EntityView, IssuerMetadataResul
   ServiceDiscovery, ServiceStatus, ServiceStatusEvent, TrustDecision, TrustFramework, TrustQuery } from './types.js';
 
 export type { SnapshotInfo } from './snapshot/snapshot.js';
+export type { MinimumRules, TrustRules } from './evaluation/rules.js';
 export type { ContextDocument } from './lookups/json-ld.js';
 export type { FetchedStatusList, StatusCheckOptions } from './lookups/status-list.js';
 
@@ -84,8 +87,18 @@ export interface TrustClientConfig {
     /** The keys the service signs with, pinned out of band (see /.well-known/trust-service). */
     keys: ServiceKeyPolicy;
   };
-  /** Trust bundled with the app: decides only while no snapshot is usable. With a snapshot, the service is the authority. */
+  /**
+   * Trust bundled with the app: decides only while no snapshot is usable. With a snapshot, the service is the authority.
+   * Pinned trust has no rules of its own: the rules in force apply to it (see {@link policy}).
+   */
   pinned?: { anchors?: PinnedAnchor[]; entities?: EntityView[] };
+  /**
+   * The app's own minimum rules, in force for every decision this client makes, with or without a snapshot. Each rule
+   * in force is the stricter of this and the client profile the service states in its snapshots; the profile of the
+   * last snapshot that verified stays in force once that snapshot can no longer be used, also after a restart (with the
+   * same storage). A key that is not one of these is an error.
+   */
+  policy?: MinimumRules;
   /** Default 'proxy' with a service, 'direct' without. One value for every kind, or one per kind. */
   lookups?: LookupVia | LookupPolicy;
   /**
@@ -127,6 +140,12 @@ export interface TrustStatus {
   lastSyncError?: string;
   /** No usable snapshot, or one past its expiry: decisions carry a warning. */
   degraded: boolean;
+  /**
+   * The rules decisions are made under now: the app's minimum, made stricter by the client profile of the last
+   * snapshot that verified (also when that snapshot is no longer usable). Always set by {@link TrustClient.status};
+   * optional so that a TrustStatus an app writes itself (a placeholder before the first call) still type-checks.
+   */
+  rules?: TrustRules;
 }
 
 export class TrustClient {
@@ -134,6 +153,7 @@ export class TrustClient {
   private readonly transport: HttpTransport | null;
   private readonly snapshots: SnapshotManager;
   private readonly refresher: SnapshotRefresher;
+  private readonly rules: RulesInForce;
   private readonly local: LocalEvaluator;
   private readonly now: () => number;
   private readonly pinnedAnchors: LocalAnchor[];
@@ -151,6 +171,7 @@ export class TrustClient {
     if (!f) throw new Error('No fetch implementation available');
     const insecureHosts = config.http?.insecureHosts ?? [];
     this.now = config.clock ? () => config.clock!().getTime() : Date.now;
+    const minimum = minimumRules(config.policy);
     const service = config.service;
     if (service) {
       // Nothing the service signs is accepted without knowing for whom and by which key: a missing value here would
@@ -176,12 +197,13 @@ export class TrustClient {
     }) : null;
     this.snapshots = new SnapshotManager(this.transport, store, service?.keys ?? {}, service?.clientId,
       config.snapshot?.graceMs ?? 7 * 24 * 3600_000, this.now);
+    this.rules = new RulesInForce(minimum, () => this.snapshots.lastRules());
     this.refresher = new SnapshotRefresher(this.snapshots, {
       service: !!this.transport, refreshMs: config.snapshot?.refreshMs ?? 3600_000, retryMs: config.snapshot?.retryMs ?? 30_000,
       now: this.now, logger: config.logger, onChange: (reason) => this.notify(reason),
     });
     const ctx: LookupContext = {
-      transport: this.transport, snapshots: this.snapshots, refresher: this.refresher, cache: new ExpiringCache(store, this.now),
+      transport: this.transport, snapshots: this.snapshots, refresher: this.refresher, rules: this.rules, cache: new ExpiringCache(store, this.now),
       lookups: this.lookups, fetch: f, timeoutMs: config.http?.timeoutMs ?? 8000, insecureHosts, now: this.now, logger: config.logger,
     };
     const validateChain = (chain: string[], domain: string) => this.validateChain(chain, domain);
@@ -199,10 +221,11 @@ export class TrustClient {
 
   // ---- status ----------------------------------------------------------------------------------------
 
-  /** What decisions currently rest on, and why the snapshot is not fresh when it is not. */
+  /** What decisions currently rest on and the rules they are made under, and why the snapshot is not fresh when it is not. */
   async status(): Promise<TrustStatus> {
     const s = await this.snapshots.current().catch(() => null);
-    return { service: this.serviceStatus, snapshot: s ? snapshotInfo(s) : null, lastSyncError: this.refresher.lastSyncError, degraded: !s || s.stale };
+    return { service: this.serviceStatus, snapshot: s ? snapshotInfo(s) : null, lastSyncError: this.refresher.lastSyncError, degraded: !s || s.stale,
+      rules: await this.rules.now(s) };
   }
 
   /**
@@ -236,8 +259,10 @@ export class TrustClient {
 
   private async localData(): Promise<LocalTrustData> {
     const snap = await this.refresher.snapshot();
+    // The rules outlive the data: without a usable snapshot, the app's minimum and the last verified profile still hold.
+    const policy = await this.rules.now(snap);
     if (!snap) {
-      return { entities: this.config.pinned?.entities ?? [], anchors: this.pinnedAnchors, frameworks: [], source: 'pinned', snapshot: null };
+      return { entities: this.config.pinned?.entities ?? [], anchors: this.pinnedAnchors, frameworks: [], source: 'pinned', policy, snapshot: null };
     }
     // Parties found on demand are not snapshot entries: the evaluator meets them only where the service's would.
     const onDemand = this.lookups.unknownParties && this.transport
@@ -246,7 +271,7 @@ export class TrustClient {
         return hit ? { entity: hit.entities[0]!, identifier: hit.identifier as { type: string; value: string } } : undefined;
       } : undefined;
     return { onDemand, entities: snap.entities, anchors: snap.anchors, crls: snap.crls, frameworks: snap.frameworks, source: 'snapshot',
-      policy: snap.policy, snapshot: snapshotRef(snap), stale: snap.stale };
+      policy, snapshot: snapshotRef(snap), stale: snap.stale };
   }
 
   // ---- the trusted list ------------------------------------------------------------------------------

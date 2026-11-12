@@ -207,7 +207,7 @@ DNS rebinding), bounded size, redirects and time.
 | --- | --- |
 | Service unreachable, snapshot held | Decisions continue from the snapshot; lookups use the standard mechanisms (`source: fallback`); refresh is retried at intervals, not per request |
 | Snapshot expired, still within grace | Decisions continue and carry the warning `snapshot.stale`; `status().degraded` is true |
-| No usable snapshot | Only trust pinned in the app decides (`source: pinned`, warning `local.pinned`); with nothing pinned every party is `UNKNOWN` |
+| No usable snapshot | Only trust pinned in the app decides (`source: pinned`, warning `local.pinned`); with nothing pinned every party is `UNKNOWN`. The rules stay in force: the app's own minimum (`policy`) and the client profile of the last snapshot that verified, also after a restart; that snapshot's data is not used |
 | Proxy answers with something unsigned, signed for someone else, or about another party | Treated as a failed lookup: fallback |
 | Upstream of the proxy is down | The proxy serves its last copy (marked stale) for a bounded time |
 | Service not ready (a required source has not loaded) | `503 not_ready`; clients keep what they hold |

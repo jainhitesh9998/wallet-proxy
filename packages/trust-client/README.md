@@ -8,7 +8,8 @@ The client library of [Wallet Proxy](../../README.md): how a wallet or verifier 
   through the service's proxy, verified on the device. When the proxy is down, declines or answers with something
   that does not verify, the library uses the standard mechanism of the specification instead.
 - **No service, no trust by accident.** Without a usable snapshot only what the app pins decides; with nothing
-  pinned, the answer is `UNKNOWN`.
+  pinned, the answer is `UNKNOWN`. The rules do not lapse with the snapshot: the app's own minimum and the client
+  profile of the last snapshot that verified stay in force.
 
 TypeScript, ES modules. Runs in Node 20+, browsers and React Native (Hermes). It depends on `@noble/curves`,
 `@noble/hashes` and `fflate` only: CBOR, DER, X.509, CRL and JOSE handling are its own and strict.
@@ -26,6 +27,7 @@ const trust = createTrustClient({
     keys: { thumbprints: ['WwQ9...3TL4'] },    // the service's signing key, from /.well-known/trust-service
   },
   pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: IACA_PEM }] },   // used only while no snapshot is usable
+  policy: { requireRevocationStatus: true },   // the app's own minimum rules, with or without a snapshot
   lookups: 'proxy',                            // or 'direct', or per kind: { metadata, did, crl, statusLists, unknownParties }
   storage: new KeyValueCacheStore(AsyncStorage),   // or localStorage; keeps the snapshot across starts
 });
@@ -97,7 +99,7 @@ a `credential_issuer` identical to the one asked for, https.
 ```ts
 const s = await trust.status();
 // { service: 'online' | 'offline' | 'unconfigured', snapshot: { id, issuedAt, expiresAt, stale, entities, anchors, ... } | null,
-//   lastSyncError?, degraded }
+//   lastSyncError?, degraded, rules: { requireRevocationStatus, strictAuthorization, requireSignedIssuerMetadata } }
 trust.onStatusChange((e) => ...);
 await trust.sync();          // refresh the snapshot now
 ```

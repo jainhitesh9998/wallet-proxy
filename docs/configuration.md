@@ -375,9 +375,10 @@ await trust.status();
 | --- | --- | --- |
 | `service.url`, `clientId`, `apiKey` | none | The trust service and the client this app is registered as. Without `service` the client runs on the standard mechanisms and the pinned trust alone |
 | `service.keys` | required with `service` | `thumbprints` (RFC 7638) or `jwks` of the service's signing keys. `trustOnFirstUse: true` pins the first key seen: development only |
-| `pinned.anchors`, `pinned.entities` | none | Trust bundled with the app. Used only while no snapshot is usable; with a snapshot the service is the authority, and a pinned anchor does not override it |
+| `pinned.anchors`, `pinned.entities` | none | Trust bundled with the app. Used only while no snapshot is usable; with a snapshot the service is the authority, and a pinned anchor does not override it. Pinned trust has no rules of its own: it is decided under the rules in force (`policy`) |
+| `policy` | none | The app's own minimum rules: `{ requireRevocationStatus, strictAuthorization, requireSignedIssuerMetadata }`, each `true` or `false`, in force for every decision with or without a snapshot. Each rule in force is the stricter of this and the client profile of the last snapshot that verified, which stays in force when no snapshot is usable (also after a restart, with the same `storage`). An unknown key is an error. `status().rules` reports the rules in force |
 | `lookups` | `'proxy'` with a service | `'proxy'`, `'direct'`, or per kind: `{ metadata, did, crl, statusLists, unknownParties }`. `crl` may also be `'none'`. `unknownParties: true` asks the service about parties absent from the snapshot (off by default: it tells the service which party) |
-| `issuerMetadata.signed` | `'off'` | `'verify'` uses signed issuer metadata when the issuer has it, `'require'` refuses issuers without it. A client profile with `require-signed-issuer-metadata` forces `'require'` |
+| `issuerMetadata.signed` | `'off'` | `'verify'` uses signed issuer metadata when the issuer has it, `'require'` refuses issuers without it. A client profile with `require-signed-issuer-metadata`, or `policy.requireSignedIssuerMetadata`, forces `'require'` |
 | `snapshot.refreshMs`, `retryMs`, `graceMs` | 1 h, 30 s, 7 d | Refresh interval; wait after a failed refresh; how long an expired snapshot may still be used |
 | `http.fetch`, `timeoutMs`, `retries`, `backoffMs`, `circuitBreaker` | platform `fetch` | Transport |
 | `http.insecureHosts` | `[]` | Hosts that may be reached over plain http. Loopback development only; everything else must be https |

@@ -79,11 +79,14 @@ export class IssuerMetadataLookup {
       expiresAt: new Date(now + 300_000).toISOString(), stale: false, entityId: trust.entity?.id ?? null, trust, source };
   }
 
-  /** The signed-metadata rule in force: the client profile's (snapshot policy) or this client's configuration. */
+  /**
+   * The signed-metadata rule in force: 'require' when the rules in force require signed metadata (the app's minimum,
+   * or the client profile of the last snapshot that verified, also once that snapshot is no longer usable); otherwise
+   * this client's configuration.
+   */
   private async signedMetadataCheck(): Promise<SignedMetadataCheck | undefined> {
     let mode = this.signed;
-    const d = await this.ctx.snapshots.current().catch(() => null);
-    if (d?.policy.requireSignedIssuerMetadata) mode = 'require';
+    if ((await this.ctx.rules.now()).requireSignedIssuerMetadata) mode = 'require';
     if (mode === 'off') return undefined;
     return { mode, now: new Date(this.ctx.now()), trustSigner: async (x5c) => {
       const r = await this.validateChain(x5c, 'credential-issuer');

@@ -11,6 +11,7 @@ import type { Crl } from '../x509/crl.js';
 import { verifyX509Signature } from '../x509/signature.js';
 import { findVerificationMethod, hasRelationship, didError, parseDid } from '../did/did.js';
 import { jwkThumbprint } from '../crypto/keys.js';
+import type { TrustRules } from './rules.js';
 import type { DidEvidence, DidResolutionResult, EntityView, Evidence, Identifier, PathValidationResult, Reason, SnapshotRef, TrustDecision,
   TrustFramework, TrustQuery, TrustedAuthorityMatch, TrustedAuthorityQuery } from '../types.js';
 
@@ -22,7 +23,8 @@ export interface LocalTrustData {
   frameworks: TrustFramework[];
   /** 'snapshot' when a verified snapshot backs the data; 'pinned' when only the trust bundled with the app does */
   source: 'snapshot' | 'pinned';
-  policy?: { strictAuthorization?: boolean; requireRevocationStatus?: boolean };
+  /** The rules in force (evaluation/rules.ts): also with pinned trust, which has no client profile of its own. Absent: none. */
+  policy?: Partial<TrustRules>;
   snapshot?: SnapshotRef | null;
   stale?: boolean;
   /**
