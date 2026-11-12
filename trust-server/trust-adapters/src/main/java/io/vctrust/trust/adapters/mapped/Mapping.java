@@ -908,6 +908,16 @@ final class Mapping {
             return !(v instanceof Value.Translated t) || t.path().select(current, root).stream().anyMatch(o -> !Value.blank(o));
         }
 
+        /**
+         * Whether the document states something where a form reads it: its path selects a node that is not
+         * {@link Value#blank}. A type that is there but yields nothing (a value its translation does not know) is
+         * stated, and cannot be read; one that is not there at all is not.
+         */
+        private static boolean stated(Value v, Object current, Object root) {
+            JsonPath p = v instanceof Value.At a ? a.path() : v instanceof Value.Translated t ? t.path() : null;
+            return p == null || p.select(current, root).stream().anyMatch(o -> !Value.blank(o));
+        }
+
         /** Nested items: one per match of the item's {@code each}, or one; {@code needs} are the members an item must have. */
         private List<Map<String, Object>> objects(String member, Object record, Object root, Set<String> needs, Items rule) {
             return objects(items(fields.get(member)), member, record, root, needs, rule, null);
@@ -953,7 +963,8 @@ final class Mapping {
                         value = null;
                     }
                     put(o, k, value);
-                    if (rule == Items.STRICT && !o.containsKey(k)) {
+                    if (rule == Items.STRICT && !o.containsKey(k) && !(k.equals("type") && item.allowAnyType()
+                            && !stated(e.getValue(), match, root))) {
                         throw new IllegalArgumentException(member + ": an item yields no " + k
                                 + "; an authorization is never left open where the document does not say so");
                     }
@@ -1053,10 +1064,12 @@ final class Mapping {
     /**
      * A nested item (an identifier, an authorization, a display, a context): its own {@code each}, and members.
      *
-     * @param allowEmpty whether the list {@code each} reads, when it is there and yields no item, leaves the member
-     *                   absent rather than restricting to nothing (an upstream that writes [] for "none registered")
+     * @param allowEmpty   whether the list {@code each} reads, when it is there and yields no item, leaves the member
+     *                     absent rather than restricting to nothing (an upstream that writes [] for "none registered")
+     * @param allowAnyType whether an authorization item whose {@code type} is not there at all covers every type of its
+     *                     format, as the registry format reads such an item (and this service's snapshot writes it)
      */
-    record Item(JsonPath each, Map<String, Value> members, boolean allowEmpty) {
+    record Item(JsonPath each, Map<String, Value> members, boolean allowEmpty, boolean allowAnyType) {
     }
 
     /** The forms of a member that takes a list; only those of a list that restricts may say {@code allowEmpty}. */
@@ -1094,6 +1107,9 @@ final class Mapping {
         Set<String> all = new LinkedHashSet<>(allowed);
         all.add("each");
         all.add("allowEmpty");
+        if (restricting) {
+            all.add("allowAnyType");
+        }
         Map<String, Object> m = members(raw, where, all);
         JsonPath each = null;
         if (m.containsKey("each")) {
@@ -1126,7 +1142,13 @@ final class Mapping {
         if (members.isEmpty()) {
             throw new IllegalArgumentException(where + " maps nothing");
         }
-        return new Item(each, java.util.Collections.unmodifiableMap(members), allowEmpty);
+        boolean allowAnyType = flag(m, "allowAnyType", where);
+        if (m.containsKey("allowAnyType") && !(members.get("type") instanceof Value.At || members.get("type") instanceof Value.Translated)) {
+            // Said where it cannot apply, it would be ignored: refused instead.
+            throw new IllegalArgumentException(where + ": allowAnyType applies to an item whose type is read from the document "
+                    + "(a path, or a translation of one)");
+        }
+        return new Item(each, java.util.Collections.unmodifiableMap(members), allowEmpty, allowAnyType);
     }
 
     /** Contexts: a URL as a value form, or {url, sha256} items (a pinned digest). */

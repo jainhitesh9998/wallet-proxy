@@ -208,7 +208,7 @@ class MappedSourceFixturesTest {
                   - { each: "$.identifiers[*]", type: $.type, value: $.value }
                 certificates: $.certificates[*].certificate
                 authorizations:
-                  - { each: "$.authorizations[*]", allowEmpty: true, format: $.format, type: $.type }
+                  - { each: "$.authorizations[*]", allowEmpty: true, allowAnyType: true, format: $.format, type: $.type }
                 status: $.status
                 validFrom: $.validFrom
                 validUntil: $.validUntil

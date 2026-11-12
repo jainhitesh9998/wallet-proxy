@@ -531,7 +531,10 @@ instant depends on where it was written). A member cannot be read either when:
   writes `default: ACTIVE`;
 - an authorization item lacks a member its mapping configures, or yields nothing at all: an authorization without its
   `type` would cover every type of its format, and none at all would leave the entity unconstrained for a lenient
-  client;
+  client. Unless the item says `allowAnyType: true` (its `type` a path, or a translation of one): an item whose `type`
+  is not there at all (or `null`, or `""`) then covers every type of its format, as the registry format reads it and
+  this service's snapshot writes it. Write it only for an upstream that means that; a `type` that is there but cannot
+  be read (the wrong kind, a value its translation does not know) still makes the record unreadable;
 - it is a restricting list (an `authorizations` item's `each`, an anchor's `docTypes`) that is there and yields
   nothing: `credentials: []`, `[null]` or `{}` under a mapped `authorizations`, a filter that keeps none of them, and
   the same for `docTypes`. This holds wherever the list is in the path: `$.doctypes[*].id` over `"doctypes": []`, or
@@ -757,7 +760,8 @@ Another trust service like this one, through its snapshot ([the claims](architec
 its `/api/v1/snapshot`, `headers` its API key for this service, `format: jws`, and
 `verify: { jwksLocation: file:/etc/trust/upstream-jwks.json, typ: trust-snapshot+jwt, audience: <this service's client id there> }`.
 A snapshot writes `"authorizations": []` for an entity with none registered, and `"roles": []` for one it states no
-role for, hence `allowEmpty: true` on those lists.
+role for, hence `allowEmpty: true` on those lists; and an authorization without `type` for one that covers every type
+of its format, hence `allowAnyType: true`.
 
 ```yaml
 list: { issuer: $.iss, issuedAt: $.iat, nextUpdate: $.exp }
@@ -771,7 +775,7 @@ entities:
       - { each: "$.identifiers[*]", type: $.type, value: $.value }
     certificates: $.certificates[*].certificate
     authorizations:                      # [] in a snapshot: none registered, unconstrained unless the client is strict
-      - { each: "$.authorizations[*]", allowEmpty: true, format: $.format, type: $.type }
+      - { each: "$.authorizations[*]", allowEmpty: true, allowAnyType: true, format: $.format, type: $.type }
     status: $.status
     validUntil: $.validUntil
     metadataPolicy: $.metadataPolicy

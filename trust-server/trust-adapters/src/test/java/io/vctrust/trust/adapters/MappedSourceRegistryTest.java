@@ -183,4 +183,74 @@ class MappedSourceRegistryTest {
         assertThat(loadError(source(ctx, props("mapping", rolesMapping(ROLES_NONE_STATED))))).startsWith("mapping.entities[0]: record 1 "
                 + "(id 'withdrawn') cannot be read: it yields no role");
     }
+
+    // 5: what else assumed the old registry: this service's own snapshot -------------------------------------------------
+
+    static Map<String, Object> withItem(Map<String, Object> item) {
+        return MappedSourceValidationTest.withAuthorizations(item);
+    }
+
+    static Map<String, Object> credential(Object type, boolean typed) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("format", "mso_mdoc");
+        if (typed) {
+            m.put("type", type);
+        }
+        return m;
+    }
+
+    @Test
+    void item5_anAuthorizationThatStatesNoTypeCoversEveryTypeOfItsFormatUnderAllowAnyType() {
+        // This service's snapshot writes an authorization for every type of a format without "type" (the vectors hold
+        // such entries since the registry fixes); round one made such an item unreadable, so fixture 3 suspended them.
+        Map<String, Object> anyType = new LinkedHashMap<>(Map.of("each", "$.credentials[*]", "allowAnyType", true, "format", "$.format",
+                "type", "$.type"));
+        Map<String, Object> strict = new LinkedHashMap<>(anyType);
+        strict.remove("allowAnyType");
+        for (Map<String, Object> credential : List.of(credential(null, false), credential(null, true), credential("", true))) {
+            TestContext ctx = ctx();
+            serveJson(ctx, MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("credentials", List.of(credential))));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", withItem(anyType))))) {
+                assertThat(state(m, "partner").lastError()).as(credential.toString()).isNull();
+                assertThat(state(m, "partner").warnings()).as(credential.toString()).isEmpty();
+                var dmv = registry.snapshot().entity("partner:dmv").orElseThrow();
+                assertThat(dmv.status()).isEqualTo(EntityStatus.ACTIVE);
+                assertThat(dmv.authorizations()).singleElement().satisfies(a -> assertThat(a.type()).isNull());
+                assertThat(MappedSourceValidationTest.decide(registry, MDL)).isEqualTo(Decision.TRUSTED);
+                assertThat(MappedSourceValidationTest.decide(registry, MappedSourceValidationTest.PID)).isEqualTo(Decision.TRUSTED);
+            }
+            // Without it, as before: the item lacks its type, and the record is listed SUSPENDED.
+            registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", withItem(strict))))) {
+                assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).isEqualTo(EntityStatus.SUSPENDED);
+                assertThat(MappedSourceValidationTest.decide(registry, MDL)).isEqualTo(Decision.NOT_TRUSTED);
+            }
+        }
+        // A type that is there but cannot be read is not "no type".
+        Map<String, Object> translated = new LinkedHashMap<>(anyType);
+        translated.put("type", Map.of("path", "$.type", "values", Map.of("mdl", MDL)));
+        Map<String, Map.Entry<Map<String, Object>, Map<String, Object>>> unreadable = new LinkedHashMap<>();
+        unreadable.put("an object", Map.entry(credential(Map.of("id", MDL), true), anyType));
+        unreadable.put("a value its translation does not know", Map.entry(credential("photo-id", true), translated));
+        unreadable.forEach((what, c) -> {
+            TestContext ctx = ctx();
+            serveJson(ctx, MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("credentials", List.of(c.getKey()))));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", withItem(c.getValue()))))) {
+                assertThat(registry.snapshot().entity("partner:dmv").orElseThrow().status()).as(what).isEqualTo(EntityStatus.SUSPENDED);
+                assertThat(MappedSourceValidationTest.decide(registry, MDL)).as(what).isEqualTo(Decision.NOT_TRUSTED);
+            }
+        });
+        // Only on an authorization item whose type is read from the document.
+        Map<String, Object> constant = new LinkedHashMap<>(anyType);
+        constant.put("type", MDL);
+        assertThat(loadError(source(ctx(), props("mapping", withItem(constant))))).contains("mapping.entities[0].authorizations[0]: "
+                + "allowAnyType applies to an item whose type is read from the document");
+        Map<String, Object> identifiers = MappedSourceValidationTest.boundMapping();
+        ((Map<String, Object>) ((List<?>) identifiers.get("entities")).getFirst()).put("identifiers", List.of(Map.of("type", "URL",
+                "value", "$.credential_issuer", "allowAnyType", true)));
+        assertThat(loadError(source(ctx(), props("mapping", identifiers)))).contains("mapping.entities[0].identifiers[0]: unknown member "
+                + "[allowAnyType]");
+    }
 }
