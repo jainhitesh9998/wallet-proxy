@@ -500,11 +500,33 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         /**
          * One anchor per id. Records of one load that map to the same id must say the same thing (certificate, domain,
          * status, entity, constraints), and then are one anchor; otherwise the load fails. The registry keeps the first
-         * anchor of an id, so a CA withdrawn further down the list would stay active.
+         * anchor of an id, so a CA withdrawn further down the list would stay active. Records with the same domain and
+         * certificate must agree on status, entity and constraints whatever their ids: a CA listed active as
+         * {@code row-1} and withdrawn as {@code row-7} would otherwise be trusted through {@code row-1}.
          */
         private static List<TrustAnchor> onePerId(List<TrustAnchor> anchors) throws TrustSourceException {
             Map<String, TrustAnchor> byId = new LinkedHashMap<>();
+            Map<List<Object>, TrustAnchor> byCertificate = new java.util.HashMap<>();
             for (TrustAnchor a : anchors) {
+                TrustAnchor same = byCertificate.putIfAbsent(List.of(a.domain().name(), a.certificate()), a);
+                if (same != null && !Objects.equals(same.id(), a.id())) {
+                    List<String> differ = new ArrayList<>();
+                    if (same.status() != a.status()) {
+                        differ.add("status");
+                    }
+                    if (!Objects.equals(same.entityId(), a.entityId())) {
+                        differ.add("entity");
+                    }
+                    if (!same.constraints().equals(a.constraints())) {
+                        differ.add("constraints");
+                    }
+                    if (!differ.isEmpty()) {
+                        throw new TrustSourceException("Anchors " + Mapping.quote(same.id()) + " and " + Mapping.quote(a.id())
+                                + " have the same certificate in domain " + a.domain().name() + " and a different "
+                                + String.join(" and ", differ.size() <= 2 ? differ : List.of(String.join(", ", differ.subList(0, differ.size() - 1)),
+                                differ.getLast())) + ": which one holds cannot be told");
+                    }
+                }
                 TrustAnchor held = byId.putIfAbsent(a.id(), a);
                 if (held == null) {
                     continue;
@@ -579,6 +601,24 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 out.add(s == null ? e : e.toBuilder().status(s.status()).validFrom(s.validFrom()).validUntil(s.validUntil()).build());
             }
             return out;
+        }
+
+        /**
+         * Several records about one party: the first, with the strictest status, the latest validFrom and the earliest
+         * validUntil of them all, as {@link #strictest} does for the records of one id in a list. Which record comes
+         * first in an answer must not decide that a party revoked in another one is in good standing.
+         */
+        private static TrustedEntity strictestOf(List<TrustedEntity> records) {
+            TrustedEntity first = records.getFirst();
+            EntityStatus status = first.status();
+            Instant from = first.validFrom();
+            Instant until = first.validUntil();
+            for (TrustedEntity e : records) {
+                status = e.status().ordinal() > status.ordinal() ? e.status() : status;
+                from = e.validFrom() != null && (from == null || e.validFrom().isAfter(from)) ? e.validFrom() : from;
+                until = e.validUntil() != null && (until == null || e.validUntil().isBefore(until)) ? e.validUntil() : until;
+            }
+            return records.size() == 1 ? first : first.toBuilder().status(status).validFrom(from).validUntil(until).build();
         }
 
         /**
@@ -1200,6 +1240,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         throw new TrustSourceException("The lookup answered with more than " + config.maxEntities() + " records");
                     }
                     Text text = new Text(config.maxText(), "The answer's records");
+                    List<TrustedEntity> about = new ArrayList<>();
                     for (int i = 0; i < records.size(); i++) {
                         // A record about the identifier that cannot be read completely answers with a suspended entity,
                         // not with "not found"; one whose identifying members cannot be read fails the lookup.
@@ -1207,13 +1248,14 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         TrustedEntity e = mapped instanceof TrustedEntity te ? te : mapped instanceof Incomplete inc ? inc.entity() : null;
                         if (e != null) {
                             if (e.identifiers().contains(identifier)) {
-                                found = Optional.of(e);
-                                break;
+                                about.add(e);
+                            } else {
+                                log.debug("Trust source '{}' (mapped): an answer about {} maps to an entity without that identifier",
+                                        def.id(), told(identifier.toString(), MAX_WARNING));
                             }
-                            log.debug("Trust source '{}' (mapped): an answer about {} maps to an entity without that identifier",
-                                    def.id(), told(identifier.toString(), MAX_WARNING));
                         }
                     }
+                    found = about.isEmpty() ? Optional.empty() : Optional.of(strictestOf(about));
                 }
             } catch (IOException e) {
                 throw new TrustSourceException("The lookup failed: " + e.getMessage(), e);

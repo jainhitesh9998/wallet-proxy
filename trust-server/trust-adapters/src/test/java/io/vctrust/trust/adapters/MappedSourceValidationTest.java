@@ -622,6 +622,62 @@ class MappedSourceValidationTest {
         assertThat(r.resolve(Identifier.did("did:example:b"))).isEmpty();
     }
 
+    // G: the same thing twice -----------------------------------------------------------------------------------
+
+    @Test
+    void g_aLookupAnswerWithSeveralRecordsAboutTheIdentifierHoldsTheStrictest() throws Exception {
+        TestContext ctx = ctx();
+        Map<String, Object> p = lookupOnly("entity", Map.of("each", "$.entries[*]", "id", "$.id", "roles", List.of("CREDENTIAL_ISSUER"),
+                "identifiers", List.of(Map.of("type", "DID", "value", "$.did")),
+                "status", Map.of("path", "$.state", "values", Map.of("active", "ACTIVE", "revoked", "REVOKED")),
+                "validUntil", "$.valid_until"));
+        OnDemandResolver r = (OnDemandResolver) source(ctx, p);
+        java.time.Instant soon = NOW.plus(Duration.ofDays(1));
+        ctx.http.json(BASE + "did%3Aexample%3Ab", Json.write(Map.of("entries", List.of(
+                Map.of("id", "b", "did", "did:example:b", "state", "active", "valid_until", NOW.plus(Duration.ofDays(30)).toString()),
+                Map.of("id", "b", "did", "did:example:b", "state", "revoked", "valid_until", soon.toString()),
+                Map.of("id", "x", "did", "did:example:x", "state", "active")))));
+        assertThat(r.resolve(Identifier.did("did:example:b"))).hasValueSatisfying(e -> {
+            assertThat(e.id()).isEqualTo("b");
+            assertThat(e.status()).isEqualTo(EntityStatus.REVOKED);
+            assertThat(e.validUntil()).isEqualTo(soon);
+        });
+    }
+
+    @Test
+    void g_oneCertificateUnderTwoAnchorIdsInOneDomainMustSayTheSameThing() {
+        Map<String, Object> m = boundMapping();
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate",
+                "status", Map.of("path", "$.state", "values", Map.of("active", "ACTIVE"), "default", "REVOKED"))));
+        Map<String, Object> d = boundList(1, members("certificates", null));   // the issuer bound by nothing but the anchor
+        d.put("authorities", List.of(Map.of("kid", "row-1", "certificate", der("iaca"), "state", "active"),
+                Map.of("kid", "row-7", "certificate", der("iaca"), "state", "withdrawn")));
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", m)))) {
+            assertThat(decide(registry, MDL)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(state(manager, "partner").lastError()).isEqualTo("Anchors 'row-1' and 'row-7' have the same certificate in domain "
+                    + "mdoc-iaca and a different status: which one holds cannot be told");
+        }
+        // Records that agree are two anchors of one certificate; one in another domain is another anchor.
+        d.put("authorities", List.of(Map.of("kid", "row-1", "certificate", der("iaca"), "state", "active"),
+                Map.of("kid", "row-7", "certificate", der("iaca"), "state", "active")));
+        serveJson(ctx, d);
+        try {
+            assertThat(source(ctx, props("mapping", m)).load().anchors()).extracting(a -> a.id()).containsExactly("row-1", "row-7");
+            Map<String, Object> other = boundMapping();
+            other.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "$.domain", "certificate", "$.certificate",
+                    "status", Map.of("path", "$.state", "values", Map.of("active", "ACTIVE"), "default", "REVOKED"))));
+            d.put("authorities", List.of(Map.of("kid", "row-1", "domain", "mdoc-iaca", "certificate", der("iaca"), "state", "active"),
+                    Map.of("kid", "row-7", "domain", "status-list", "certificate", der("iaca"), "state", "withdrawn")));
+            serveJson(ctx, d);
+            assertThat(source(ctx, props("mapping", other)).load().anchors()).hasSize(2);
+        } catch (io.vctrust.trust.core.spi.TrustSourceException e) {
+            throw new AssertionError(e.getMessage());
+        }
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();
