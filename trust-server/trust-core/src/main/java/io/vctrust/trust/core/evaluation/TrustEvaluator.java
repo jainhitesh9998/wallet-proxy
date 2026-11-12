@@ -208,12 +208,13 @@ public class TrustEvaluator {
         // An empty format or type is no format or type: the two evaluators must not read "" differently.
         String format = CredentialFormats.canonical(blankToNull(query.context().credentialFormat()));
         String type = blankToNull(query.context().credentialType());
-        // Every type the credential asserts must be authorized (a W3C VC may carry several).
+        // Every type the credential asserts must be authorized (a W3C VC may carry several). Each is read by the one rule
+        // of blankToNull, as the primary type is: what else counts as blank differs between platforms.
         Set<String> types = new LinkedHashSet<>();
         if (type != null) {
             types.add(type);
         }
-        query.context().credentialTypes().stream().filter(t -> t != null && !t.isBlank()).forEach(types::add);
+        query.context().credentialTypes().stream().map(TrustEvaluator::blankToNull).filter(Objects::nonNull).forEach(types::add);
         return new Evaluation(query, profile, snap, now, query.role(), format, type, types,
                 selectMechanism(query.role(), format, types), new ArrayList<>());
     }
@@ -776,7 +777,11 @@ public class TrustEvaluator {
         return evidence;
     }
 
-    /** A format or type that is empty or only spaces, tabs or line breaks is absent; client libraries apply the same rule. */
+    /**
+     * A format or type that is empty or only spaces, tabs or line breaks is absent; client libraries apply the same rule.
+     * Anything else is a value, also a vertical tab or a no-break space: Java's and JavaScript's notions of white space
+     * differ, and a type one evaluator drops and the other checks would be decided differently.
+     */
     private static String blankToNull(String s) {
         return s == null || s.matches("[ \\t\\r\\n]*") ? null : s;
     }

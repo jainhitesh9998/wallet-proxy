@@ -4783,6 +4783,374 @@
           ]
         }
       }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "types: one of the types is a single space, which is no type",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "credentialTypes" : [
+            "UniversityDegreeCredential",
+            " "
+          ],
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "types: one of the types is only spaces, tabs and line breaks, which is no type",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "credentialTypes" : [
+            "UniversityDegreeCredential",
+            " \t\r\n"
+          ],
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "types: one of the types is a vertical tab, which is a type",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "credentialTypes" : [
+            "UniversityDegreeCredential",
+            "\u000B"
+          ],
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "types: one of the types is a file separator, which is a type",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "credentialTypes" : [
+            "UniversityDegreeCredential",
+            "\u001C"
+          ],
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "types: one of the types is a no-break space, which is a type",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "credentialTypes" : [
+            "UniversityDegreeCredential",
+            " "
+          ],
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "types: the only type is a vertical tab, which is a type",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "\u000B",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "types: the only type is a file separator, which is a type",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "\u001C",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "types: the only type is a single space, which is no type",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : " ",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
     }
   ],
   "description" : "Generated by EvaluationVectorsTest from cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",

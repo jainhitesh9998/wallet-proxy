@@ -18,6 +18,10 @@ public final class Dtos {
         public TrustQuery toQuery() {
             Subject s = subject == null ? new Subject(null, null, null, null) : subject;
             Context c = context == null ? new Context(null, null, null, null, null, null, null) : context;
+            // A null is neither a type nor the absence of one: the request is broken, and is refused as such.
+            if (c.credentialTypes() != null && c.credentialTypes().contains(null)) {
+                throw new IllegalArgumentException("credentialTypes must list types (strings); it contains null");
+            }
             return new TrustQuery(parseRole(role), new TrustQuery.Subject(s.identifier(), s.x5c(), s.jwk(), s.kid()),
                     new TrustQuery.Context(c.protocol(), c.credentialFormat(), c.credentialType(), c.time(), c.responseUri(),
                             c.trustedAuthorities() == null ? List.of() : c.trustedAuthorities().stream()

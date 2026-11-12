@@ -1756,6 +1756,146 @@
           "responseUri": "https://verifier.example/post"
         }
       }
+    },
+    {
+      "name": "types: one of the types is a single space, which is no type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential",
+          "credentialTypes": [
+            "UniversityDegreeCredential",
+            " "
+          ]
+        }
+      }
+    },
+    {
+      "name": "types: one of the types is only spaces, tabs and line breaks, which is no type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential",
+          "credentialTypes": [
+            "UniversityDegreeCredential",
+            " \t\r\n"
+          ]
+        }
+      }
+    },
+    {
+      "name": "types: one of the types is a vertical tab, which is a type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential",
+          "credentialTypes": [
+            "UniversityDegreeCredential",
+            "\u000b"
+          ]
+        }
+      }
+    },
+    {
+      "name": "types: one of the types is a file separator, which is a type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential",
+          "credentialTypes": [
+            "UniversityDegreeCredential",
+            "\u001c"
+          ]
+        }
+      }
+    },
+    {
+      "name": "types: one of the types is a no-break space, which is a type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "UniversityDegreeCredential",
+          "credentialTypes": [
+            "UniversityDegreeCredential",
+            "\u00a0"
+          ]
+        }
+      }
+    },
+    {
+      "name": "types: the only type is a vertical tab, which is a type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "\u000b"
+        }
+      }
+    },
+    {
+      "name": "types: the only type is a file separator, which is a type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": "\u001c"
+        }
+      }
+    },
+    {
+      "name": "types: the only type is a single space, which is no type",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "identifier": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "ldp_vc",
+          "credentialType": " "
+        }
+      }
     }
   ]
 }

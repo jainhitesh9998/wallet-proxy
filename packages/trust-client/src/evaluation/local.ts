@@ -245,8 +245,15 @@ export class LocalEvaluator {
     // An empty format or type is no format or type: the two evaluators must not read "" differently.
     const format = canonicalFormat(present(query.context?.credentialFormat)) ?? undefined;
     const type = present(query.context?.credentialType);
-    // Every type the credential asserts must be authorized (a W3C VC may carry several).
-    const types = [...new Set([type, ...(query.context?.credentialTypes ?? [])].filter((t): t is string => typeof t === 'string' && t.trim() !== ''))];
+    // Every type the credential asserts must be authorized (a W3C VC may carry several). Each is read by the one rule of
+    // present(), as the primary type is: what else counts as blank differs between platforms (String.trim here,
+    // Character.isWhitespace on the service), and a type one evaluator drops and the other checks is decided differently.
+    const listed = query.context?.credentialTypes ?? [];
+    if (!Array.isArray(listed) || listed.some((t) => typeof t !== 'string')) {
+      // As the service refuses such a request: something that is not a type is neither a type nor the absence of one.
+      throw new Error('context.credentialTypes must be a list of types (strings)');
+    }
+    const types = [...new Set([type, ...listed.map(present)].filter((t): t is string => t !== undefined))];
     return { query, data, now, role: query.role, wantRole: roleName(query.role), format, type, types,
       strict: data.policy?.strictAuthorization === true, mechanism: this.selectMechanism(data, query.role, format, types), reasons: [] };
   }

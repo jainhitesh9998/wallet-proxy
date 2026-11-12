@@ -162,6 +162,13 @@ describe('identifiers are bound to the presented key', () => {
     const d = await ev.evaluate({ role: 'issuer', subject: { identifier: 'https://verifier.example', jwk: {} as never } }, data([gov]));
     expect(d.decision).toBe('TRUSTED');
   });
+
+  it('refuses a query whose credentialTypes are not all strings, as the service refuses the request', async () => {
+    for (const listed of [['UniversityDegreeCredential', null], [7], 'UniversityDegreeCredential']) {
+      await expect(ev.evaluate({ role: 'issuer', subject: { identifier: 'https://verifier.example' },
+        context: { credentialFormat: 'ldp_vc', credentialTypes: listed as never } }, data([gov])), JSON.stringify(listed)).rejects.toThrow(/credentialTypes/);
+    }
+  });
 });
 
 describe('identifier comparison (mirrors the Java IdentifierTest)', () => {

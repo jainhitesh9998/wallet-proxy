@@ -820,6 +820,11 @@ class TrustServerIntegrationTest {
         var role = post("/api/v1/evaluate", "key-a", Map.of("role", "nonsense", "subject", Map.of("identifier", "https://x.example")));
         assertThat(role.statusCode()).isEqualTo(400);
         assertThat(role.body()).contains("Unknown role").doesNotContain("io.vctrust");
+        // A null where a type belongs is a broken request, not a type and not the absence of one.
+        var nullType = post("/api/v1/evaluate", "key-a", Map.of("role", "issuer", "subject", Map.of("identifier", "https://x.example"),
+                "context", Map.of("credentialFormat", "ldp_vc", "credentialTypes", java.util.Arrays.asList("UniversityDegreeCredential", null))));
+        assertThat(nullType.statusCode()).as(nullType.body()).isEqualTo(400);
+        assertThat(nullType.body()).contains("credentialTypes").doesNotContain("io.vctrust");
         var type = get("/api/v1/entities/lookup?identifier=x&type=nonsense", "key-a");
         assertThat(type.statusCode()).isEqualTo(400);
         assertThat(type.body()).contains("Unknown identifier type").doesNotContain("io.vctrust");
