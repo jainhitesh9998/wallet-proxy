@@ -553,8 +553,9 @@ anchors:
    question: the role, the format, and any type the question asserts (an exact type, or a prefix ending in `*`). A
    question none matches is decided as in the sections above.
 2. **The key.** A key presented in a way `keys` does not list is refused (`mechanism.key_not_accepted`), and so is a
-   DID key of a method `did.methods` does not list (`mechanism.did_method_not_accepted`). An identifier alone is still
-   a registry lookup.
+   DID key of a method `did.methods` does not list (`mechanism.did_method_not_accepted`); a `kid` relative to a DID
+   identifier (`"kid": "#key-1"`) is a key of that DID like an absolute one. An identifier alone is still a registry
+   lookup.
 3. **The anchors.** The anchors of `x509.domain` count, and only those: a chain to an anchor of the default domain is
    `UNKNOWN` for a governed question (`x509.no_anchor`), whatever the default domain would have said about it. A pin
    does not replace the anchor: under a mechanism with an `x509` block, a certificate that an entity lists

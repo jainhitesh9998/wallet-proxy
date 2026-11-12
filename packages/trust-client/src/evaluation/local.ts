@@ -176,6 +176,15 @@ const hasJwk = (ev: Evaluation) => Object.keys(ev.query.subject.jwk ?? {}).lengt
 /** The domain whose anchors count: the question's own, unless the governing mechanism names another in its x509 block. */
 const governingDomain = (ev: Evaluation) => ev.mechanism?.x509?.domain ?? domainFor(ev.role, ev.format);
 
+/** The method of a DID; undefined when it is not a DID. */
+function didMethod(did: string): string | undefined {
+  try {
+    return parseDid(did).method;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * What the query claims. Its identifiers are only claimed by the identifier; those of the KeyProof are proven by the
  * presented key material (see the matching rules of findEntity).
@@ -412,17 +421,25 @@ export class LocalEvaluator {
   private acceptKey(ev: Evaluation, key: KeyProof): void {
     const m = ev.mechanism;
     if (!m) return;
-    const presented: Array<[KeyKind, boolean]> = [['x5c', (ev.query.subject.x5c?.length ?? 0) > 0], ['did', hasDidKey(ev)], ['jwk', hasJwk(ev)]];
+    // A kid relative to a DID identifier ("#key-1") names a key of that DID, as checkDid reads it: here it is a DID key
+    // like an absolute one, or it would be a way around keys and did.methods.
+    const { subject } = ev.query;
+    const relativeDidKey = !hasDidKey(ev) && !!subject.kid?.startsWith('#') && !!subject.identifier?.startsWith('did:');
+    const didKey = hasDidKey(ev) || relativeDidKey;
+    const presented: Array<[KeyKind, boolean]> = [['x5c', (subject.x5c?.length ?? 0) > 0], ['did', didKey], ['jwk', hasJwk(ev)]];
     for (const [kind, present] of presented) {
       if (present && m.keys && !m.keys.includes(kind)) {
         ev.reasons.push(error('mechanism.key_not_accepted', `Trust mechanism '${m.id}' does not accept a key presented as ${kind}; it accepts ${m.keys.join(', ')}`));
       }
     }
-    // key.did is the DID of a DID key only when it parsed; one that did not is refused as did.invalid already.
-    if (m.did && hasDidKey(ev) && key.did !== undefined) {
-      const { method } = parseDid(key.did);
-      if (!m.did.methods.includes(method)) {
-        ev.reasons.push(error('mechanism.did_method_not_accepted', `Trust mechanism '${m.id}' does not accept a key of DID method '${method}'; it accepts ${m.did.methods.join(', ')}`));
+    // key.did is the DID of an absolute DID key only when it parsed (one that did not is refused as did.invalid already),
+    // and for a relative one the identifier's DID as written: a DID whose method cannot be read is no DID of a method the
+    // mechanism accepts.
+    if (m.did && didKey && key.did !== undefined) {
+      const method = didMethod(key.did);
+      if (method === undefined || !m.did.methods.includes(method)) {
+        ev.reasons.push(error('mechanism.did_method_not_accepted', `Trust mechanism '${m.id}' does not accept a key of `
+          + `${method === undefined ? 'a DID whose method cannot be read' : `DID method '${method}'`}; it accepts ${m.did.methods.join(', ')}`));
       }
     }
   }

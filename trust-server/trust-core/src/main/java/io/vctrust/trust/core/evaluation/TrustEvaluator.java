@@ -436,9 +436,15 @@ public class TrustEvaluator {
         if (m == null) {
             return;
         }
+        // A kid relative to a DID identifier ("#key-1") names a key of that DID, as checkDid reads it: here it is a DID
+        // key like an absolute one, or it would be a way around keys and did.methods.
+        TrustQuery.Subject subject = ev.subject();
+        boolean relativeDidKey = !ev.hasDidKey() && subject.kid() != null && subject.kid().startsWith("#")
+                && subject.identifier() != null && subject.identifier().startsWith("did:");
+        boolean didKey = ev.hasDidKey() || relativeDidKey;
         Map<String, Boolean> presented = new LinkedHashMap<>();
-        presented.put("x5c", !ev.subject().x5c().isEmpty());
-        presented.put("did", ev.hasDidKey());
+        presented.put("x5c", !subject.x5c().isEmpty());
+        presented.put("did", didKey);
         presented.put("jwk", ev.hasJwk());
         presented.forEach((kind, present) -> {
             if (present && !m.accepts(kind)) {
@@ -446,13 +452,25 @@ public class TrustEvaluator {
                         + kind + "; it accepts " + String.join(", ", m.keys())));
             }
         });
-        // key.did() is the DID of a DID key only when it parsed; one that did not is refused as did.invalid already.
-        if (m.did() != null && ev.hasDidKey() && key.did() != null) {
-            String method = Did.parse(key.did()).method();
-            if (!m.did().methods().contains(method)) {
-                ev.reasons().add(Reason.error("mechanism.did_method_not_accepted", "Trust mechanism '" + m.id() + "' does not accept a key of DID method '"
-                        + method + "'; it accepts " + String.join(", ", m.did().methods())));
+        // key.did() is the DID of an absolute DID key only when it parsed (one that did not is refused as did.invalid
+        // already), and for a relative one the identifier's DID as written: a DID whose method cannot be read is no DID
+        // of a method the mechanism accepts.
+        if (m.did() != null && didKey && key.did() != null) {
+            String method = didMethod(key.did());
+            if (method == null || !m.did().methods().contains(method)) {
+                ev.reasons().add(Reason.error("mechanism.did_method_not_accepted", "Trust mechanism '" + m.id() + "' does not accept a key of "
+                        + (method == null ? "a DID whose method cannot be read" : "DID method '" + method + "'")
+                        + "; it accepts " + String.join(", ", m.did().methods())));
             }
+        }
+    }
+
+    /** The method of a DID; null when it is not a DID. */
+    private static String didMethod(String did) {
+        try {
+            return Did.parse(did).method();
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 

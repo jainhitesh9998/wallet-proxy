@@ -310,7 +310,7 @@ trust:
 | `for.role` | `issuer`, `verifier`, `wallet_provider`, `status_list_provider`; required | The role the question asks about |
 | `for.formats` | `mso_mdoc`, `dc+sd-jwt` (also written `vc+sd-jwt`), `ldp_vc`, `jwt_vc_json`, `jwt_vc_json-ld` | Compared in their canonical spelling. A question that names no format matches only a mechanism without `formats` |
 | `for.types` | A type, or a prefix followed by `*` (printable ASCII, no spaces, `*` only at the end) | A question matches when any type it asserts matches: its doctype, vct or type, and for a W3C credential every type in `credentialTypes`, so that listing the types in another order does not get a question past a mechanism. A question that asserts no type matches only a mechanism without `types` |
-| `keys` | `x5c`, `did`, `jwk` | A key presented another way (an `x5c` chain, a DID key, a bare JWK) is refused. A question without key material (an identifier alone, as with a credential offer) is still a registry lookup |
+| `keys` | `x5c`, `did`, `jwk` | A key presented another way (an `x5c` chain, a DID key, a bare JWK) is refused. A `kid` relative to a DID identifier (`#key-1`) is a DID key of that DID, here and for `did.methods`. A question without key material (an identifier alone, as with a credential offer) is still a registry lookup |
 | `x509.domain` | A trust domain as anchors name it (lower case, no spaces) | The anchors of that domain, in the client's frameworks, are the ones that count; the default domain's do not. Omitted: the default domain |
 | `x509.profile` | The members below | Requirements on the chain, each a check of its own |
 | `x509.revocation` | `required` | An unknown revocation status is an error, whatever the client profile says. Omitted: the client profile decides |

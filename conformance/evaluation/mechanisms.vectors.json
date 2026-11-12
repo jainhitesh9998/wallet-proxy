@@ -2884,6 +2884,191 @@
           ]
         }
       }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "mechanism.did_method_not_accepted"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "mechanism" : "w3c-ldp",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "mechanism.did_method_not_accepted"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "mechanism" : "w3c-ldp",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "relative kid: a key of the identifier's DID, of a DID method the mechanism does not accept",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized",
+            "mechanism.key_not_accepted"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [
+            "entity.not_authorized",
+            "mechanism.key_not_accepted"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "relative kid: a key of the identifier's DID, where only x5c chains are accepted",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.example.id.card",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "mechanism.did_method_not_accepted"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "w3c-ldp",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "did.unresolved"
+          ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "mechanism.did_method_not_accepted"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "w3c-ldp",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "did.unresolved"
+          ],
+          "x509" : null
+        }
+      },
+      "name" : "relative kid: a key of an identifier that is not a DID whose method can be read",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:Example:abc",
+          "kid" : "#key-1"
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "mechanism" : "university",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-did",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DID:did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+          ],
+          "mechanism" : "university",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "relative kid: a key of the identifier's DID, of the DID method the first of two mechanisms accepts",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "ldp_vc",
+          "credentialType" : "UniversityDegreeCredential",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "identifier" : "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+          "kid" : "#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      },
+      "sameAsFirstPair" : "DID issuer, key named by a relative reference"
     }
   ],
   "description" : "Generated by MechanismVectorsTest from mechanisms.cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",
