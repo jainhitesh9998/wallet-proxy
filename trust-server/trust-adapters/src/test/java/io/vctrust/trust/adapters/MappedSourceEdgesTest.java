@@ -828,4 +828,103 @@ class MappedSourceEdgesTest {
         serveJson(ctx, d);
         assertThat(loadError(source(ctx, props()))).contains("mapping.list.issuedAt: the document has no date there");
     }
+
+    // 9 ---------------------------------------------------------------------------------------------------------
+
+    @Test
+    void item9_aPemTextInWhichABlockIsDamagedCannotBeRead() {
+        // The issuer's signing certificate damaged, next to another one that reads: listed with the other only, the
+        // revoked issuer's key was bound to nobody, and its CA decided.
+        String[] lines = MappedTesting.pem("ds").split("\n", -1);
+        lines[1] = lines[1].substring(0, 10) + "!" + lines[1].substring(11);
+        String damaged = String.join("\n", lines);
+        String bundle = damaged + MappedTesting.pem("ds-nl");
+        Map<String, Object> revoked = members("roles", List.of("CREDENTIAL_ISSUER"), "state", "revoked", "certificates", List.of(bundle));
+        TestContext ctx = ctx();
+        serveJson(ctx, withRoles(1, revoked));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager manager = manager(registry, source(ctx, props("mapping", boundMapping())))) {
+            assertThat(decide(registry, MDL)).isNotEqualTo(Decision.TRUSTED);
+            assertThat(state(manager, "partner").lastError()).startsWith("mapping.entities[0]: record 1 (id 'partner:dmv') cannot be read: "
+                    + "certificates: a PEM text with 2 BEGIN lines yields 1 certificate");
+        }
+        // Every block a certificate: read.
+        serveJson(ctx, withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER"), "certificates",
+                List.of(MappedTesting.pem("ds") + MappedTesting.pem("ds-nl")))));
+        assertThat(loadQuietly(source(ctx, props("mapping", boundMapping()))).entities().getFirst().certificates()).hasSize(2);
+        // A key in the bundle is no certificate either; for an anchor, the record is skipped.
+        Map<String, Object> m = boundMapping();
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate")));
+        Map<String, Object> d = withRoles(1, members("roles", List.of("CREDENTIAL_ISSUER")));
+        d.put("authorities", List.of(Map.of("kid", "shared-iaca", "certificate", MappedTesting.pem("iaca")
+                + "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"), Map.of("kid", "rp-ca", "certificate", der("rp-ca"))));
+        serveJson(ctx, d);
+        var r = loadQuietly(source(ctx, props("mapping", m)));
+        assertThat(r.anchors()).extracting(a -> a.id()).containsExactly("rp-ca");
+        assertThat(r.warnings()).singleElement().asString().contains("is skipped: certificate: a PEM text with 2 BEGIN lines yields 1 certificate");
+    }
+
+    @Test
+    void item9_aSigningCertificateThatIsItselfPinnedSignsWhateverItsKeyUsage() throws Exception {
+        io.vctrust.trust.core.testing.TestPki.Issued pinned = MappedSourceAttacksTest.certificate("CN=Partner List Signer,C=UT", null, false,
+                org.bouncycastle.asn1.x509.KeyUsage.keyEncipherment);
+        TestContext ctx = ctx();
+        MappedSourceRulesTest.serveJws(ctx, MappedSourceRulesTest.signedWithChain(pinned, pinned, MappedSourceRulesTest.doc("a")));
+        var r = source(ctx, props("format", "jws", "verify", Map.of("certificates",
+                List.of(io.vctrust.trust.core.x509.Certificates.toPem(pinned.certificate()))))).load();
+        assertThat(r.entities()).hasSize(1);
+        // Under a pinned CA, the same key usage may not sign (MappedSourceAttacksTest.f7_...).
+        io.vctrust.trust.core.testing.TestPki.Issued root = MappedSourceAttacksTest.certificate("CN=Partner CA,C=UT", null, true,
+                org.bouncycastle.asn1.x509.KeyUsage.keyCertSign | org.bouncycastle.asn1.x509.KeyUsage.cRLSign);
+        io.vctrust.trust.core.testing.TestPki.Issued under = MappedSourceAttacksTest.certificate("CN=Partner List Signer,C=UT", root, false,
+                org.bouncycastle.asn1.x509.KeyUsage.keyEncipherment);
+        MappedSourceRulesTest.serveJws(ctx, MappedSourceRulesTest.signedWithChain(under, under, MappedSourceRulesTest.doc("a")));
+        assertThat(loadError(source(ctx, props("format", "jws", "verify", Map.of("certificates",
+                List.of(io.vctrust.trust.core.x509.Certificates.toPem(root.certificate())))))))
+                .contains("its key usage does not include digitalSignature");
+        // A pinned CA certificate whose key usage is for certificates only signs the list as well.
+        MappedSourceRulesTest.serveJws(ctx, MappedSourceRulesTest.signedWithChain(root, root, MappedSourceRulesTest.doc("a")));
+        assertThat(source(ctx, props("format", "jws", "verify", Map.of("certificates",
+                List.of(io.vctrust.trust.core.x509.Certificates.toPem(root.certificate()))))).load().entities()).hasSize(1);
+    }
+
+    @Test
+    void item9_theListsIssuerIsEscapedAndCutAsAMessageIs() throws Exception {
+        TestContext ctx = ctx();
+        Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        d.put("publisher", "Partner\r\n2026-11-12 WARN Trust source 'partner' (mapped): all good\u2028" + "P".repeat(8_000));
+        serveJson(ctx, d);
+        String issuer = source(ctx, props()).load().listInfo().issuer();
+        assertThat(issuer).startsWith("Partner\\r\\n2026-11-12 WARN").contains("\\u2028").doesNotContain("\r").doesNotContain("\n")
+                .doesNotContain("\u2028").hasSize(2_000).endsWith("…");
+    }
+
+    @Test
+    void item9_theLookupMemoHoldsAtMost16MebiCharactersOfMappedText() throws Exception {
+        // Answers of 56,000 characters each: 300 of them are 16.8 million, which the memo does not hold. The oldest go.
+        TestContext ctx = ctx();
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        for (int i = 1; i <= 7; i++) {
+            attributes.put("a" + i, "$.a" + i);
+        }
+        OnDemandResolver r = (OnDemandResolver) source(ctx, lookupOnly("entity", Map.of("id", "$.id", "roles", List.of("CREDENTIAL_ISSUER"),
+                "identifiers", List.of(Map.of("type", "DID", "value", "$.did")), "attributes", attributes)));
+        int n = 320;
+        for (int i = 0; i < n; i++) {
+            Map<String, Object> answer = new LinkedHashMap<>(Map.of("id", "p" + i, "did", "did:example:p" + i));
+            for (int a = 1; a <= 7; a++) {
+                answer.put("a" + a, String.valueOf(a).repeat(8_000));
+            }
+            ctx.http.json(BASE + "did%3Aexample%3Ap" + i, Json.write(answer));
+        }
+        for (int i = 0; i < n; i++) {
+            assertThat(r.resolve(Identifier.did("did:example:p" + i))).isPresent();
+        }
+        assertThat(ctx.http.requests).hasSize(n);
+        // The last ones are held; the first ones were dropped to make room, and are asked again.
+        assertThat(r.resolve(Identifier.did("did:example:p" + (n - 1)))).isPresent();
+        assertThat(ctx.http.requests).hasSize(n);
+        assertThat(r.resolve(Identifier.did("did:example:p0"))).isPresent();
+        assertThat(ctx.http.requests).hasSize(n + 1);
+    }
 }

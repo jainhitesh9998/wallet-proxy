@@ -183,6 +183,36 @@ class MappingLanguageTest {
     }
 
     @Test
+    void everyControlFormatAndSeparatorCharacterIsEscaped() {
+        // Third round (item 9): not only those below 0x20. A line or paragraph separator, NEL, a bidi override or a zero
+        // width character in a log line breaks it, or makes it read otherwise than it is written.
+        String text = "a\u0085b c d​e‮f﻿g­h" + new String(Character.toChars(0xE0001)) + "i";
+        assertThat(Mapping.escape(text)).isEqualTo("a\\u0085b\\u2028c\\u2029d\\u200be\\u202ef\\ufeffg\\u00adh\\udb40\\udc01i");
+        assertThat(MappedSourceFactory.told("x WARN forged", 2_000)).isEqualTo("x\\u2028WARN forged");
+        assertThat(Mapping.escape("plain text, é, 日本")).isEqualTo("plain text, é, 日本");
+    }
+
+    @Test
+    void translationKeysIgnoreEverySurroundingSpaceAndNumbersMatchByValue() {
+        // Third round (item 9): the no-break space and the zero-width space surround a key too; a number in the
+        // document matches a key by its value (1.0 is 1).
+        Map<String, Object> status = Map.of("path", "$.s", "values", Map.of(" revoked​", "REVOKED", "1", "ACTIVE", "2.50", "SUSPENDED"));
+        assertThat(first(status, Map.of("s", "Revoked"))).isEqualTo("REVOKED");
+        assertThat(first(status, Map.of("s", "​revoked "))).isEqualTo("REVOKED");
+        assertThat(first(status, Map.of("s", new java.math.BigDecimal("1.0")))).isEqualTo("ACTIVE");
+        assertThat(first(status, Map.of("s", 1))).isEqualTo("ACTIVE");
+        assertThat(first(status, Map.of("s", new java.math.BigDecimal("2.5")))).isEqualTo("SUSPENDED");
+        assertThat(first(status, Map.of("s", new java.math.BigDecimal("1E+0")))).isEqualTo("ACTIVE");
+        // Text is text: "1.0" written as a string is not the number.
+        assertThat(first(status, Map.of("s", "1.0"))).isNull();
+        // Two keys of one value are one key, and a configuration error.
+        assertThatThrownBy(() -> Value.parse(Map.of("path", "$.s", "values", Map.of("1", "A", "1.0", "B")), "w"))
+                .hasMessageContaining("values names 1 twice");
+        assertThatThrownBy(() -> Value.parse(Map.of("path", "$.s", "values", Map.of("x", "A", " X", "B")), "w"))
+                .hasMessageContaining("values names 'x' twice");
+    }
+
+    @Test
     void theQueryOfEveryWebUrlInATextIsCutUpToTheNextWhitespace() {
         // Second round: the scrubber stopped at an apostrophe, a quote or an angle bracket, and left the rest.
         assertThat(MappedSourceFactory.withoutQueries("from https://h.example/x?key=part1'part2\"part3<part4>part5 failed"))

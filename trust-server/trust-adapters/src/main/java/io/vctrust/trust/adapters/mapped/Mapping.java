@@ -495,7 +495,7 @@ final class Mapping {
                 r.read("id", () -> text("id", record, root));
                 r.read("roles", () -> roles(record, root));
                 r.read("identifiers", () -> objects("identifiers", record, root, Set.of("type", "value"), Items.WHOLE));
-                r.read("certificates", () -> texts("certificates", record, root));
+                r.read("certificates", () -> pem(texts("certificates", record, root), "certificates"));
                 r.read("name", () -> describing(r, () -> text("name", record, root)));
                 r.read("display", () -> objects(items(fields.get("display")), "display", record, root, Set.of("name"), Items.LEAVE_OUT,
                         r.leftOut));
@@ -509,7 +509,7 @@ final class Mapping {
             } else {
                 r.read("id", () -> text("id", record, root));
                 r.read("domain", () -> text("domain", record, root));
-                r.read("certificate", () -> text("certificate", record, root));
+                r.read("certificate", () -> pem(text("certificate", record, root), "certificate"));
                 r.read("entity", () -> text("entity", record, root));
                 r.read("status", () -> text("status", record, root));
                 r.read("docTypes", () -> docTypes(record, root));
@@ -648,6 +648,34 @@ final class Mapping {
         private String text(String member, Object record, Object root) {
             Value v = (Value) fields.get(member);
             return v == null ? null : scalar(first(v, member, record, root), member);
+        }
+
+        /**
+         * Certificates as text, held to what a PEM text says it holds: every {@code -----BEGIN} must yield a
+         * certificate. A damaged block next to a good one would otherwise be passed over, and the certificate it was
+         * (the party's signing key, say) would be bound to nobody.
+         */
+        private static <T> T pem(T certificates, String member) {
+            for (Object c : certificates instanceof List<?> l ? l : java.util.Collections.singletonList(certificates)) {
+                if (!(c instanceof String text) || !text.contains("-----BEGIN")) {
+                    continue;
+                }
+                int blocks = 0;
+                for (int at = text.indexOf("-----BEGIN"); at >= 0; at = text.indexOf("-----BEGIN", at + 1)) {
+                    blocks++;
+                }
+                int read;
+                try {
+                    read = io.vctrust.trust.adapters.support.AdapterSupport.parseCertificateText(text).size();
+                } catch (RuntimeException e) {
+                    throw new IllegalArgumentException(member + ": a PEM text that cannot be read (" + e.getClass().getSimpleName() + ")");
+                }
+                if (read != blocks) {
+                    throw new IllegalArgumentException(member + ": a PEM text with " + blocks + " BEGIN lines yields " + read
+                            + (read == 1 ? " certificate" : " certificates") + "; every block must be a certificate");
+                }
+            }
+            return certificates;
         }
 
         private List<String> texts(String member, Object record, Object root) {
@@ -943,14 +971,19 @@ final class Mapping {
     }
 
     /**
-     * Text with its control characters (CR, LF and the others below 0x20, and DEL) written as escapes: text from a
-     * document goes into messages that are written to the log, where a line break would let it forge a log line.
+     * Text with its control, format and separator characters (Unicode categories Cc, Cf, Zl and Zp: CR, LF, NEL, the
+     * line and paragraph separators, bidi overrides, zero-width characters) written as escapes: text from a document
+     * goes into messages that are written to the log, where such a character would let it forge a log line, or make
+     * the line read otherwise than it is written.
      */
     static String escape(String s) {
         StringBuilder out = null;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c < 0x20 || c == 0x7f) {
+        for (int i = 0; i < s.length(); ) {
+            int c = s.codePointAt(i);
+            int n = Character.charCount(c);
+            int type = Character.getType(c);
+            if (type == Character.CONTROL || type == Character.FORMAT || type == Character.LINE_SEPARATOR
+                    || type == Character.PARAGRAPH_SEPARATOR) {
                 if (out == null) {
                     out = new StringBuilder(s.length() + 16).append(s, 0, i);
                 }
@@ -958,11 +991,16 @@ final class Mapping {
                     case '\r' -> out.append("\\r");
                     case '\n' -> out.append("\\n");
                     case '\t' -> out.append("\\t");
-                    default -> out.append(String.format("\\u%04x", (int) c));
+                    default -> {
+                        for (int k = i; k < i + n; k++) {
+                            out.append(String.format("\\u%04x", (int) s.charAt(k)));
+                        }
+                    }
                 }
             } else if (out != null) {
-                out.append(c);
+                out.append(s, i, i + n);
             }
+            i += n;
         }
         return out == null ? s : out.toString();
     }

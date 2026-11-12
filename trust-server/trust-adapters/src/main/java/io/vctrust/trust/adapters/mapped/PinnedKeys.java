@@ -292,15 +292,18 @@ final class PinnedKeys {
     /**
      * A certificate under a pinned CA may sign the list only if it is allowed to sign at all: with a key usage
      * extension, that extension asserts {@code digitalSignature} (a TLS server's key-encipherment certificate from the
-     * same CA does not). A CA certificate signs certificates, not lists, unless it is itself pinned.
+     * same CA does not). A CA certificate signs certificates, not lists. A certificate that is itself pinned signs
+     * whatever it says it is for: the operator named that very key as the list's.
      */
     private void allowedToSign(X509Certificate signer) throws TrustSourceException {
+        if (certificates.pinned().contains(signer)) {
+            return;
+        }
         boolean[] usage = signer.getKeyUsage();
         if (usage != null && (usage.length == 0 || !usage[0])) {
             throw new TrustSourceException("The list's signing certificate may not sign: its key usage does not include digitalSignature");
         }
-        boolean pinned = certificates.pinned().contains(signer);
-        if (signer.getBasicConstraints() != -1 && !pinned) {
+        if (signer.getBasicConstraints() != -1) {
             throw new TrustSourceException("The list's signing certificate is a CA certificate that is not pinned; a CA signs "
                     + "certificates, not lists");
         }
@@ -312,7 +315,7 @@ final class PinnedKeys {
         } catch (java.security.cert.CertificateParsingException e) {
             throw new TrustSourceException("The list's signing certificate has an extended key usage that cannot be read");
         }
-        if (purposes != null && purposes.contains(SERVER_AUTH) && !pinned) {
+        if (purposes != null && purposes.contains(SERVER_AUTH)) {
             throw new TrustSourceException("The list's signing certificate is a TLS server certificate (extended key usage serverAuth) "
                     + "that is not pinned; pin the list signer's own certificate, or a CA that issues only list signers");
         }

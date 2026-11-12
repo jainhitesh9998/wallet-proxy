@@ -178,7 +178,8 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
                     return new At(at, allowEmpty);
                 }
                 Object fallback = m.containsKey("default") ? scalar(m.get("default"), "default") : null;
-                return new Translated(at, table(m.get("values")), fallback, allowEmpty);
+                Table table = table(m.get("values"));
+                return new Translated(at, table.texts(), table.numbers(), fallback, allowEmpty);
             }
             throw new IllegalArgumentException("unknown value form with members " + keys + "; a value is a path ($... or ^...), "
                     + "a constant, {value}, {path, values, default} or {template}" + (list ? ", and {path, allowEmpty} for a list" : ""));
@@ -197,12 +198,21 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
     }
 
     /**
+     * A translation table: its keys as text ({@link #key}), and those that are numbers by their value
+     * ({@link #number}).
+     */
+    record Table(Map<String, Object> texts, Map<String, Object> numbers) {
+    }
+
+    /**
      * The translation table: a map, or a list of {when, then} pairs. Keys are compared by {@link #key}: without regard
      * to case and to surrounding whitespace, so that {@code Revoked}, {@code " revoked"} and {@code revoked} are one
-     * state, and two keys that are one under that rule are a configuration error.
+     * state, and two keys that are one under that rule are a configuration error. A number in the document matches a
+     * key by its value ({@code 1.0} is the key {@code 1}); two keys of one value are a configuration error too.
      */
-    private static Map<String, Object> table(Object raw) {
-        Map<String, Object> table = new LinkedHashMap<>();
+    private static Table table(Object raw) {
+        Map<String, Object> texts = new LinkedHashMap<>();
+        Map<String, Object> numbers = new LinkedHashMap<>();
         if (raw instanceof Map<?, ?> m) {
             m.forEach((k, v) -> {
                 if (v instanceof Map<?, ?>) {
@@ -211,34 +221,82 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
                             + "letters, digits, - and _ does not survive Spring's property binding; write it in brackets "
                             + "(\"[https://...]\"), or give values as a list of {when, then} pairs");
                 }
-                once(table, key(String.valueOf(k)), scalar(v, "values." + k));
+                once(texts, numbers, String.valueOf(k), scalar(v, "values." + k));
             });
         } else if (raw instanceof List<?> l) {
             for (Object o : l) {
                 if (!(o instanceof Map<?, ?> pair) || pair.size() != 2 || !pair.containsKey("when") || !pair.containsKey("then")) {
                     throw new IllegalArgumentException("values as a list holds {when, then} pairs only");
                 }
-                once(table, key(text(scalar(pair.get("when"), "when"))), scalar(pair.get("then"), "then"));
+                once(texts, numbers, text(scalar(pair.get("when"), "when")), scalar(pair.get("then"), "then"));
             }
         } else {
             throw new IllegalArgumentException("values must be a map or a list of {when, then} pairs");
         }
-        if (table.isEmpty()) {
+        if (texts.isEmpty()) {
             throw new IllegalArgumentException("values is empty");
         }
-        return Map.copyOf(table);
+        return new Table(Map.copyOf(texts), Map.copyOf(numbers));
     }
 
-    private static void once(Map<String, Object> table, String key, Object then) {
-        if (table.put(key, then) != null) {
+    private static void once(Map<String, Object> texts, Map<String, Object> numbers, String written, Object then) {
+        String key = key(written);
+        if (texts.put(key, then) != null) {
             throw new IllegalArgumentException("values names '" + key + "' twice (keys are compared without regard to case and "
                     + "surrounding whitespace)");
         }
+        String number = number(key);
+        if (number != null && numbers.put(number, then) != null) {
+            throw new IllegalArgumentException("values names " + number + " twice (a number in the document matches a key by its value)");
+        }
     }
 
-    /** A translation key as it is compared: without surrounding whitespace, in lower case. */
+    /**
+     * A translation key as it is compared: without surrounding whitespace, in lower case. Whitespace includes the
+     * no-break and the other space separators, and the zero-width space and no-break space, which a value copied from
+     * a web page often carries.
+     */
     static String key(String text) {
-        return text.strip().toLowerCase(java.util.Locale.ROOT);
+        int start = 0;
+        int end = text.length();
+        while (start < end && space(text.charAt(start))) {
+            start++;
+        }
+        while (end > start && space(text.charAt(end - 1))) {
+            end--;
+        }
+        return text.substring(start, end).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static boolean space(char c) {
+        return Character.isWhitespace(c) || Character.isSpaceChar(c) || c == '\u200B' || c == '\uFEFF';
+    }
+
+    /** A JSON number as it is written ({@code -12.50e3}), and no longer than a number the document may hold. */
+    java.util.regex.Pattern NUMBER = java.util.regex.Pattern.compile("-?(0|[1-9][0-9]{0,99})(\\.[0-9]{1,100})?([eE][+-]?[0-9]{1,4})?");
+
+    /**
+     * A key written as a number, by its value ({@link #canonical}); null for a key that is not one, or not one a
+     * document can hold ({@link StrictJson#small}).
+     */
+    private static String number(String key) {
+        if (!NUMBER.matcher(key).matches()) {
+            return null;
+        }
+        BigDecimal d = new BigDecimal(key);
+        return StrictJson.small(d) ? canonical(d) : null;
+    }
+
+    /** A number by its value: {@code 1}, {@code 1.0} and {@code 1e0} are one. Null for one a document cannot hold. */
+    static String canonical(Number n) {
+        BigDecimal d = StrictJson.decimal(n);
+        if (d == null && (n instanceof Double || n instanceof Float) && Double.isFinite(n.doubleValue())) {
+            d = new BigDecimal(n.toString());   // not from a document (StrictJson makes no doubles), from a test or a caller
+        }
+        if (d == null || !StrictJson.small(d)) {
+            return null;
+        }
+        return d.signum() == 0 ? "0" : d.stripTrailingZeros().toString();
     }
 
     /** Beyond this scale either way, a number is written with an exponent: in plain notation it could be any length. */
@@ -337,7 +395,13 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
         }
     }
 
-    record Translated(JsonPath path, Map<String, Object> table, Object fallback, boolean allowEmpty) implements Value {
+    /**
+     * @param table   the translations by key as text ({@link #key})
+     * @param numbers the translations of the keys that are numbers, by value ({@link #canonical}): what a number in the
+     *                document is looked up by
+     */
+    record Translated(JsonPath path, Map<String, Object> table, Map<String, Object> numbers, Object fallback, boolean allowEmpty)
+            implements Value {
         @Override
         public List<Object> all(Object current, Object root) {
             List<Object> found = present(path.select(current, root));
@@ -395,7 +459,8 @@ sealed interface Value permits Value.Constant, Value.At, Value.Translated, Value
             if (text == null) {
                 throw new IllegalArgumentException("the path " + path.text() + " finds " + JsonPath.kind(v) + " where a value to translate belongs");
             }
-            Object translated = table.get(key(text));
+            String number = v instanceof Number n ? canonical(n) : null;
+            Object translated = v instanceof Number ? (number == null ? null : numbers.get(number)) : table.get(key(text));
             return translated != null ? translated : fallback;
         }
 

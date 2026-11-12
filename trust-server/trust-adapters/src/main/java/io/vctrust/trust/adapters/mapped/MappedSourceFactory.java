@@ -17,7 +17,6 @@ import io.vctrust.trust.core.spi.SourceLoadResult;
 import io.vctrust.trust.core.spi.TrustSource;
 import io.vctrust.trust.core.spi.TrustSourceException;
 import io.vctrust.trust.core.spi.TrustSourceFactory;
-import io.vctrust.trust.core.util.ExpiringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -79,6 +78,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     static final Duration ON_DEMAND_NEGATIVE_TTL = Duration.ofMinutes(1);
     static final Duration ON_DEMAND_FAILURE_TTL = Duration.ofSeconds(30);
     static final int ON_DEMAND_MAX_ENTRIES = 5_000;
+    /** The characters of mapped text the remembered lookups may hold, all together (16 Mi). */
+    static final long ON_DEMAND_MAX_TEXT = 16_777_216;
     /** The longest identifier a lookup asks about. */
     static final int MAX_IDENTIFIER = 4_096;
     /** A list issued further in the future than this would make every genuine list after it look older. */
@@ -340,7 +341,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         private final SourceContext ctx;
         private final Config config;
         private final String configError;
-        private final ExpiringMap<String, Optional<TrustedEntity>> answers;
+        private final Memo<Optional<TrustedEntity>> answers;
 
         MappedSource(SourceDefinition def, SourceContext ctx) {
             this.def = def;
@@ -354,7 +355,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             this.config = c;
             this.configError = error;
-            this.answers = new ExpiringMap<>(ON_DEMAND_MAX_ENTRIES, ctx.clock());
+            this.answers = new Memo<>(ON_DEMAND_MAX_ENTRIES, ON_DEMAND_MAX_TEXT, ctx.clock());
         }
 
         @Override
@@ -514,7 +515,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("pages", pages);
             details.put("format", config.jws() ? "jws" : "json");
-            ListInfo info = new ListInfo(facts.issuer(), facts.sequence(), facts.issuedAt(), facts.nextUpdate(), signature(), details);
+            // The list's issuer goes into the source's state and the log, as a message does: escaped and cut the same way.
+            ListInfo info = new ListInfo(told(facts.issuer(), MAX_MESSAGE), facts.sequence(), facts.issuedAt(), facts.nextUpdate(),
+                    signature(), details);
             return new SourceLoadResult(entities, anchors, info, warnings.list());
         }
 
@@ -1349,7 +1352,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             } catch (TrustSourceException e) {
                 // Remembered like a miss, for a short time: every client request about the identifier would otherwise
                 // send one to a registry that is failing.
-                answers.put(identifier.key(), Optional.empty(), now.plus(ON_DEMAND_FAILURE_TTL));
+                answers.put(identifier.key(), Optional.empty(), now.plus(ON_DEMAND_FAILURE_TTL), 0);
                 throw reported(e);
             }
             // Remembered no longer than the answer is good for, when that is sooner.
@@ -1357,12 +1360,15 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (answer.goodUntil() != null && answer.goodUntil().isBefore(until)) {
                 until = answer.goodUntil();
             }
-            answers.put(identifier.key(), answer.entity(), until);
+            answers.put(identifier.key(), answer.entity(), until, answer.weight());
             return answer.entity();
         }
 
-        /** What a lookup found, and until when a signed answer says it is good (null for one that is not signed). */
-        private record Answer(Optional<TrustedEntity> entity, Instant goodUntil) {
+        /**
+         * What a lookup found, until when a signed answer says it is good (null for one that is not signed), and what the
+         * entity found weighs (its characters of mapped text and nodes, {@link Mapping.Weight}).
+         */
+        private record Answer(Optional<TrustedEntity> entity, Instant goodUntil, long weight) {
         }
 
         private Answer ask(Identifier identifier, Instant now) throws TrustSourceException {
@@ -1372,6 +1378,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     URLEncoder.encode(identifier.value(), StandardCharsets.UTF_8).replace("+", "%20")));
             Optional<TrustedEntity> found = Optional.empty();
             Instant goodUntil = null;
+            long weight = 0;
             try {
                 HttpFetcher.Response r = get(uri);
                 if (!l.missStatus().contains(r.status())) {
@@ -1393,11 +1400,14 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     for (int i = 0; i < records.size(); i++) {
                         // A record about the identifier that cannot be read completely answers with a suspended entity,
                         // not with "not found"; one whose identifying members cannot be read fails the lookup.
+                        long before = text.used;
                         Object mapped = mapEntity(l.entity(), records.get(i), root, provenance, i + 1, text);
                         TrustedEntity e = mapped instanceof TrustedEntity te ? te : mapped instanceof Incomplete inc ? inc.entity()
                                 : mapped instanceof Noted n ? n.entity() : null;
                         if (e != null) {
                             if (e.identifiers().contains(identifier)) {
+                                // The entity remembered is the first about the identifier (strictestOf).
+                                weight = about.isEmpty() ? text.used - before : weight;
                                 about.add(e);
                             } else {
                                 log.debug("Trust source '{}' (mapped): an answer about {} maps to an entity without that identifier",
@@ -1412,7 +1422,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             } catch (IllegalArgumentException e) {
                 throw new TrustSourceException("The answer cannot be read: " + e.getMessage(), e);
             }
-            return new Answer(found, goodUntil);
+            return new Answer(found, goodUntil, weight);
         }
 
         /**
