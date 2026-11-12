@@ -255,7 +255,10 @@ is configured per framework too: an anchor record of one framework does not choo
 another framework are given for the same certificate, and the service decides for a client by the CRLs of the
 frameworks it sees, as its snapshot carries them. The name an entry is listed under when another framework already
 has its id (`<id>@<framework>`) is its framework's: no source of another framework can take it, and an entry that
-cannot be placed is named in its source's state, never left out silently. Within a framework, sources
+cannot be placed is named in its source's state, never left out silently. A JSON-LD context's pinned digest is never
+replaced by another entry's statement: when the entries a client sees pin one URL to different digests, the context
+is left out of that client's snapshot (and is then not vouched for on the device), and an unpinned listing of the URL
+does not undo a pin. Within a framework, sources
 vouch for each other's entries; sources that should not are given frameworks of their own. A signed list counts
 only as signed when the signature is the list's own (for ETSI trusted lists: the enveloped signature directly under
 the root element, referring to that root; a signed list carried inside another document signs nothing of it). A

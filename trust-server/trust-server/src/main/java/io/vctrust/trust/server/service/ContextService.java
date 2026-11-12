@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,7 +38,13 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>An operator can pin a context's digest ({@code contexts: [{url, sha256}]} on an entity). A pinned context whose
  * content no longer matches is not shipped; the pin still is, so a wallet that fetches the context itself can refuse
- * it. An unpinned context that changes is shipped as it now is, and the change is logged.
+ * it. An unpinned listing of the same URL does not replace a pin. An unpinned context that changes is shipped as it
+ * now is, and the change is logged.
+ *
+ * <p>The snapshot's map is one per client, from URL to digest, not per issuer: a device takes a context as genuine
+ * when it has the digest stated for its URL. A pin is therefore never replaced by another entity's: when the entities
+ * a client sees pin one URL to different digests (a framework's issuer and another framework's, say), the context is
+ * left out of that client's snapshot and the conflict is logged; a client that sees only one of them is told its pin.
  *
  * <p>A context the snapshot does not carry, or carries by its digest only, a wallet asks the context relay for
  * ({@link ContextRelay}), which answers from the same cache.
@@ -73,6 +80,8 @@ public class ContextService {
     private final TrustProperties.Cache cfg;
     private final ResourceCache<Fetched> cache;
     private final Map<String, String> lastSeen = new ConcurrentHashMap<>();
+    /** Conflicting pins already logged: a URL with the two entities and digests. */
+    private final Set<String> reportedDisputes = ConcurrentHashMap.newKeySet();
 
     public ContextService(HttpFetcher http, TrustProperties.Cache cfg, Clock clock) {
         this.http = http;
@@ -96,14 +105,27 @@ public class ContextService {
      */
     public Map<String, Map<String, Object>> forSnapshot(Collection<TrustedEntity> entities, int maxBytes, Duration deadline) {
         Map<String, String> pins = new LinkedHashMap<>();
+        Map<String, String> pinnedBy = new LinkedHashMap<>();
+        Set<String> disputed = new HashSet<>();
         Map<String, Map<String, Object>> out = new LinkedHashMap<>();
         for (TrustedEntity e : entities) {
             if (e.attributes().get(Oid4vciMetadataMapper.CONTEXT_DIGESTS) instanceof Map<?, ?> m) {
-                m.forEach((k, v) -> pins.put(String.valueOf(k), String.valueOf(v)));
+                m.forEach((k, v) -> {
+                    String url = String.valueOf(k);
+                    String held = pins.putIfAbsent(url, String.valueOf(v));
+                    if (held == null) {
+                        pinnedBy.put(url, e.id());
+                    } else if (!held.equals(String.valueOf(v))) {
+                        // The map is one per client, not per issuer: whichever pin it carried would decide what the
+                        // other party's signatures cover. Neither does; the device reports the context as not vouched for.
+                        disputed.add(url);
+                        reportDisputed(url, pinnedBy.get(url), held, e.id(), String.valueOf(v));
+                    }
+                });
             }
         }
         List<String> urls = entities.stream().flatMap(e -> urls(e).stream().limit(MAX_PER_ENTITY)).distinct()
-                .filter(url -> !WELL_KNOWN.contains(url)).limit(MAX_PER_SNAPSHOT).toList();
+                .filter(url -> !WELL_KNOWN.contains(url) && !disputed.contains(url)).limit(MAX_PER_SNAPSHOT).toList();
         Map<String, Future<Context>> pending = new LinkedHashMap<>();
         ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor();
         try {
@@ -136,6 +158,17 @@ public class ContextService {
             out.put(url, claim);
         }
         return out;
+    }
+
+    /** Logs two different pins for one context, once for as long as the service runs, not on every snapshot build. */
+    private void reportDisputed(String url, String firstEntity, String firstPin, String secondEntity, String secondPin) {
+        String first = firstEntity + "=" + firstPin;
+        String second = secondEntity + "=" + secondPin;
+        String key = url + "|" + (first.compareTo(second) < 0 ? first + "|" + second : second + "|" + first);
+        if (reportedDisputes.add(key)) {
+            log.error("JSON-LD context {} is pinned to {} by entity '{}' and to {} by entity '{}'; it is left out of the snapshots of "
+                    + "clients that see both", url, firstPin, firstEntity, secondPin, secondEntity);
+        }
     }
 
     private static List<String> urls(TrustedEntity e) {
