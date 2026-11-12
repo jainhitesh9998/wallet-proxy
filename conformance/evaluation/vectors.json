@@ -5750,6 +5750,292 @@
           ]
         }
       }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-noroles-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:noroles-revoked.vectors.example"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "chain under a shared anchor, registered by its DNS name to a revoked party without any role, asked as issuer: the withdrawal counts for every role",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICDzCCAbSgAwIBAgIJAJZaw4mDhwemMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODA5MjJaFw00NjAxMTEwODA5MjJaMFExCzAJBgNVBAYTAlVUMRgwFgYDVQQKDA9XaXRoZHJhd24gUGFydHkxKDAmBgNVBAMMH25vcm9sZXMtcmV2b2tlZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATSVcLVI2tiJRGsrwiXjgL+fmrN+W7nxl2ojZIZQqQjerGfylbbjYvMjrksQYD+tlBFX06+mK5fCFactJgDzNpBo4GNMIGKMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQgB/h+1vAc822wAJDbDD65+8uIXjAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAqBgNVHREEIzAhgh9ub3JvbGVzLXJldm9rZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0kAMEYCIQCLzdaxv18TAHT6R1IT/0KN1khV+0RwfiOK0R5YvZAUJAIhANAbJBYOlsoxhadojU9HCAMPO7YeCMkYbtdNbmW5hksV"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-noroles-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:noroles-revoked.vectors.example"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "the same chain asked as verifier",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp"
+        },
+        "role" : "verifier",
+        "subject" : {
+          "x5c" : [
+            "MIICDzCCAbSgAwIBAgIJAJZaw4mDhwemMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODA5MjJaFw00NjAxMTEwODA5MjJaMFExCzAJBgNVBAYTAlVUMRgwFgYDVQQKDA9XaXRoZHJhd24gUGFydHkxKDAmBgNVBAMMH25vcm9sZXMtcmV2b2tlZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATSVcLVI2tiJRGsrwiXjgL+fmrN+W7nxl2ojZIZQqQjerGfylbbjYvMjrksQYD+tlBFX06+mK5fCFactJgDzNpBo4GNMIGKMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQgB/h+1vAc822wAJDbDD65+8uIXjAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAqBgNVHREEIzAhgh9ub3JvbGVzLXJldm9rZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0kAMEYCIQCLzdaxv18TAHT6R1IT/0KN1khV+0RwfiOK0R5YvZAUJAIhANAbJBYOlsoxhadojU9HCAMPO7YeCMkYbtdNbmW5hksV"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:noroles-active.vectors.example"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "entity.role_mismatch",
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "chain under a shared anchor, registered by its DNS name to an active party without any role, asked as issuer: the entry authorizes nothing and the chain decides",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICDjCCAbWgAwIBAgIJAJZaw4mDhwenMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODA5MjJaFw00NjAxMTEwODA5MjJaMFMxCzAJBgNVBAYTAlVUMRswGQYDVQQKDBJQYXJ0eSBXaXRob3V0IFJvbGUxJzAlBgNVBAMMHm5vcm9sZXMtYWN0aXZlLnZlY3RvcnMuZXhhbXBsZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJUPWJZ4py8cSTGxfmpqF1EGfrlr37BVYqjdgN4zqhPQLS4aVplkYAHZ5f94MHrDD7W7KIEQCN0tJUl2Afh9tpGjgYwwgYkwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwHQYDVR0OBBYEFPfmWw3SxVYNzLxbh6ydU67MxzPEMB8GA1UdIwQYMBaAFJjCV0B3+XDzwUhfwgFA1HF500RxMCkGA1UdEQQiMCCCHm5vcm9sZXMtYWN0aXZlLnZlY3RvcnMuZXhhbXBsZTAKBggqhkjOPQQDAgNHADBEAiBvVKRaEP3zQpTI/XfyGHdyVg/Eszj0X2I31KGT8EqawwIgUpg/hhRnMgKrhoTjxnJhRNMNVSa/xwytmbdW9wDAMrM="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-verifier-pin-revoked",
+          "errors" : [
+            "entity.status"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:GM-5pIVON-HLA3TIxFc159YvgCHXb33ixmF-QXvG9mU"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : "vec-verifier-pin-revoked",
+          "errors" : [
+            "entity.not_authorized",
+            "entity.status",
+            "x509.revocation_unknown"
+          ],
+          "framework" : "vectors",
+          "matched" : [
+            "X509_CERT:GM-5pIVON-HLA3TIxFc159YvgCHXb33ixmF-QXvG9mU"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "chain under a shared anchor pinned by a revoked verifier, asked as issuer: a withdrawn registration of this certificate counts whatever it is presented as",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICETCCAbegAwIBAgIJAJZaw4mDhweoMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODA5MjJaFw00NjAxMTEwODA5MjJaMFQxCzAJBgNVBAYTAlVUMRswGQYDVQQKDBJXaXRoZHJhd24gVmVyaWZpZXIxKDAmBgNVBAMMH3ZlcmlmaWVyLXBpbm5lZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAT34PYDzdxfMixW2BNgssUfa7b7z5lLgLQV4qvAxzP0P9Wuz1oZuUZPQxQQlaPBwg0BxkGOMB7c+skS2ykJJ8Ipo4GNMIGKMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQBeiVOZT4ndfz4Zp15ODb51nOyvjAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAqBgNVHREEIzAhgh92ZXJpZmllci1waW5uZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0gAMEUCIQCHBSApuBzhANMUaXWsQAZvQHOxxfNYBS9wTiFIq1WoUwIgdTaqEiEjF2fuM7yx698+tFD8t4QJg7do9xK/2lAA8Ts="
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:verifier-named.vectors.example"
+          ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "entity.role_mismatch",
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "chain under a shared anchor, registered by its DNS name only to a revoked verifier, asked as issuer: the verifier's entry is not considered",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "dc+sd-jwt",
+          "protocol" : "oid4vci"
+        },
+        "role" : "issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICDzCCAbWgAwIBAgIJAJZaw4mDhwepMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODA5MjJaFw00NjAxMTEwODA5MjJaMFMxCzAJBgNVBAYTAlVUMRswGQYDVQQKDBJXaXRoZHJhd24gVmVyaWZpZXIxJzAlBgNVBAMMHnZlcmlmaWVyLW5hbWVkLnZlY3RvcnMuZXhhbXBsZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABCa85iKLYo5bSvUTGEwiDxib/Y1beLc3O2X8L4o2S6mPzou0Dl94O7zZZ93MEW4OUVHEt4asfoYgPKeA3aOGmeijgYwwgYkwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwHQYDVR0OBBYEFNpN85mkpd5gKtQdqUhhb6IaRtYcMB8GA1UdIwQYMBaAFJjCV0B3+XDzwUhfwgFA1HF500RxMCkGA1UdEQQiMCCCHnZlcmlmaWVyLW5hbWVkLnZlY3RvcnMuZXhhbXBsZTAKBggqhkjOPQQDAgNIADBFAiEA7ceWMsCbeFS1DV6aykpfkL60MStzMCbCM5tnqt7OzCsCIGNwCJmuyRgukWn+Mz4Z4tWvrFQdqSl4iTl9Q7k9rs60"
+          ]
+        }
+      }
     }
   ],
   "description" : "Generated by EvaluationVectorsTest from cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",
@@ -6370,6 +6656,64 @@
           "display" : [
             {
               "locale" : "en",
+              "name" : "Active, registered without any role by a signer's DNS name"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-noroles-active",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "noroles-active.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [ ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, registered without any role by a signer's DNS name"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-noroles-revoked",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "noroles-revoked.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [ ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
               "name" : "No authorizations"
             }
           ],
@@ -6942,6 +7286,79 @@
             "VERIFIER"
           ],
           "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked verifier registered by its signer's DNS name"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-verifier-named-revoked",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "verifier-named.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "VERIFIER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "mMJXQHf5cPPBSF_CAUDUcXnTRHE",
+              "ca" : false,
+              "certificate" : "MIICETCCAbegAwIBAgIJAJZaw4mDhweoMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODA5MjJaFw00NjAxMTEwODA5MjJaMFQxCzAJBgNVBAYTAlVUMRswGQYDVQQKDBJXaXRoZHJhd24gVmVyaWZpZXIxKDAmBgNVBAMMH3ZlcmlmaWVyLXBpbm5lZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAT34PYDzdxfMixW2BNgssUfa7b7z5lLgLQV4qvAxzP0P9Wuz1oZuUZPQxQQlaPBwg0BxkGOMB7c+skS2ykJJ8Ipo4GNMIGKMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQBeiVOZT4ndfz4Zp15ODb51nOyvjAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAqBgNVHREEIzAhgh92ZXJpZmllci1waW5uZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0gAMEUCIQCHBSApuBzhANMUaXWsQAZvQHOxxfNYBS9wTiFIq1WoUwIgdTaqEiEjF2fuM7yx698+tFD8t4QJg7do9xK/2lAA8Ts=",
+              "dnsNames" : [
+                "verifier-pinned.vectors.example"
+              ],
+              "issuer" : "CN=RP Access CA,O=Registrar,C=UT",
+              "notAfter" : "2046-01-11T08:09:22Z",
+              "notBefore" : "2026-11-12T08:09:22Z",
+              "serialNumber" : "965ac389838707a8",
+              "sha256" : "GM-5pIVON-HLA3TIxFc159YvgCHXb33ixmF-QXvG9mU",
+              "subject" : "CN=verifier-pinned.vectors.example,O=Withdrawn Verifier,C=UT",
+              "subjectKeyIdentifier" : "AXolTmU-J3X8-GadeTg2-dZzsr4"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked verifier that pins its signer"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-verifier-pin-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "VERIFIER"
+          ],
+          "status" : "REVOKED"
         },
         {
           "attributes" : { },
@@ -7608,6 +8025,64 @@
           "display" : [
             {
               "locale" : "en",
+              "name" : "Active, registered without any role by a signer's DNS name"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-noroles-active",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "noroles-active.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [ ],
+          "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked, registered without any role by a signer's DNS name"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-noroles-revoked",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "noroles-revoked.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [ ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
               "name" : "No authorizations"
             }
           ],
@@ -8180,6 +8655,79 @@
             "VERIFIER"
           ],
           "status" : "ACTIVE"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [ ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked verifier registered by its signer's DNS name"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-verifier-named-revoked",
+          "identifiers" : [
+            {
+              "type" : "DNS",
+              "value" : "verifier-named.vectors.example"
+            }
+          ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "VERIFIER"
+          ],
+          "status" : "REVOKED"
+        },
+        {
+          "attributes" : { },
+          "authorizations" : [ ],
+          "certificates" : [
+            {
+              "authorityKeyIdentifier" : "mMJXQHf5cPPBSF_CAUDUcXnTRHE",
+              "ca" : false,
+              "certificate" : "MIICETCCAbegAwIBAgIJAJZaw4mDhweoMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjExMTIwODA5MjJaFw00NjAxMTEwODA5MjJaMFQxCzAJBgNVBAYTAlVUMRswGQYDVQQKDBJXaXRoZHJhd24gVmVyaWZpZXIxKDAmBgNVBAMMH3ZlcmlmaWVyLXBpbm5lZC52ZWN0b3JzLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAT34PYDzdxfMixW2BNgssUfa7b7z5lLgLQV4qvAxzP0P9Wuz1oZuUZPQxQQlaPBwg0BxkGOMB7c+skS2ykJJ8Ipo4GNMIGKMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMB0GA1UdDgQWBBQBeiVOZT4ndfz4Zp15ODb51nOyvjAfBgNVHSMEGDAWgBSYwldAd/lw88FIX8IBQNRxedNEcTAqBgNVHREEIzAhgh92ZXJpZmllci1waW5uZWQudmVjdG9ycy5leGFtcGxlMAoGCCqGSM49BAMCA0gAMEUCIQCHBSApuBzhANMUaXWsQAZvQHOxxfNYBS9wTiFIq1WoUwIgdTaqEiEjF2fuM7yx698+tFD8t4QJg7do9xK/2lAA8Ts=",
+              "dnsNames" : [
+                "verifier-pinned.vectors.example"
+              ],
+              "issuer" : "CN=RP Access CA,O=Registrar,C=UT",
+              "notAfter" : "2046-01-11T08:09:22Z",
+              "notBefore" : "2026-11-12T08:09:22Z",
+              "serialNumber" : "965ac389838707a8",
+              "sha256" : "GM-5pIVON-HLA3TIxFc159YvgCHXb33ixmF-QXvG9mU",
+              "subject" : "CN=verifier-pinned.vectors.example,O=Withdrawn Verifier,C=UT",
+              "subjectKeyIdentifier" : "AXolTmU-J3X8-GadeTg2-dZzsr4"
+            }
+          ],
+          "display" : [
+            {
+              "locale" : "en",
+              "name" : "Revoked verifier that pins its signer"
+            }
+          ],
+          "frameworkId" : "vectors",
+          "id" : "vec-verifier-pin-revoked",
+          "identifiers" : [ ],
+          "metadataTypes" : [ ],
+          "provenance" : {
+            "details" : { },
+            "frameworkId" : "vectors",
+            "sourceId" : "managed",
+            "sourceType" : "managed",
+            "sourceUri" : "admin-api"
+          },
+          "roles" : [
+            "VERIFIER"
+          ],
+          "status" : "REVOKED"
         },
         {
           "attributes" : { },

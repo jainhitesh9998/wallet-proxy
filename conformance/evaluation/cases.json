@@ -457,6 +457,49 @@
             "format": "dc+sd-jwt"
           }
         ]
+      },
+      "vec-noroles-revoked": {
+        "roles": [],
+        "name": "Revoked, registered without any role by a signer's DNS name",
+        "status": "REVOKED",
+        "identifiers": [
+          {
+            "type": "DNS",
+            "value": "noroles-revoked.vectors.example"
+          }
+        ]
+      },
+      "vec-noroles-active": {
+        "name": "Active, registered without any role by a signer's DNS name",
+        "identifiers": [
+          {
+            "type": "DNS",
+            "value": "noroles-active.vectors.example"
+          }
+        ]
+      },
+      "vec-verifier-pin-revoked": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Revoked verifier that pins its signer",
+        "status": "REVOKED",
+        "certificates": [
+          "pem:rp-verifier-pinned"
+        ]
+      },
+      "vec-verifier-named-revoked": {
+        "roles": [
+          "VERIFIER"
+        ],
+        "name": "Revoked verifier registered by its signer's DNS name",
+        "status": "REVOKED",
+        "identifiers": [
+          {
+            "type": "DNS",
+            "value": "verifier-named.vectors.example"
+          }
+        ]
       }
     }
   },
@@ -2233,6 +2276,80 @@
         "subject": {
           "x5c": [
             "pki:rp-named-hashed"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor, registered by its DNS name to a revoked party without any role, asked as issuer: the withdrawal counts for every role",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-noroles-revoked"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "the same chain asked as verifier",
+      "query": {
+        "role": "verifier",
+        "subject": {
+          "x5c": [
+            "pki:rp-noroles-revoked"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor, registered by its DNS name to an active party without any role, asked as issuer: the entry authorizes nothing and the chain decides",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-noroles-active"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor pinned by a revoked verifier, asked as issuer: a withdrawn registration of this certificate counts whatever it is presented as",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-verifier-pinned"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "dc+sd-jwt"
+        }
+      }
+    },
+    {
+      "name": "chain under a shared anchor, registered by its DNS name only to a revoked verifier, asked as issuer: the verifier's entry is not considered",
+      "query": {
+        "role": "issuer",
+        "subject": {
+          "x5c": [
+            "pki:rp-verifier-named"
           ]
         },
         "context": {

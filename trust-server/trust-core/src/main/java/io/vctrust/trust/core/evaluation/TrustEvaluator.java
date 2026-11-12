@@ -522,10 +522,11 @@ public class TrustEvaluator {
             // On-demand discovery follows the same rule: the key's identifiers, or the identifier without key material.
             lookUpOnDemand(ev, keyMaterial ? key.identifiers() : claim.identifiers(), candidates);
         }
-        keepRole(ev, candidates);
         String leafHash = key.chain().isEmpty() ? null : Certificates.sha256Thumbprint(key.chain().getFirst());
+        Predicate<TrustedEntity> boundToCertificate = e -> boundToCertificate(e, leafHash);
+        keepRole(ev, candidates, boundToCertificate);
         TrustedEntity entity = pick(candidates.entities, key.anchor(), ev.now(),
-                e -> denied(e, ev.format(), ev.types(), ev.strict()) == null, e -> boundToCertificate(e, leafHash));
+                e -> denied(e, ev.format(), ev.types(), ev.strict()) == null, boundToCertificate);
         return new Found(entity, candidates.matched);
     }
 
@@ -609,14 +610,24 @@ public class TrustEvaluator {
         }
     }
 
-    private static void keepRole(Evaluation ev, Candidates candidates) {
+    /**
+     * Keeps the candidates that have the role asked about: an entry in good standing without it authorizes nothing for
+     * that role. An entry that is not in good standing stays whatever its roles when it names no role at all (it says
+     * the party is withdrawn, and limits that to no role) or is bound to the certificate itself (a withdrawn
+     * registration of this exact certificate counts for whatever the certificate is presented as). Dropped, either would
+     * leave the decision to a chain that is trusted by itself. A withdrawn entry of another role that is bound only
+     * through a name or the CA is dropped as before.
+     */
+    private static void keepRole(Evaluation ev, Candidates candidates, Predicate<TrustedEntity> boundToCertificate) {
         EntityRole role = ev.role();
         if (role != null) {
-            List<TrustedEntity> withRole = candidates.entities.stream().filter(e -> e.hasRole(role)).toList();
-            if (!candidates.entities.isEmpty() && withRole.isEmpty()) {
+            Instant now = ev.now();
+            List<TrustedEntity> kept = candidates.entities.stream().filter(e -> e.hasRole(role)
+                    || (!e.isUsableAt(now) && (e.roles().isEmpty() || boundToCertificate.test(e)))).toList();
+            if (!candidates.entities.isEmpty() && kept.isEmpty()) {
                 ev.reasons().add(Reason.warning("entity.role_mismatch", "Matching entity is registered, but not as " + role));
             }
-            candidates.entities.retainAll(withRole);
+            candidates.entities.retainAll(kept);
         }
     }
 

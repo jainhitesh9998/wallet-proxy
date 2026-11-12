@@ -563,10 +563,10 @@ export class LocalEvaluator {
       // On-demand discovery follows the same rule: the key's identifiers, or the identifier without key material.
       await this.lookUpOnDemand(ev, keyMaterial ? key.identifiers : claim.identifiers, candidates);
     }
-    this.keepRole(ev, candidates);
     const leafHash = key.chain[0]?.sha256;
-    const entity = this.pick(candidates.entities, key.anchor, ev.now, (e) => this.denied(e, ev.format, ev.types, ev.strict) === undefined,
-      (e) => boundToCertificate(e, leafHash));
+    const bound = (e: EntityView) => boundToCertificate(e, leafHash);
+    this.keepRole(ev, candidates, bound);
+    const entity = this.pick(candidates.entities, key.anchor, ev.now, (e) => this.denied(e, ev.format, ev.types, ev.strict) === undefined, bound);
     return { entity, matched: candidates.matched };
   }
 
@@ -635,14 +635,22 @@ export class LocalEvaluator {
     }
   }
 
-  private keepRole(ev: Evaluation, candidates: Candidates): void {
-    const { wantRole } = ev;
+  /**
+   * Keeps the candidates that have the role asked about: an entry in good standing without it authorizes nothing for that
+   * role. An entry that is not in good standing stays whatever its roles when it names no role at all (it says the party
+   * is withdrawn, and limits that to no role) or is bound to the certificate itself (a withdrawn registration of this
+   * exact certificate counts for whatever the certificate is presented as). Dropped, either would leave the decision to a
+   * chain that is trusted by itself. A withdrawn entry of another role that is bound only through a name or the CA is
+   * dropped as before.
+   */
+  private keepRole(ev: Evaluation, candidates: Candidates, bound: (e: EntityView) => boolean): void {
+    const { wantRole, now } = ev;
     if (wantRole) {
-      const withRole = candidates.entities.filter((e) => e.roles.includes(wantRole));
-      if (candidates.entities.length > 0 && withRole.length === 0) {
+      const kept = candidates.entities.filter((e) => e.roles.includes(wantRole) || (!goodStanding(e, now) && (e.roles.length === 0 || bound(e))));
+      if (candidates.entities.length > 0 && kept.length === 0) {
         ev.reasons.push(warning('entity.role_mismatch', `Matching entity is registered, but not as ${wantRole}`));
       }
-      candidates.entities = withRole;
+      candidates.entities = kept;
     }
   }
 
