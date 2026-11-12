@@ -119,7 +119,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     private static final Pattern QUERY = Pattern.compile("(?i)(https?://[^\\s?#]*+)([?#]\\S*+)");
     /** Punctuation that ends a sentence or a quotation rather than a query, kept after a URL cut short. */
     private static final String TRAILING = ".,:;)]>'\"";
-    /** The longest message, warning or state text this source hands to anyone. */
+    /** The longest message this source hands to anyone (a source state shows less: the registry's bound). */
     static final int MAX_MESSAGE = 2_000;
     /** The longest warning: warnings are many, and each names one record. */
     static final int MAX_WARNING = 300;
@@ -150,10 +150,12 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     }
 
     /**
-     * Text as this source hands it to anyone (an exception's message, a warning, a source state, a log line): without
-     * the query of any URL in it, its control characters escaped, at most {@code max} characters. In one place, so
-     * that text from outside (a JWS header, a certificate's names, a document's values, a client's identifier) cannot
-     * reach a log line raw or make it half a megabyte long, wherever it came in.
+     * Text as this source hands it to anyone (an exception's message, a warning, the list's issuer): without the query
+     * of any URL in it, its control, format and separator characters escaped, at most {@code max} characters. In one
+     * place, so that text from outside (a JWS header, a certificate's names, a document's values, a client's identifier)
+     * cannot reach a caller raw, nor make what this source holds and throws half a megabyte long, wherever it came in.
+     * What a source state and a log line show of it, the registry bounds again for every source (ForeignText, 500
+     * characters); it leaves an escape written here as it is.
      */
     static String told(String text, int max) {
         if (text == null) {

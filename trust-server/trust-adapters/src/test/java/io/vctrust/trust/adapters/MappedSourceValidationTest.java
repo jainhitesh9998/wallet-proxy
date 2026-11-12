@@ -590,11 +590,17 @@ class MappedSourceValidationTest {
         // into was the vehicle here; since the third round (item 8) framework cannot be mapped.)
         TestContext ctx = ctx();
         MappedSourceRulesTest.serveJws(ctx, withHeader("{\"alg\":\"" + "f".repeat(8_000) + "\",\"kid\":\"k1\"}"));
+        Map<String, Object> jws = props("format", "jws", "verify", Map.of("jwks", MappedTesting.jwks(MappedTesting.key("k1"))));
+        // The source's own bound, on what it throws: no message it makes holds more than 2,000 characters.
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, jws))).startsWith("The list is signed with ffff").hasSize(2_000).endsWith("…");
+        // What a state and a log line show is the registry's to bound, for every source (ForeignText): 500 characters,
+        // and its cut mark. (It showed the source's 2,000 before the registry cut what sources report.)
         TrustRegistry registry = new TrustRegistry();
-        try (TrustSourceManager m = manager(registry, source(ctx, props("format", "jws", "verify", Map.of("jwks",
-                MappedTesting.jwks(MappedTesting.key("k1"))))))) {
+        try (TrustSourceManager m = manager(registry, source(ctx, jws))) {
             String error = state(m, "partner").lastError();
-            assertThat(error).startsWith("The list is signed with ffff").hasSize(2_000).endsWith("…");
+            assertThat(error).startsWith("The list is signed with ffff")
+                    .hasSizeLessThanOrEqualTo(io.vctrust.trust.core.util.ForeignText.MAX_LENGTH + io.vctrust.trust.core.util.ForeignText.CUT.length())
+                    .endsWith(io.vctrust.trust.core.util.ForeignText.CUT);
         }
     }
 

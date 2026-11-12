@@ -688,10 +688,12 @@ configuration is read.
   `iat` plus `lookup.maxAge`, when that is sooner than the 10 minutes. `lookup.url` must not hold user information.
 - *Messages name no secret and break no log line.* No message, warning, source state or log line names the query or
   fragment of a web URL (of `location`, of a page, of a lookup URL: cut up to the next whitespace), nor a header
-  value. Every message, warning and state text, and the list's issuer in `listInfo`, has its control, format and
-  separator characters escaped (Unicode categories Cc, Cf, Zl and Zp: line breaks, NEL, U+2028, bidi overrides,
-  zero-width characters) and is at most 2,000 characters long (a warning, 300), whatever it quotes: a document's
-  values, a JWS header, a certificate's names.
+  value. Every message and warning the source makes, and the list's issuer in `listInfo`, has its control, format
+  and separator characters escaped (Unicode categories Cc, Cf, Zl and Zp: line breaks, NEL, U+2028, bidi overrides,
+  zero-width characters) as `\uXXXX`, whatever it quotes (a document's values, a JWS header, a certificate's names),
+  and is at most 2,000 characters long (a warning, 300). The source state and the log then show a source's error and
+  warnings as the registry shows every source's: at most 500 characters, the cut marked `…[cut]`. What the source has
+  escaped is not escaped again.
 
 **What a signature does not tell apart.** A key that signs several kinds of document (a sandbox list and a production
 list, a list of issuers and one of verifiers, lists and lookup answers) lets one of them stand in for another, unless
