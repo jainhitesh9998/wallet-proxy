@@ -34,13 +34,18 @@ export class CrlLookup {
         await ctx.cache.delete(key);
       }
       try {
-        const { der, source } = await this.download(url);
-        const crl = parseCrl(der);
-        // Unverified CRLs are not kept: a forged one would otherwise mask the real CRL until it expired.
-        if (accept && !accept(url, crl)) throw new Error('CRL is not signed by the issuing CA');
-        // Nor is one older than the CRL held: a CRL from before a revocation, served again, would undo that revocation.
-        const held = fromCache();
-        if (held && crl.thisUpdate.getTime() < held.crl.thisUpdate.getTime()) throw new Error('CRL is older than the one already held');
+        // What a route hands over counts only when it is a CRL the issuing CA signed (a forged one would otherwise mask
+        // the real CRL until it expired) and not older than the CRL held (a CRL from before a revocation, served again,
+        // would undo that revocation). A relay that answers with anything else has not served the lookup: the URL itself
+        // is asked next, as for every lookup the proxy cannot serve.
+        const usable = (der: Uint8Array): Crl => {
+          const crl = parseCrl(der);
+          if (accept && !accept(url, crl)) throw new Error('CRL is not signed by the issuing CA');
+          const held = fromCache();
+          if (held && crl.thisUpdate.getTime() < held.crl.thisUpdate.getTime()) throw new Error('CRL is older than the one already held');
+          return crl;
+        };
+        const { crl, source } = await this.download(url, usable);
         const ttl = Math.min(24 * 3600_000, Math.max(60_000, (crl.nextUpdate?.getTime() ?? ctx.now() + 3600_000) - ctx.now()));
         await ctx.cache.set(key, base64Encode(crl.der), ttl);
         out.crls.push({ crl, url, source });
@@ -53,17 +58,18 @@ export class CrlLookup {
     return out;
   }
 
-  private download(url: string): Promise<{ der: Uint8Array; source: DataSource }> {
+  /** The CRL at {@code url} by the configured route; {@code usable} throws for an answer that does not count. */
+  private download(url: string, usable: (der: Uint8Array) => Crl): Promise<{ crl: Crl; source: DataSource }> {
     const { ctx } = this;
-    return via<{ der: Uint8Array; source: DataSource }>(ctx, ctx.lookups.crl, async (t) => {
+    return via<{ crl: Crl; source: DataSource }>(ctx, ctx.lookups.crl, async (t) => {
       const r = await t.request<Uint8Array>('GET', `/api/v1/proxy/crl?url=${encodeURIComponent(url)}`, { accept: 'application/pkix-crl', binary: true });
-      return { der: r.body, source: 'proxy' as const };
+      return { crl: usable(r.body), source: 'proxy' as const };
     }, async (source) => {
       // CRL distribution points are conventionally plain http: a CRL is signed, and verified against its CA here.
       if (!httpUrlHost(url)) throw new Error(`Unsupported CRL URL ${url}`);
       const res = await fetchWithTimeout(ctx.fetch, url, { headers: { Accept: 'application/pkix-crl' } }, ctx.timeoutMs);
       if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
-      return { der: new Uint8Array(await res.arrayBuffer()), source };
+      return { crl: usable(new Uint8Array(await res.arrayBuffer())), source };
     });
   }
 }

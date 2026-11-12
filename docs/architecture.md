@@ -181,7 +181,7 @@ printers of platforms differ.
 | --- | --- | --- | --- |
 | Issuer and authorization server metadata | `GET /api/v1/proxy/issuer-metadata?issuer=` | Signed by the service for this client and bound to the issuer asked for; signed metadata is verified against the issuer's own certificate | OpenID4VCI 1.0 §12.2.2 discovery at the issuer, RFC 8414 at its authorization servers |
 | DID document | In the snapshot for listed DIDs; `GET /api/v1/proxy/did/{did}` for others | Snapshot signature; signed response bound to the DID | The DID method itself (`did:web` over https; `did:key` and `did:jwk` are computed locally) |
-| CRL | In the snapshot for anchors; `GET /api/v1/proxy/crl?url=` for others | The CRL's signature, checked against the issuing CA | The distribution point |
+| CRL | In the snapshot for anchors; `GET /api/v1/proxy/crl?url=` for others | The CRL's signature, checked against the issuing CA | Where the CA publishes: the distribution point a certificate names, or for an anchor its `crlUrls` (a root's own distribution point when it lists none) |
 | Credential status list | `GET /api/v1/proxy/status-list?uri=` | The list's own signature and signer (Token Status List, Bitstring Status List) | The list's URI |
 | JSON-LD context | In the snapshot, or its digest | Snapshot signature; SHA-256 of the fetched document | The context's https URL, reported as not vouched for |
 | Unknown party (registries too large to ship) | `GET /api/v1/entities/lookup` (off by default) | Signed by the service; must name the identifier asked about | none: the party stays unknown |

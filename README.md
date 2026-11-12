@@ -56,7 +56,7 @@ test-ecosystem (reference issuer, verifier)  ──►  third-party implementati
 | What the wallet needs | Where it comes from | When the service cannot serve |
 | --- | --- | --- |
 | Is this issuer or verifier trusted? (an X.509 chain to a listed anchor, a DID, an identifier) | Decided on the device, from the signed snapshot | Trust pinned in the app |
-| Certificate revocation lists (CRLs) | In the snapshot for the trust anchors; through the proxy for CAs below them | The certificate's distribution point |
+| Certificate revocation lists (CRLs) | In the snapshot for the trust anchors; through the proxy for CAs below them | Where the CA publishes: the certificate's distribution point, or the location in the anchor's record |
 | Credential status lists (Token Status List, Bitstring Status List) | Through the proxy | The list's own URI |
 | DID documents | In the snapshot for listed DIDs; through the proxy for others | The DID method (`did:web` over https; `did:key` and `did:jwk` are computed locally) |
 | Issuer and authorization server metadata | Through the proxy | Discovery at the issuer |

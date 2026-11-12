@@ -218,7 +218,7 @@ function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certif
   }
   let revocation: CertificateRevocation[] | undefined;
   if (opts.revocation && revocable) {
-    const r = checkRevocation(path, anchor.certificate, time, { ...opts.revocation, anchorCrlUrls: anchorCrlUrls(anchor.constraints) });
+    const r = checkRevocation(path, anchor.certificate, time, { ...opts.revocation, anchorCrlUrls: anchorCrlUrls(anchor) });
     issues.push(...r.issues);
     revocation = r.statuses;
   }

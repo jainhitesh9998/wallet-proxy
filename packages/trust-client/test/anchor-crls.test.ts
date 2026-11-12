@@ -98,7 +98,8 @@ describe("a trust anchor's crlUrls on the device", () => {
     const otherIssuer = P.crl({ issuer: [['C', 'UT'], ['O', 'Utopia DMV'], ['CN', 'Utopia IACA 2']], signer: iacaKey, entries: [{ serial: revokedSerial }] });
     for (const [name, der] of [['signed by another CA', otherCaCrl], ['signed by the anchor key, another issuer', otherIssuer]] as const) {
       const storage = new MemoryCacheStore();
-      const c = client(fakeFetch({ ...snapshotRoutes(), [PROXY_CRL]: crlResponse(der) }, down).fetch, { storage });
+      // The relay and the location itself both serve it: neither route yields a CRL that counts.
+      const c = client(fakeFetch({ ...snapshotRoutes(), [PROXY_CRL]: crlResponse(der), [ANCHOR_URL]: crlResponse(der) }, down).fetch, { storage });
       for (const q of [ds, dsRevoked]) {
         const d = await c.evaluate(q);
         expect(d.decision, name).toBe('TRUSTED');
@@ -106,6 +107,16 @@ describe("a trust anchor's crlUrls on the device", () => {
         expect(d.reasons.find((r) => r.code === 'x509.revocation_unknown')?.severity, name).toBe('WARNING');
       }
       expect(await storage.get(`crl:${ANCHOR_URL}`), name).toBeNull();
+    }
+  });
+
+  it('a relay that answers with a CRL that does not count has not served the lookup: the location itself is asked', async () => {
+    const notACrl = () => new Response('<html>maintenance</html>', { headers: { 'Content-Type': 'application/pkix-crl' } });
+    for (const [name, relayed] of [['a CRL signed by another CA', crlResponse(otherCaCrl)], ['something that is not a CRL', notACrl]] as const) {
+      const { fetch, calls } = fakeFetch({ ...snapshotRoutes(), [PROXY_CRL]: relayed, [ANCHOR_URL]: crlResponse(iacaCrl) }, down);
+      const c = client(fetch);
+      expect((await c.evaluate(dsRevoked)).evidence?.x509?.revocation?.[0], name).toMatchObject({ status: 'REVOKED', source: 'fallback', crlUrl: ANCHOR_URL });
+      expect(toAnchorUrl(calls), name).toEqual([`GET ${PROXY_CRL}?url=${encodeURIComponent(ANCHOR_URL)}`, `GET ${ANCHOR_URL}`]);
     }
   });
 
@@ -180,6 +191,55 @@ describe("a pinned anchor's crlUrls", () => {
     const c = createTrustClient({ http: { fetch, retries: 0 },
       pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: pem('iaca'), constraints: { crlUrls: ['ldap://pki.utopia.example/cn=iaca', 'file:///etc/iaca.crl'] } }] } });
     expect((await c.evaluate(ds)).evidence?.x509?.revocation?.[0]).toMatchObject({ status: 'UNKNOWN', reason: 'no CRL is published for it' });
+    expect(calls).toEqual([]);
+  });
+});
+
+/**
+ * The service's rule (CrlService): an anchor whose record names no CRL location publishes at the distribution point of
+ * its own certificate when it is self-issued. A root does; the certificate of an intermediate CA names where the CA
+ * above it publishes, which says nothing about the certificates the intermediate issues.
+ */
+describe('an anchor whose record names no CRL location', () => {
+  const OWN_URL = 'http://pki.rooted.example/root.crl';
+  const ABOVE_URL = 'http://pki.rooted.example/above.crl';
+  const DS_EXTS = [P.X.ku([0]), P.X.eku(['1.0.18013.5.1.2'], true)];
+  const subject = (cn: string): P.Rdns => [['C', 'UT'], ['O', 'Rooted'], ['CN', cn]];
+  const b64der = (der: Buffer) => der.toString('base64');
+  const query = (leaf: Buffer) => issued([b64der(leaf)]);
+
+  it('a self-issued anchor is asked at the distribution point its own certificate names', async () => {
+    const key = P.ecKey();
+    const root = P.cert({ subject: subject('Rooted IACA'), issuer: subject('Rooted IACA'), key, signer: key,
+      exts: [P.X.bc(true, 0), P.X.ku([5, 6]), P.X.crlDp([OWN_URL])] });
+    const leaf = (serial: bigint) => P.cert({ subject: subject('Rooted DS'), issuer: subject('Rooted IACA'), key: P.ecKey(), signer: key, serial, exts: DS_EXTS });
+    const rootCrl = P.crl({ issuer: subject('Rooted IACA'), signer: key, entries: [{ serial: 0x51n }] });
+    const { fetch, calls } = fakeFetch({ [OWN_URL]: crlResponse(rootCrl) }, down);
+    const c = createTrustClient({ http: { fetch, retries: 0 }, pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: b64der(root) }] } });
+    expect((await c.evaluate(query(leaf(0x50n)))).evidence?.x509?.revocation?.[0]).toMatchObject({ status: 'GOOD', source: 'direct', crlUrl: OWN_URL });
+    const revoked = await c.evaluate(query(leaf(0x51n)));
+    expect([revoked.decision, revoked.reasons.find((r) => r.severity === 'ERROR')?.code]).toEqual(['NOT_TRUSTED', 'x509.revoked']);
+    expect(calls).toEqual([`GET ${OWN_URL}`]);
+
+    // What the record names comes first: the certificate's own distribution point is then not asked.
+    const named = fakeFetch({ [ANCHOR_URL]: crlResponse(rootCrl), [OWN_URL]: crlResponse(rootCrl) }, down);
+    const n = createTrustClient({ http: { fetch: named.fetch, retries: 0 },
+      pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: b64der(root), constraints: { crlUrls: [ANCHOR_URL] } }] } });
+    expect((await n.evaluate(query(leaf(0x51n)))).evidence?.x509?.revocation?.[0]).toMatchObject({ status: 'REVOKED', crlUrl: ANCHOR_URL });
+    expect(named.calls).toEqual([`GET ${ANCHOR_URL}`]);
+  });
+
+  it('an intermediate CA listed as an anchor is not asked at the distribution point in its certificate', async () => {
+    const above = P.ecKey();
+    const key = P.ecKey();
+    const intermediate = P.cert({ subject: subject('Rooted Issuing CA'), issuer: subject('Rooted Root'), key, signer: above,
+      exts: [P.X.bc(true, 0), P.X.ku([5, 6]), P.X.crlDp([ABOVE_URL])] });
+    const leaf = P.cert({ subject: subject('Rooted DS'), issuer: subject('Rooted Issuing CA'), key: P.ecKey(), signer: key, exts: DS_EXTS });
+    // Even a CRL the intermediate itself signed would be found there: the location is not the intermediate's to publish at.
+    const { fetch, calls } = fakeFetch({ [ABOVE_URL]: crlResponse(P.crl({ issuer: subject('Rooted Issuing CA'), signer: key })) }, down);
+    const c = createTrustClient({ http: { fetch, retries: 0 }, pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: b64der(intermediate) }] } });
+    const d = await c.evaluate(query(leaf));
+    expect([d.decision, d.evidence?.x509?.revocation?.[0]?.status, d.evidence?.x509?.revocation?.[0]?.reason]).toEqual(['TRUSTED', 'UNKNOWN', 'no CRL is published for it']);
     expect(calls).toEqual([]);
   });
 });

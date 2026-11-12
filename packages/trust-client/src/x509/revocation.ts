@@ -31,8 +31,8 @@ export interface RevocationOptions {
   /** policy: an unknown status is an error rather than a warning */
   require?: boolean;
   /**
-   * Where the trust anchor's CA publishes its CRL (the anchor's constraints.crlUrls): looked at, besides its own
-   * distribution points, for the certificate the anchor issued, to report why its status is unknown.
+   * Where the trust anchor's CA publishes its CRL ({@link anchorCrlUrls}): looked at, besides its own distribution
+   * points, for the certificate the anchor issued, to report why its status is unknown.
    */
   anchorCrlUrls?: string[];
 }
@@ -40,13 +40,18 @@ export interface RevocationOptions {
 const HTTP_URL = /^https?:\/\//i;
 
 /**
- * The http(s) locations a trust anchor's record names for its CA's CRL ({@code constraints.crlUrls}): a list, or one
- * URL, as the service reads them (CrlService.configuredUrls).
+ * The http(s) locations where a trust anchor's CA publishes its CRL, as the service finds them (CrlService): what the
+ * anchor's record names ({@code constraints.crlUrls}: a list, or one URL); and when it names none, the distribution
+ * points of the anchor certificate itself if it is self-issued (a root publishes its own CRL there; an intermediate
+ * CA's certificate names where the CA above it publishes, which says nothing about the certificates it issues).
  */
-export function anchorCrlUrls(constraints: Record<string, unknown> | undefined): string[] {
-  const v = constraints?.crlUrls;
-  const urls = Array.isArray(v) ? v : typeof v === 'string' ? [v] : [];
-  return urls.filter((u): u is string => typeof u === 'string' && HTTP_URL.test(u));
+export function anchorCrlUrls(anchor: { constraints?: Record<string, unknown>; certificate: Certificate } | undefined): string[] {
+  if (!anchor) return [];
+  const v = anchor.constraints?.crlUrls;
+  const named = (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).filter((u): u is string => typeof u === 'string' && HTTP_URL.test(u));
+  if (named.length > 0) return named;
+  const c = anchor.certificate;
+  return bytesEqual(c.issuerRaw, c.subjectRaw) ? c.crlDistributionPoints.filter((u) => HTTP_URL.test(u)) : [];
 }
 
 /** Accepted clock skew for a CRL's thisUpdate. */

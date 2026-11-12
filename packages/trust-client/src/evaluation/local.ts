@@ -132,7 +132,7 @@ export async function validateChainOnDevice(chain: Certificate[], anchors: Local
   const revocation = { crls: data.crls ?? [], require: data.policy?.requireRevocationStatus === true };
   const r = validateCertificateChain(chain, anchors, { ...opts, revocation });
   const anchor = r.anchorRef?.certificate;
-  const anchorUrls = anchorCrlUrls(r.anchorRef?.constraints);
+  const anchorUrls = anchorCrlUrls(r.anchorRef);
   const urls = fetchCrls && r.anchorFound ? crlUrlsToFetch(chain, r.revocation, anchorUrls) : [];
   if (urls.length === 0) return r;
   // A CRL counts (and is cached) only when it is the CRL of a CA of this chain for that URL: signed by the issuer of a

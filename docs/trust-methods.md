@@ -212,10 +212,10 @@ own certificate is where the CA above it publishes, not where it does.
   revocation, served again, would take the revocation back.
 - Ships the current CRL of every anchor a client can see in that client's snapshot (`crls`), up to
   `snapshot-max-crl-bytes` (256 KiB) each. A larger one is left out, and so is one that could not be loaded; a device
-  then fetches the CRL itself, from the anchor's `crlUrls` for a certificate the anchor issued, or from a distribution
-  point the certificate names. An anchor without `crlUrls` (its CRL pushed with `crl`, or found at its own
-  distribution point) gives the device nowhere to look: raise the limit for such a CA whose certificates name no
-  distribution point.
+  then fetches the CRL itself, for a certificate the anchor issued from where the anchor publishes (its `crlUrls`,
+  or its own distribution point: see below), or from a distribution point the certificate names. An anchor whose
+  CRL is only pushed with `crl`, and that names no location anywhere, gives the device nowhere to look: raise the
+  limit for such a CA whose certificates name no distribution point.
 - Relays any other CRL: `GET /api/v1/proxy/crl?url=<distribution point>`, cached until the earlier of `refresh`
   and its next update. The relay passes on only what parses as a CRL, byte for byte, and does not verify it: it
   does not know the issuer, the device does.
@@ -226,12 +226,14 @@ own certificate is where the CA above it publishes, not where it does.
 
 - Checks each certificate against the CRLs in the snapshot first. No request leaves the device.
 - For a certificate whose status is still unknown, fetches its CRL from the http(s) distribution points it names,
-  and, for a certificate the trust anchor issued, from the http(s) URLs in the anchor's `constraints.crlUrls` (an
-  anchor of the snapshot, or one pinned in the app). Each through the relay, and from the URL itself when the relay
-  cannot serve (`lookups.crl`: `'proxy'`, `'direct'`, or `'none'` to never download one). Only chains that lead to a
+  and, for a certificate the trust anchor issued, from where the anchor publishes, found as the service finds it:
+  the http(s) URLs in the anchor's `constraints.crlUrls`, and when there are none, the distribution point in the
+  anchor's own certificate if it is self-issued (an anchor of the snapshot, or one pinned in the app). Each through
+  the relay, and from the URL itself when the relay cannot serve or answers with something that is not a CRL that
+  counts (`lookups.crl`: `'proxy'`, `'direct'`, or `'none'` to never download one). Only chains that lead to a
   trusted anchor trigger a download.
-- Verifies every CRL against the certificate's issuer, wherever it came from; one from an anchor's `crlUrls` counts
-  only when the anchor issued it (the anchor's name as issuer, signed by its key). One that does not verify is not
+- Verifies every CRL against the certificate's issuer, wherever it came from; one from where an anchor publishes
+  counts only when the anchor issued it (the anchor's name as issuer, signed by its key). One that does not verify is not
   kept. A fetched CRL is kept until its next update (at most a day) and never replaced by an older one.
 - A CRL scoped by an issuing distribution point covers only the certificates that name that point (see below), and
   this holds for a CRL from an anchor's `crlUrls` too: for a certificate that names no distribution point, the CA must
@@ -511,8 +513,8 @@ held one is past its expiry and its grace period. With a snapshot, the service i
 overrides nothing. A decision from pinned trust says so (`source: 'pinned'`, warning `local.pinned`).
 
 Pinned trust has no CRLs of its own and no client profile of its own. Revocation then rests on the certificates'
-distribution points and on the pinned anchor's `constraints.crlUrls`, which are fetched as for an anchor of the
-snapshot (see [CRLs](#crls), `lookups.crl`). The rules do not lapse with the snapshot: a decision from pinned trust is
+distribution points and on where the pinned anchor publishes (its `constraints.crlUrls`, or a root's own distribution
+point), fetched as for an anchor of the snapshot (see [CRLs](#crls), `lookups.crl`). The rules do not lapse with the snapshot: a decision from pinned trust is
 made under the rules in force, which are the app's own minimum (the library option `policy`) made stricter by the
 client profile of the last snapshot that verified. A profile with `require-revocation-status`, `strict-authorization` or
 `require-signed-issuer-metadata` therefore stays strict after its snapshot has expired, also when the app restarts;
