@@ -87,7 +87,7 @@ What makes each of these safe to take from a proxy or a cache:
 | --- | --- |
 | Issuer metadata | The service's signature, the audience, the issuer asked for. Signed issuer metadata: the issuer's own certificate |
 | DID document | The snapshot's signature, or a signed response bound to the DID. For a DID the snapshot lists, the snapshot is the resolver |
-| CRL | The signature of the CA that issued the certificate being checked; a CRL that does not verify is not kept |
+| CRL | The signature of the CA that issued the certificate being checked (for one fetched from a trust anchor's `crlUrls`, the anchor's name and key); a CRL that does not verify is not kept |
 | Status list | The list's own signature, its signer (the credential's signer or one certified by the same anchor), subject and age |
 | JSON-LD context | The digest the snapshot carries; `vouched: false` for a context the service does not know |
 

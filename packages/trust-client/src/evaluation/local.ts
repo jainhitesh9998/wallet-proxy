@@ -6,9 +6,10 @@
  */
 import { parseCertificate, type Certificate } from '../x509/certificate.js';
 import { validateCertificateChain, type LocalAnchor, type ValidateOptions } from '../x509/validate.js';
-import { crlUrlsToFetch, type HeldCrl } from '../x509/revocation.js';
+import { anchorCrlUrls, crlUrlsToFetch, type HeldCrl } from '../x509/revocation.js';
 import type { Crl } from '../x509/crl.js';
 import { verifyX509Signature } from '../x509/signature.js';
+import { bytesEqual } from '../util/bytes.js';
 import { findVerificationMethod, hasRelationship, didError, parseDid } from '../did/did.js';
 import { jwkThumbprint } from '../crypto/keys.js';
 import type { TrustRules } from './rules.js';
@@ -121,19 +122,27 @@ export type CrlFetcher = (urls: string[], accept?: (url: string, crl: Crl) => bo
 
 /**
  * Path validation with revocation: first against the CRLs already held (the snapshot's), then — only for
- * certificates whose status is still unknown and that name a CRL distribution point — against CRLs fetched by
- * {@code fetchCrls}. Certificates under unknown anchors never trigger a download.
+ * certificates whose status is still unknown — against CRLs fetched by {@code fetchCrls}: from the distribution
+ * points a certificate names, and for the certificate the trust anchor issued, from where the anchor's record says
+ * its CA publishes ({@code constraints.crlUrls}; the service ships that CRL in the snapshot unless it is too large or
+ * could not be loaded). Certificates under unknown anchors never trigger a download.
  */
 export async function validateChainOnDevice(chain: Certificate[], anchors: LocalAnchor[], opts: ValidateOptions,
                                             data: Pick<LocalTrustData, 'crls' | 'policy'>, fetchCrls?: CrlFetcher) {
   const revocation = { crls: data.crls ?? [], require: data.policy?.requireRevocationStatus === true };
   const r = validateCertificateChain(chain, anchors, { ...opts, revocation });
-  const urls = fetchCrls && r.anchorFound ? crlUrlsToFetch(chain, r.revocation) : [];
+  const anchor = r.anchorRef?.certificate;
+  const anchorUrls = anchorCrlUrls(r.anchorRef?.constraints);
+  const urls = fetchCrls && r.anchorFound ? crlUrlsToFetch(chain, r.revocation, anchorUrls) : [];
   if (urls.length === 0) return r;
-  // A CRL counts (and is cached) only when the issuer of a certificate naming its URL signed it.
-  const issuerOf = (j: number) => chain[j + 1] ?? r.anchorRef?.certificate;
-  const accept = (url: string, crl: Crl) => chain.some((c, j) => c.crlDistributionPoints.includes(url) && !!issuerOf(j)
-    && verifyX509Signature(crl, issuerOf(j)!.publicKey));
+  // A CRL counts (and is cached) only when it is the CRL of a CA of this chain for that URL: signed by the issuer of a
+  // certificate that names the URL as its distribution point, or, at a location the anchor lists, issued (by name)
+  // and signed by the anchor itself, as the service accepts an anchor's CRL (CrlService).
+  const issuerOf = (j: number) => chain[j + 1] ?? anchor;
+  const byAnchor = (crl: Crl) => !!anchor && (bytesEqual(crl.issuerRaw, anchor.subjectRaw) || crl.issuer === anchor.subject)
+    && verifyX509Signature(crl, anchor.publicKey);
+  const accept = (url: string, crl: Crl) => (anchorUrls.includes(url) && byAnchor(crl))
+    || chain.some((c, j) => c.crlDistributionPoints.includes(url) && !!issuerOf(j) && verifyX509Signature(crl, issuerOf(j)!.publicKey));
   const got = await fetchCrls!(urls, accept);
   return validateCertificateChain(chain, anchors, { ...opts, revocation: { ...revocation, crls: [...revocation.crls, ...got.crls], failures: got.failures } });
 }

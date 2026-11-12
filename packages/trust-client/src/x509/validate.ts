@@ -10,7 +10,7 @@
  */
 import { OID, parseCertificate, type Certificate } from './certificate.js';
 import { verifyX509Signature } from './signature.js';
-import { checkRevocation, type RevocationOptions } from './revocation.js';
+import { anchorCrlUrls, checkRevocation, type RevocationOptions } from './revocation.js';
 import { base64Encode, bytesEqual } from '../util/bytes.js';
 import { rsaKeyProblem } from '../crypto/rsa.js';
 import type { CertificateRevocation, CertificateSummary, PathValidationResult, ValidationIssue } from '../types.js';
@@ -218,7 +218,7 @@ function finish(pathIssues: ValidationIssue[], anchor: LocalAnchor, path: Certif
   }
   let revocation: CertificateRevocation[] | undefined;
   if (opts.revocation && revocable) {
-    const r = checkRevocation(path, anchor.certificate, time, opts.revocation);
+    const r = checkRevocation(path, anchor.certificate, time, { ...opts.revocation, anchorCrlUrls: anchorCrlUrls(anchor.constraints) });
     issues.push(...r.issues);
     revocation = r.statuses;
   }

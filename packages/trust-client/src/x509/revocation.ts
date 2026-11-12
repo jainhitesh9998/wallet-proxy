@@ -30,6 +30,23 @@ export interface RevocationOptions {
   failures?: Record<string, string>;
   /** policy: an unknown status is an error rather than a warning */
   require?: boolean;
+  /**
+   * Where the trust anchor's CA publishes its CRL (the anchor's constraints.crlUrls): looked at, besides its own
+   * distribution points, for the certificate the anchor issued, to report why its status is unknown.
+   */
+  anchorCrlUrls?: string[];
+}
+
+const HTTP_URL = /^https?:\/\//i;
+
+/**
+ * The http(s) locations a trust anchor's record names for its CA's CRL ({@code constraints.crlUrls}): a list, or one
+ * URL, as the service reads them (CrlService.configuredUrls).
+ */
+export function anchorCrlUrls(constraints: Record<string, unknown> | undefined): string[] {
+  const v = constraints?.crlUrls;
+  const urls = Array.isArray(v) ? v : typeof v === 'string' ? [v] : [];
+  return urls.filter((u): u is string => typeof u === 'string' && HTTP_URL.test(u));
 }
 
 /** Accepted clock skew for a CRL's thisUpdate. */
@@ -101,9 +118,11 @@ export function checkRevocation(path: Certificate[], anchor: Certificate, time: 
       // delta (deltas are not combined here), and in a complete CRL it should not appear at all.
       why = crl.delta ? DELTA : 'the CRL lists the certificate with reason removeFromCRL, which only a delta CRL may use';
     }
-    const failed = cert.crlDistributionPoints.map((u) => opts.failures?.[u]).find(Boolean);
+    // Where its CRL could be had: its own distribution points, and for the certificate the anchor issued, the anchor's.
+    const where = j === path.length - 1 ? [...cert.crlDistributionPoints, ...(opts.anchorCrlUrls ?? [])] : cert.crlDistributionPoints;
+    const failed = where.map((u) => opts.failures?.[u]).find(Boolean);
     why ??= failed ? `CRL unavailable: ${failed}`
-      : cert.crlDistributionPoints.length > 0 ? 'its CRL has not been obtained'
+      : where.length > 0 ? 'its CRL has not been obtained'
         : cert.ocspUrls.length > 0 ? 'the issuer publishes only OCSP, which this device does not use (it would reveal the certificate)'
           : 'no CRL is published for it';
     statuses.push({ ...base, status: 'UNKNOWN', reason: why });
@@ -150,12 +169,18 @@ function unusable(crl: Crl, cert: Certificate, issuer: Certificate, time: Date):
   return null;
 }
 
-/** http(s) CRL distribution points worth fetching for the certificates whose status is still unknown. */
-export function crlUrlsToFetch(path: Certificate[], statuses: CertificateRevocation[] | undefined): string[] {
+/**
+ * http(s) CRL locations worth fetching for the certificates whose status is still unknown: each one's own
+ * distribution points, and for the certificate the trust anchor issued (the last of the validated path, which
+ * {@code statuses} covers one by one), where the anchor's CA publishes ({@code anchorUrls}, see {@link anchorCrlUrls}).
+ */
+export function crlUrlsToFetch(path: Certificate[], statuses: CertificateRevocation[] | undefined, anchorUrls: string[] = []): string[] {
   const urls = new Set<string>();
+  const issuedByAnchor = (statuses?.length ?? 0) - 1;
   for (const s of statuses ?? []) {
     if (s.status !== 'UNKNOWN') continue;
-    for (const u of path[s.index]?.crlDistributionPoints ?? []) if (/^https?:\/\//i.test(u)) urls.add(u);
+    const candidates = [...(path[s.index]?.crlDistributionPoints ?? []), ...(s.index === issuedByAnchor ? anchorUrls : [])];
+    for (const u of candidates) if (HTTP_URL.test(u)) urls.add(u);
   }
   return [...urls];
 }

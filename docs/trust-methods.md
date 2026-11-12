@@ -211,8 +211,11 @@ own certificate is where the CA above it publishes, not where it does.
 - Refuses a CRL older than the one it holds (issued earlier, or with a lower CRL number): a CRL from before a
   revocation, served again, would take the revocation back.
 - Ships the current CRL of every anchor a client can see in that client's snapshot (`crls`), up to
-  `snapshot-max-crl-bytes` (256 KiB) each. A larger one is left out, and a device then finds it only through the
-  distribution point a certificate names: raise the limit for a CA whose certificates name none.
+  `snapshot-max-crl-bytes` (256 KiB) each. A larger one is left out, and so is one that could not be loaded; a device
+  then fetches the CRL itself, from the anchor's `crlUrls` for a certificate the anchor issued, or from a distribution
+  point the certificate names. An anchor without `crlUrls` (its CRL pushed with `crl`, or found at its own
+  distribution point) gives the device nowhere to look: raise the limit for such a CA whose certificates name no
+  distribution point.
 - Relays any other CRL: `GET /api/v1/proxy/crl?url=<distribution point>`, cached until the earlier of `refresh`
   and its next update. The relay passes on only what parses as a CRL, byte for byte, and does not verify it: it
   does not know the issuer, the device does.
@@ -222,11 +225,18 @@ own certificate is where the CA above it publishes, not where it does.
 ### What the device does
 
 - Checks each certificate against the CRLs in the snapshot first. No request leaves the device.
-- For a certificate whose status is still unknown and that names an http(s) distribution point, fetches that CRL:
-  through the relay, and from the distribution point itself when the relay cannot serve (`lookups.crl`: `'proxy'`,
-  `'direct'`, or `'none'` to never download one). Only chains that lead to a trusted anchor trigger a download.
-- Verifies every CRL against the certificate's issuer, wherever it came from; one that does not verify is not kept.
-  A fetched CRL is kept until its next update (at most a day) and never replaced by an older one.
+- For a certificate whose status is still unknown, fetches its CRL from the http(s) distribution points it names,
+  and, for a certificate the trust anchor issued, from the http(s) URLs in the anchor's `constraints.crlUrls` (an
+  anchor of the snapshot, or one pinned in the app). Each through the relay, and from the URL itself when the relay
+  cannot serve (`lookups.crl`: `'proxy'`, `'direct'`, or `'none'` to never download one). Only chains that lead to a
+  trusted anchor trigger a download.
+- Verifies every CRL against the certificate's issuer, wherever it came from; one from an anchor's `crlUrls` counts
+  only when the anchor issued it (the anchor's name as issuer, signed by its key). One that does not verify is not
+  kept. A fetched CRL is kept until its next update (at most a day) and never replaced by an older one.
+- A CRL scoped by an issuing distribution point covers only the certificates that name that point (see below), and
+  this holds for a CRL from an anchor's `crlUrls` too: for a certificate that names no distribution point, the CA must
+  publish there a CRL for all its certificates, one without an issuing distribution point or with one that names no
+  location.
 
 ### How a status is decided
 
@@ -501,9 +511,10 @@ held one is past its expiry and its grace period. With a snapshot, the service i
 overrides nothing. A decision from pinned trust says so (`source: 'pinned'`, warning `local.pinned`).
 
 Pinned trust has no CRLs of its own and no client profile of its own. Revocation then rests on the certificates'
-distribution points (`lookups.crl`). The rules do not lapse with the snapshot: a decision from pinned trust is made
-under the rules in force, which are the app's own minimum (the library option `policy`) made stricter by the client
-profile of the last snapshot that verified. A profile with `require-revocation-status`, `strict-authorization` or
+distribution points and on the pinned anchor's `constraints.crlUrls`, which are fetched as for an anchor of the
+snapshot (see [CRLs](#crls), `lookups.crl`). The rules do not lapse with the snapshot: a decision from pinned trust is
+made under the rules in force, which are the app's own minimum (the library option `policy`) made stricter by the
+client profile of the last snapshot that verified. A profile with `require-revocation-status`, `strict-authorization` or
 `require-signed-issuer-metadata` therefore stays strict after its snapshot has expired, also when the app restarts;
 only the snapshot's data (its anchors, entities and CRLs) is no longer used. Rules are taken only from a snapshot whose
 signature and audience verify against the pinned service keys: a store that was cleared, or that holds a snapshot that
@@ -524,7 +535,7 @@ Document Signer that names no distribution point at all.
 | Method | Service | Client profile | Library |
 | --- | --- | --- | --- |
 | X.509 chains | Anchors (`domain`, `entity`, `constraints.docTypes`) from any source | `frameworks`, `strict-authorization` | `pinned.anchors`, `policy.strictAuthorization` |
-| CRLs | Anchor `constraints.crlUrls` / `crl`; `trust.revocation.enabled`, `refresh`, `fetch-anchor-crls`, `fetch-on-demand`, `relay-crls`, `max-crl-bytes`, `snapshot-max-crl-bytes` | `require-revocation-status` | `lookups.crl`, `policy.requireRevocationStatus` |
+| CRLs | Anchor `constraints.crlUrls` / `crl`; `trust.revocation.enabled`, `refresh`, `fetch-anchor-crls`, `fetch-on-demand`, `relay-crls`, `max-crl-bytes`, `snapshot-max-crl-bytes` | `require-revocation-status` | `lookups.crl`, `policy.requireRevocationStatus`; `constraints.crlUrls` of `pinned.anchors` |
 | Status lists | `trust.revocation.relay-status-lists`, `status-list-default-ttl`, `status-list-max-ttl`, `max-status-list-bytes`; anchors of domain `status-list` | | `lookups.statusLists` |
 | DIDs | Entity identifiers; `trust.service.snapshot-did-documents` and its limits; `trust.did.*`; `trust.cache.did-ttl` | | `lookups.did` |
 | Identifiers, issuer metadata | Entity identifiers, `metadataPolicy`; `trust.cache.metadata-*` | `allow-unregistered-metadata`, `require-signed-issuer-metadata` | `lookups.metadata`, `issuerMetadata.signed`, `policy.requireSignedIssuerMetadata` |
