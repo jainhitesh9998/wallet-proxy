@@ -159,7 +159,10 @@ Failures are RFC 9457 problem details: `401` (`unauthorized`, `invalid_token`) w
 
 ### Frameworks and sources
 
-A framework is a trust scheme; a source loads entities and anchors into one.
+A framework is a trust scheme; a source loads entities and anchors into one. A framework id is made of letters,
+digits, `.`, `_` and `-`; any other id (in `trust.frameworks`, or as the `framework` of a source) stops the service at
+startup with a message that names it, because `<id>@<framework>` is the name an entry falls back to (below) and must
+belong to one framework only.
 
 ```yaml
 trust:
