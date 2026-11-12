@@ -183,6 +183,18 @@ class MappingLanguageTest {
     }
 
     @Test
+    void theQueryOfEveryWebUrlInATextIsCutUpToTheNextWhitespace() {
+        // Second round: the scrubber stopped at an apostrophe, a quote or an angle bracket, and left the rest.
+        assertThat(MappedSourceFactory.withoutQueries("from https://h.example/x?key=part1'part2\"part3<part4>part5 failed"))
+                .isEqualTo("from https://h.example/x failed");
+        assertThat(MappedSourceFactory.withoutQueries("at 'https://h.example/x?k=s', then HTTPS://H.example#frag; done"))
+                .isEqualTo("at 'https://h.example/x', then HTTPS://H.example; done");
+        assertThat(MappedSourceFactory.withoutQueries("x_https://h.example/?k=s and https://h.example/path'?k=s"))
+                .isEqualTo("x_https://h.example/ and https://h.example/path'");
+        assertThat(MappedSourceFactory.withoutQueries("https://h.example/list?key=x: refused")).isEqualTo("https://h.example/list: refused");
+    }
+
+    @Test
     void translatedValues() {
         Object a = ((List<?>) ((Map<?, ?>) DOC).get("issuers")).get(0);
         Object b = ((List<?>) ((Map<?, ?>) DOC).get("issuers")).get(1);

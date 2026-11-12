@@ -490,6 +490,76 @@ class MappedSourceValidationTest {
         assertThat(ctx.http.requests).hasSize(4);
     }
 
+    // E: messages ---------------------------------------------------------------------------------------------------
+
+    static final String FORGED = "x\r\n2026-11-12 03:00:00 WARN Trust source 'partner' (mapped): all good";
+
+    static String b64(String json) {
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(MappedTesting.utf8(json));
+    }
+
+    /** A compact JWS with this header, whose signature is not checked before what the test is about. */
+    static String withHeader(String header) {
+        return b64(header) + "." + b64(Json.write(MappedSourceRulesTest.doc("a"))) + ".c2ln";
+    }
+
+    @Test
+    void e_textFromOutsideReachesNoMessageUnescaped() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        String forged = Json.write(FORGED);   // as a JSON string, with its escapes
+        Map<String, String> errors = new LinkedHashMap<>();
+        MappedSourceRulesTest.serveJws(ctx, withHeader("{\"alg\":" + forged + ",\"kid\":\"k1\"}"));
+        errors.put("alg", MappedSourceRulesTest.loadError(source(ctx, props("format", "jws", "verify", Map.of("jwks", MappedTesting.jwks(k1))))));
+        MappedSourceRulesTest.serveJws(ctx, withHeader("{\"alg\":\"ES256\",\"typ\":" + forged + ",\"kid\":\"k1\"}"));
+        errors.put("typ", MappedSourceRulesTest.loadError(source(ctx, props("format", "jws", "verify", Map.of("jwks", MappedTesting.jwks(k1),
+                "typ", "partner-list+jwt")))));
+        // The issuer of an x5c certificate, which the path validation names.
+        var builder = new org.bouncycastle.asn1.x500.X500NameBuilder(org.bouncycastle.asn1.x500.style.BCStyle.INSTANCE)
+                .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.CN, "x\r\n2026-11-12 WARN Trust source forged");   // at most 64
+        io.vctrust.trust.core.testing.TestPki.Issued stranger = MappedSourceAttacksTest.certificate(builder.build().toString(), null, false,
+                org.bouncycastle.asn1.x509.KeyUsage.digitalSignature);
+        io.vctrust.trust.core.testing.TestPki.Issued root = io.vctrust.trust.core.testing.TestPki.rootCa("CN=Partner List CA,C=UT");
+        MappedSourceRulesTest.serveJws(ctx, MappedSourceRulesTest.signedWithChain(stranger, stranger, MappedSourceRulesTest.doc("a")));
+        errors.put("x5c", MappedSourceRulesTest.loadError(source(ctx, props("format", "jws", "verify", Map.of("certificates",
+                List.of(io.vctrust.trust.core.x509.Certificates.toPem(root.certificate())))))));
+        errors.forEach((what, error) -> assertThat(error).as(what).contains("WARN Trust source").doesNotContain("\r").doesNotContain("\n"));
+        assertThat(errors.get("alg")).contains("The list is signed with x\\r\\n2026-11-12");
+        assertThat(errors.get("typ")).contains("typ is 'x\\r\\n2026-11-12");
+        assertThat(errors.get("x5c")).contains("does not validate to a pinned certificate").contains("x\\r\\n2026-11-12");
+    }
+
+    @Test
+    void e_noMessageIsLongerThan2000Characters() {
+        // A framework name the source does not load into, in every record: the first failure named all of it.
+        TestContext ctx = ctx();
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        d.put("issuers", List.of(Map.of("id", "a", "credential_issuer", "https://a.example", "framework", "f".repeat(8_000))));
+        serveJson(ctx, d);
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", MappedSourceAttacksTest.entities("framework", "$.framework"))))) {
+            String error = state(m, "partner").lastError();
+            assertThat(error).startsWith("mapping.entities[0]: none of the 1 records at $.issuers[*] could be read completely; record 1 "
+                    + "(id 'partner:a') is skipped: Entity partner:a names framework 'ffff").hasSize(2_000).endsWith("…");
+        }
+    }
+
+    @Test
+    void e_theQueryOfAUrlIsCutUpToTheNextWhitespaceAndALookupUrlHoldsNoUserInformation() {
+        TestContext ctx = ctx();
+        String location = MappedSourceRulesTest.LOCATION + "?key=part1'part2";   // MappingLanguageTest: " and < too
+        ctx.http.respond(location, 401, "application/json", MappedTesting.utf8("{}"));
+        String error = MappedSourceRulesTest.loadError(source(ctx, props("location", location)));
+        assertThat(error).contains("401").contains(MappedSourceRulesTest.LOCATION).doesNotContain("part1").doesNotContain("part2");
+        // The lookup URL, like location, holds no credentials.
+        Map<String, Object> lookup = lookupOnly();
+        Map<String, Object> l = new LinkedHashMap<>((Map<String, Object>) ((Map<String, Object>) lookup.get("mapping")).get("lookup"));
+        l.put("url", "https://user:s3cret@registry.partner.example/v1/issuers/{identifier}");
+        lookup.put("mapping", Map.of("lookup", l));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, lookup))).contains("mapping.lookup.url must not hold credentials")
+                .doesNotContain("s3cret");
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();

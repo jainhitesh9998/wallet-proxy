@@ -183,6 +183,10 @@ final class Mapping {
         if (probe.getHost() == null || !("https".equals(probe.getScheme()) || "http".equals(probe.getScheme()))) {
             throw new IllegalArgumentException("mapping.lookup.url must be an http(s) URL");
         }
+        if (probe.getRawUserInfo() != null) {
+            // As for location: a credential in the URL would be named wherever the URL is.
+            throw new IllegalArgumentException("mapping.lookup.url must not hold credentials; send them in headers");
+        }
         Set<IdentifierType> types = EnumSet.noneOf(IdentifierType.class);
         for (Object t : list(m.get("identifierTypes"), "mapping.lookup.identifierTypes")) {
             try {

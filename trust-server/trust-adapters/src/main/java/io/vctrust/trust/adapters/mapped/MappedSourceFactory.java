@@ -106,14 +106,24 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
     }
 
-    /** A web URL up to its query (group 1), and its query and fragment (group 2). Possessive: linear in the text. */
-    private static final Pattern QUERY = Pattern.compile("(?i)(\\bhttps?://[^\\s?#'\"<>]*+)([?#][^\\s'\"<>]*+)");
+    /**
+     * A web URL up to its query (group 1), and its query and fragment up to the next whitespace (group 2). Possessive:
+     * linear in the text. Not anchored at a word boundary: {@code x_https://...} is a URL too.
+     */
+    private static final Pattern QUERY = Pattern.compile("(?i)(https?://[^\\s?#]*+)([?#]\\S*+)");
+    /** Punctuation that ends a sentence or a quotation rather than a query, kept after a URL cut short. */
+    private static final String TRAILING = ".,:;)]>'\"";
+    /** The longest message, warning or state text this source hands to anyone. */
+    static final int MAX_MESSAGE = 2_000;
+    /** The longest warning: warnings are many, and each names one record. */
+    static final int MAX_WARNING = 300;
 
     /**
-     * Text with every web URL in it cut before its query and fragment. The query of {@code location}, of a page URL
-     * or of a lookup URL is where a credential is often put (an API key, a signed link); the outbound client names
-     * whole URLs in its errors, so no message, warning, state or log line of this source names a URL with its query.
-     * Punctuation right after a URL ("... from https://host/list?key=x: refused") is the sentence's, and stays.
+     * Text with every web URL in it cut before its query and fragment, up to the next whitespace or the end. The query
+     * of {@code location}, of a page URL or of a lookup URL is where a credential is often put (an API key, a signed
+     * link); the outbound client names whole URLs in its errors, so no message, warning, state or log line of this
+     * source names a URL with its query. Punctuation right after a URL ("... from https://host/list?key=x: refused",
+     * a closing quote) is the sentence's, and stays.
      */
     static String withoutQueries(String text) {
         if (text == null) {
@@ -124,13 +134,27 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         while (m.find()) {
             String query = m.group(2);
             int end = query.length();
-            while (end > 1 && ".,:;)".indexOf(query.charAt(end - 1)) >= 0) {
+            while (end > 1 && TRAILING.indexOf(query.charAt(end - 1)) >= 0) {
                 end--;
             }
             m.appendReplacement(out, Matcher.quoteReplacement(m.group(1) + query.substring(end)));
         }
         m.appendTail(out);
         return out.toString();
+    }
+
+    /**
+     * Text as this source hands it to anyone (an exception's message, a warning, a source state, a log line): without
+     * the query of any URL in it, its control characters escaped, at most {@code max} characters. In one place, so
+     * that text from outside (a JWS header, a certificate's names, a document's values, a client's identifier) cannot
+     * reach a log line raw or make it half a megabyte long, wherever it came in.
+     */
+    static String told(String text, int max) {
+        if (text == null) {
+            return null;
+        }
+        String t = Mapping.escape(withoutQueries(text));
+        return t.length() <= max ? t : t.substring(0, max - 1) + "…";
     }
 
     static Config read(SourceDefinition def, ResourceLoader resources) throws IOException {
@@ -332,11 +356,12 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         /**
-         * The failure of a load or a lookup as this source reports it: without the query of any URL it names
-         * ({@link #withoutQueries}), and without the exception it came from, whose message may name one.
+         * The failure of a load or a lookup as this source reports it ({@link #told}): without the query of any URL it
+         * names, its control characters escaped, at most {@link #MAX_MESSAGE} characters; and without the exception it
+         * came from, whose message may name a URL.
          */
         private static TrustSourceException reported(TrustSourceException e) {
-            String message = withoutQueries(e.getMessage());
+            String message = told(e.getMessage(), MAX_MESSAGE);
             return message != null && message.equals(e.getMessage()) ? e : new TrustSourceException(message);
         }
 
@@ -1068,8 +1093,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
 
             void add(String warning) {
                 if (kept.size() < MAX_WARNINGS) {
-                    String w = withoutQueries(warning);
-                    kept.add(w.length() <= 300 ? w : w.substring(0, 300) + "…");
+                    kept.add(told(warning, MAX_WARNING));
                 } else {
                     more++;
                 }
@@ -1164,7 +1188,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                                 break;
                             }
                             log.debug("Trust source '{}' (mapped): an answer about {} maps to an entity without that identifier",
-                                    def.id(), identifier);
+                                    def.id(), told(identifier.toString(), MAX_WARNING));
                         }
                     }
                 }
