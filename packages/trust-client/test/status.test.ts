@@ -100,9 +100,10 @@ describe("Token Status List: a signer issued under the credential's trust anchor
    * the service lists the IACA (with its CRL in the snapshot, or without it) under a client profile that requires a known
    * revocation status or not. No CRL is downloaded: without the snapshot's, a signer's status is unknown.
    */
-  async function statusSignedBy(signer: string, opts: { crl: boolean; strict: boolean; app?: Partial<TrustClientConfig> }) {
+  async function statusSignedBy(signer: string, opts: { crl: boolean; strict: boolean; app?: Partial<TrustClientConfig>; mechanisms?: unknown[] }) {
     const now = Math.floor(Date.now() / 1000);
-    const snapshot = signJwt({ alg: 'ES256', typ: 'trust-snapshot+jwt', kid: 'svc-1' }, { iss: BASE, aud: 'wallet', iat: now, exp: now + 3600, format: 4,
+    const snapshot = signJwt({ alg: 'ES256', typ: 'trust-snapshot+jwt', kid: 'svc-1' }, { iss: BASE, aud: 'wallet', iat: now, exp: now + 3600,
+      ...(opts.mechanisms ? { format: 5, mechanisms: opts.mechanisms } : { format: 4 }),
       policy: { frameworks: ['utopia'], strictAuthorization: false, requireRevocationStatus: opts.strict, requireSignedIssuerMetadata: false },
       frameworks: [{ id: 'utopia', name: 'Utopia' }], entities: [], anchors: [IACA], crls: opts.crl ? [{ issuer: 'iaca', crl: IACA_CRL }] : [] },
     serviceKey.privateKey);
@@ -143,6 +144,21 @@ describe("Token Status List: a signer issued under the credential's trust anchor
   it('is read when the signer\'s revocation status is unknown under lenient rules', async () => {
     expect(await statusSignedBy('ds', { crl: false, strict: false })).toMatchObject({ status: 'valid', value: 0,
       detail: expect.stringMatching(/issued under the credential's trust anchor/) });
+  });
+
+  it('is unknown when the signer\'s revocation status is unknown and the mechanism that governed the credential requires one', async () => {
+    const required = { id: 'mdl', for: { role: 'issuer', formats: ['mso_mdoc'] }, x509: { revocation: 'required' } };
+    const s = await statusSignedBy('ds', { crl: false, strict: false, mechanisms: [required] });
+    expect(s.status).toBe('unknown');
+    expect(s.detail).toMatch(/signer not trusted.*[Rr]evocation status .* is unknown/);
+    // A mechanism in force that did not govern the credential, or one that leaves revocation to the client profile, changes nothing.
+    const other = { id: 'sd-jwt', for: { role: 'issuer', formats: ['dc+sd-jwt'] }, x509: { revocation: 'required' } };
+    const lenient = { id: 'mdl', for: { role: 'issuer', formats: ['mso_mdoc'] }, keys: ['x5c'] };
+    for (const mechanisms of [[other], [lenient, other]]) {
+      expect(await statusSignedBy('ds', { crl: false, strict: false, mechanisms }), JSON.stringify(mechanisms)).toMatchObject({ status: 'valid', value: 0 });
+    }
+    // Under that mechanism a good signer is read.
+    expect(await statusSignedBy('ds', { crl: true, strict: false, mechanisms: [required] })).toMatchObject({ status: 'valid', value: 0 });
   });
 
   it('is read when the signer is good', async () => {

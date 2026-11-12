@@ -232,11 +232,14 @@ export class TrustClient {
     };
     const validateChain = (chain: string[], domain: string) => this.validateChain(chain, domain);
     // A status list signer under the credential's own trust anchor: validated like every other chain on this device, with
-    // the CRLs at hand, the CRL lookups and the rules in force.
-    const validateUnderAnchor = async (chain: string[], anchor: LocalAnchor, time?: Date) => {
+    // the CRLs at hand, the CRL lookups and the rules in force. When the credential's decision was governed by a trust
+    // mechanism in force that requires a known revocation status, the signer's must be known too, whatever the profile.
+    const validateUnderAnchor = async (chain: string[], anchor: LocalAnchor, time?: Date, mechanism?: string) => {
       const d = await this.localData();
+      const required = mechanism !== undefined && (d.mechanisms ?? []).some((m) => m.id === mechanism && m.x509?.revocation === 'required');
+      const policy = required ? { ...d.policy, requireRevocationStatus: true } : d.policy;
       const { anchorRef, ...r } = await validateChainOnDevice(chain.map((c) => parseCertificate(c)), [anchor],
-        { time: time ?? new Date(this.now()) }, d, (urls, accept) => this.crls.fetch(urls, accept));
+        { time: time ?? new Date(this.now()) }, { crls: d.crls, policy }, (urls, accept) => this.crls.fetch(urls, accept));
       return r;
     };
     this.metadata = new IssuerMetadataLookup(ctx, config.issuerMetadata?.signed ?? 'off', (query) => this.evaluate(query), validateChain);

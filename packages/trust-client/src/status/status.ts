@@ -60,9 +60,10 @@ export interface StatusContext {
    * Validates a list signer's chain under the trust anchor the credential's chain validated to, as every chain on the
    * device is validated: revocation included, with the CRLs at hand, the CRL lookups and the rules in force (the trust
    * client supplies it, over validateChainOnDevice). Without it a signer is not accepted through that anchor, since its
-   * revocation status cannot be established.
+   * revocation status cannot be established. {@code mechanism}: the trust mechanism that governed the credential's
+   * decision; when it is in force and requires a known revocation status, the signer's status must be known too.
    */
-  validateUnderAnchor?: (chain: string[], anchor: LocalAnchor, time?: Date) => Promise<PathValidationResult>;
+  validateUnderAnchor?: (chain: string[], anchor: LocalAnchor, time?: Date, mechanism?: string) => Promise<PathValidationResult>;
   /** the credential's signing certificate chain (x5c / x5chain), leaf first, base64 DER */
   signerX5c?: string[];
   /** the credential's signing key, for lists signed without a certificate by the same key */
@@ -215,7 +216,9 @@ function parseCwt(body: Uint8Array): ParsedTokenList {
  *
  * A certificate under the credential's anchor is validated like every other chain on the device, revocation included
  * (StatusContext.validateUnderAnchor): a revoked or suspended signer could otherwise still say "valid" of a revoked
- * credential, and an unknown signer status is refused when the rules in force require a known one.
+ * credential, and an unknown signer status is refused when the rules in force require a known one, or when the trust
+ * mechanism that governed the credential does ({@code x509.revocation: required}): a certificate that mechanism would
+ * refuse as the credential's signer must not vouch for the credential's status either.
  */
 async function signerTrust(chain: string[], ctx: StatusContext): Promise<{ ok: boolean; detail: string }> {
   if (ctx.signerX5c?.[0] && ctx.signerX5c[0] === chain[0]) return { ok: true, detail: 'the credential signer' };
@@ -223,7 +226,7 @@ async function signerTrust(chain: string[], ctx: StatusContext): Promise<{ ok: b
   let refused: string | undefined;
   if (anchor) {
     // Without a validator that can check revocation, the signer's status cannot be established: as a rule that requires it.
-    const r = ctx.validateUnderAnchor ? await ctx.validateUnderAnchor(chain, anchor, ctx.now).catch(() => null)
+    const r = ctx.validateUnderAnchor ? await ctx.validateUnderAnchor(chain, anchor, ctx.now, ctx.decision?.evidence?.mechanism).catch(() => null)
       : validateCertificateChain(chain, [anchor], { time: ctx.now, revocation: { crls: [], require: true } });
     if (r?.valid) return { ok: true, detail: `issued under the credential's trust anchor ${anchor.certificate.subject}`.trim() };
     refused = r?.issues.find((i) => i.severity === 'ERROR')?.message;
