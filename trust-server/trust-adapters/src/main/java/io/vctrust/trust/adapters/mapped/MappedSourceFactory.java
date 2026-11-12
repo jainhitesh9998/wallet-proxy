@@ -77,6 +77,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     static final Duration ON_DEMAND_NEGATIVE_TTL = Duration.ofMinutes(1);
     static final Duration ON_DEMAND_FAILURE_TTL = Duration.ofSeconds(30);
     static final int ON_DEMAND_MAX_ENTRIES = 5_000;
+    /** The longest identifier a lookup asks about. */
+    static final int MAX_IDENTIFIER = 4_096;
     /** A list issued further in the future than this would make every genuine list after it look older. */
     static final Duration CLOCK_SKEW = Duration.ofMinutes(5);
     /** How long after its iat a signed lookup answer without exp counts, unless lookup.maxAge says otherwise. */
@@ -371,7 +373,18 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 return loadList();
             } catch (TrustSourceException e) {
                 throw reported(e);
+            } catch (RuntimeException e) {
+                throw reported(unexpected(e));
             }
+        }
+
+        /**
+         * Whatever else goes wrong inside a load or a lookup is that load's or that lookup's failure: no exception of
+         * another kind leaves this source, whatever a document holds.
+         */
+        private static TrustSourceException unexpected(RuntimeException e) {
+            return new TrustSourceException("The document cannot be read (" + e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : ": " + e.getMessage()) + ")");
         }
 
         private SourceLoadResult loadList() throws TrustSourceException {
@@ -1109,11 +1122,16 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
         }
 
+        /**
+         * Whether this source asks about an identifier: of a listed type, with a listed prefix, and no longer than
+         * {@link #MAX_IDENTIFIER} characters (callers choose what is asked; an identifier of megabytes would be sent,
+         * and kept in the memo, as it is).
+         */
         @Override
         public boolean canResolve(Identifier identifier) {
             Mapping.Lookup l = config == null ? null : config.mapping().lookup;
-            return l != null && identifier != null && l.types().contains(identifier.type())
-                    && l.prefixes().stream().anyMatch(identifier.value()::startsWith);
+            return l != null && identifier != null && identifier.value() != null && identifier.value().length() <= MAX_IDENTIFIER
+                    && l.types().contains(identifier.type()) && l.prefixes().stream().anyMatch(identifier.value()::startsWith);
         }
 
         /**
@@ -1133,7 +1151,12 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             Instant now = ctx.clock().instant();
             Answer answer;
             try {
-                answer = ask(identifier, now);
+                try {
+                    answer = ask(identifier, now);
+                } catch (RuntimeException | StackOverflowError e) {
+                    throw e instanceof RuntimeException r ? unexpected(r) : new TrustSourceException("The answer cannot be read: it is "
+                            + "nested too deeply to follow");
+                }
             } catch (TrustSourceException e) {
                 // Remembered like a miss, for a short time: every client request about the identifier would otherwise
                 // send one to a registry that is failing.

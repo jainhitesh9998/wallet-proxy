@@ -560,6 +560,68 @@ class MappedSourceValidationTest {
                 .doesNotContain("s3cret");
     }
 
+    // F: the lookup memo ------------------------------------------------------------------------------------------
+
+    @Test
+    void f_anIdentifierLongerThan4096CharactersIsNotAskedAbout() throws Exception {
+        TestContext ctx = ctx();
+        OnDemandResolver r = (OnDemandResolver) source(ctx, lookupOnly());
+        Identifier longest = Identifier.did("did:example:" + "a".repeat(4_096 - "did:example:".length()));
+        Identifier tooLong = Identifier.did("did:example:" + "a".repeat(4_097 - "did:example:".length()));
+        assertThat(r.canResolve(longest)).isTrue();
+        assertThat(r.canResolve(tooLong)).isFalse();
+        assertThat(r.resolve(tooLong)).isEmpty();
+        assertThat(ctx.http.requests).isEmpty();
+        assertThat(r.resolve(longest)).isEmpty();   // asked (FakeHttp: 404)
+        assertThat(ctx.http.requests).hasSize(1);
+    }
+
+    @Test
+    void f_aNumberWhoseScaleOverflowsIsTooLargeAndNoUncheckedExceptionLeavesTheSource() throws Exception {
+        for (String number : List.of("100e2147483647", "-100e2147483647", "1e2147483648", "1e-2147483649", "10e-2147483648")) {
+            TestContext ctx = ctx();
+            ctx.http.json(MappedSourceRulesTest.LOCATION, MappedSourceAttacksTest.list("\"n\": " + number));
+            TrustSource s = source(ctx, props());
+            org.assertj.core.api.Assertions.assertThatThrownBy(s::load).as(number).isInstanceOf(io.vctrust.trust.core.spi.TrustSourceException.class)
+                    .hasMessageContaining("holds a number with more than 40 significant digits or a decimal exponent outside -40 to 40");
+            OnDemandResolver r = (OnDemandResolver) source(ctx, lookupOnly());
+            ctx.http.json(BASE + "did%3Aexample%3Ab", "{\"id\": \"b\", \"did\": \"did:example:b\", \"n\": " + number + "}");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:b"))).as(number)
+                    .isInstanceOf(io.vctrust.trust.core.spi.TrustSourceException.class).hasMessageContaining("holds a number");
+            assertThat(r.resolve(Identifier.did("did:example:b"))).isEmpty();   // remembered as a failure
+            assertThat(ctx.http.requests).as(number).hasSize(2);
+        }
+        // Whatever else goes wrong inside is a failure of the source, not an exception of another kind.
+        TestContext ctx = ctx();
+        io.vctrust.trust.core.spi.SourceContext broken = new io.vctrust.trust.core.spi.SourceContext() {
+            @Override
+            public io.vctrust.trust.core.spi.HttpFetcher http() {
+                return request -> {
+                    throw new IllegalStateException("the client is broken");
+                };
+            }
+
+            @Override
+            public io.vctrust.trust.core.spi.ResourceLoader resources() {
+                return ctx.resources();
+            }
+
+            @Override
+            public java.time.Clock clock() {
+                return ctx.clock();
+            }
+        };
+        TrustSource s = new io.vctrust.trust.adapters.mapped.MappedSourceFactory().create(
+                new io.vctrust.trust.core.spi.SourceDefinition("partner", "mapped", "partner", null, true, props()), broken);
+        org.assertj.core.api.Assertions.assertThatThrownBy(s::load).isInstanceOf(io.vctrust.trust.core.spi.TrustSourceException.class)
+                .hasMessageContaining("the client is broken");
+        OnDemandResolver r = (OnDemandResolver) new io.vctrust.trust.adapters.mapped.MappedSourceFactory().create(
+                new io.vctrust.trust.core.spi.SourceDefinition("partner", "mapped", "partner", null, true, lookupOnly()), broken);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:b")))
+                .isInstanceOf(io.vctrust.trust.core.spi.TrustSourceException.class).hasMessageContaining("the client is broken");
+        assertThat(r.resolve(Identifier.did("did:example:b"))).isEmpty();
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();

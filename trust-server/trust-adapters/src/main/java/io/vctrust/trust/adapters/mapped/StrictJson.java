@@ -56,6 +56,9 @@ final class StrictJson {
         } catch (JacksonException e) {
             String reason = e.getOriginalMessage() == null ? e.getClass().getSimpleName() : e.getOriginalMessage();
             throw new IllegalArgumentException("not valid JSON: " + (reason.length() <= 160 ? reason : reason.substring(0, 160) + "…"));
+        } catch (ArithmeticException | NumberFormatException e) {
+            // A number whose exponent does not even fit what the parser can hold.
+            throw tooLarge();
         }
         if (!(v instanceof Map<?, ?>) && !(v instanceof List<?>)) {
             throw new IllegalArgumentException("not a JSON object or array");
@@ -71,15 +74,21 @@ final class StrictJson {
         } else if (v instanceof List<?> l) {
             l.forEach(StrictJson::checkNumbers);
         } else if (v instanceof Number n && !small(n)) {
-            throw new IllegalArgumentException("not read: it holds a number with more than " + MAX_DIGITS
-                    + " significant digits or a decimal exponent outside -" + MAX_EXPONENT + " to " + MAX_EXPONENT);
+            throw tooLarge();
         }
+    }
+
+    private static IllegalArgumentException tooLarge() {
+        return new IllegalArgumentException("not read: it holds a number with more than " + MAX_DIGITS
+                + " significant digits or a decimal exponent outside -" + MAX_EXPONENT + " to " + MAX_EXPONENT);
     }
 
     /**
      * Whether a number has at most {@link #MAX_DIGITS} significant digits and, written as {@code d.ddd x 10^e}, an
      * exponent {@code e} from -{@link #MAX_EXPONENT} to {@link #MAX_EXPONENT}. Cheap whatever the number: the parser
-     * keeps {@code 1e999999999} as the digit 1 and a scale, and so does every step here.
+     * keeps {@code 1e999999999} as the digit 1 and a scale, and so does every step here. The exponent is the same
+     * with or without trailing zeros, and is checked first: stripping the zeros of {@code 100e2147483647} would take
+     * its scale beyond what an int holds.
      */
     static boolean small(Number n) {
         BigDecimal d = decimal(n);
@@ -89,9 +98,15 @@ final class StrictJson {
         if (d.signum() == 0) {
             return true;
         }
-        BigDecimal s = d.stripTrailingZeros();
-        long exponent = (long) s.precision() - s.scale() - 1;
-        return s.precision() <= MAX_DIGITS && exponent >= -MAX_EXPONENT && exponent <= MAX_EXPONENT;
+        long exponent = (long) d.precision() - d.scale() - 1;
+        if (exponent < -MAX_EXPONENT || exponent > MAX_EXPONENT) {
+            return false;
+        }
+        try {
+            return d.stripTrailingZeros().precision() <= MAX_DIGITS;
+        } catch (ArithmeticException e) {
+            return false;
+        }
     }
 
     /** A number the parser makes (an integer of any size, or a decimal) exactly; null for any other kind. */
