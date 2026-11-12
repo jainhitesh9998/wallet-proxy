@@ -659,4 +659,25 @@ class MappedSourceAttacksTest {
         assertThat(r.resolve(Identifier.did("did:example:odd"))).isEmpty();
         assertThat(ctx.http.requests).hasSize(3);
     }
+
+    // F10: document text could break a log line --------------------------------------------------------------------
+
+    static final String FORGED = "x\r\n2026-11-12 03:00:00 WARN Trust source 'partner' (mapped): all good\u0007";
+
+    @Test
+    void f10_documentTextInAMessageOrWarningCannotBreakALogLine() {
+        // TrustSourceManager writes a failed load's message to the log as it is.
+        TestContext ctx = ctx();
+        Map<String, Object> d = MappedSourceRulesTest.doc("a");
+        d.put("next_update", FORGED);
+        serveJson(ctx, d);
+        String error = loadError(source(ctx, props()));
+        assertThat(error).contains("no date there: 'x\\r\\n2026-11-12 03:00:00 WARN Trust source…'").doesNotContain("\r").doesNotContain("\n");
+        // Through what the registry format's parser says about a record, in a warning and in a failed load.
+        d = MappedSourceRulesTest.doc();
+        d.put("issuers", List.of(Map.of("id", "a", "credential_issuer", "https://a.example", "state", "active", "roles", List.of(FORGED))));
+        serveJson(ctx, d);
+        error = loadError(source(ctx, props("mapping", entities("roles", "$.roles[*]"))));
+        assertThat(error).contains("Unknown role 'x\\r\\n").doesNotContain("\r").doesNotContain("\n").doesNotContain("\u0007");
+    }
 }

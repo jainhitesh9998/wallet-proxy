@@ -796,8 +796,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         private record Skipped(Mapping.Block block, String id, String reason) {
+            /** The reason may quote the document unquoted (the registry format's parser names what it refuses): escaped. */
             Skipped {
-                reason = reason == null ? "it cannot be read" : reason;
+                reason = reason == null ? "it cannot be read" : Mapping.escape(reason);
             }
         }
 

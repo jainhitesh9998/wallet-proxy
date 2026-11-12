@@ -507,10 +507,35 @@ final class Mapping {
         }
     }
 
-    /** A value from a document, quoted and cut short, for a message. */
+    /** A value from a document, quoted, cut short and with its control characters escaped, for a message. */
     static String quote(Object v) {
         String s = String.valueOf(Value.text(v) != null ? Value.text(v) : v instanceof Map<?, ?> ? "{...}" : "[...]");
-        return "'" + (s.length() <= 40 ? s : s.substring(0, 40) + "…") + "'";
+        return "'" + escape(s.length() <= 40 ? s : s.substring(0, 40) + "…") + "'";
+    }
+
+    /**
+     * Text with its control characters (CR, LF and the others below 0x20, and DEL) written as escapes: text from a
+     * document goes into messages that are written to the log, where a line break would let it forge a log line.
+     */
+    static String escape(String s) {
+        StringBuilder out = null;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < 0x20 || c == 0x7f) {
+                if (out == null) {
+                    out = new StringBuilder(s.length() + 16).append(s, 0, i);
+                }
+                switch (c) {
+                    case '\r' -> out.append("\\r");
+                    case '\n' -> out.append("\\n");
+                    case '\t' -> out.append("\\t");
+                    default -> out.append(String.format("\\u%04x", (int) c));
+                }
+            } else if (out != null) {
+                out.append(c);
+            }
+        }
+        return out == null ? s : out.toString();
     }
 
     /** A nested item (an identifier, an authorization, a display, a context): its own {@code each}, and members. */

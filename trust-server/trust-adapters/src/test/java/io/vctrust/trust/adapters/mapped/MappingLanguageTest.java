@@ -176,6 +176,13 @@ class MappingLanguageTest {
     }
 
     @Test
+    void aQuotedValueCannotBreakALogLine() {
+        assertThat(Mapping.quote("partner\r\n2026-11-12 WARN forged\tline\u0007\u007f")).isEqualTo("'partner\\r\\n2026-11-12 WARN forged\\tline\\u0007\\u007f'");
+        assertThat(Mapping.quote("plain")).isEqualTo("'plain'");
+        assertThat(Mapping.quote("x".repeat(39) + "\n" + "y".repeat(10))).isEqualTo("'" + "x".repeat(39) + "\\n…'");
+    }
+
+    @Test
     void translatedValues() {
         Object a = ((List<?>) ((Map<?, ?>) DOC).get("issuers")).get(0);
         Object b = ((List<?>) ((Map<?, ?>) DOC).get("issuers")).get(1);
