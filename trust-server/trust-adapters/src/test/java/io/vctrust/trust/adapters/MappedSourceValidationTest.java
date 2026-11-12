@@ -210,6 +210,11 @@ class MappedSourceValidationTest {
             serveJson(ctx, boundList(1, members("credential_issuer", null)));   // {type: URL, value: $.credential_issuer}
             assertThat(source(ctx, props("mapping", boundMapping())).load().entities()).filteredOn(e -> e.id().equals("partner:dmv"))
                     .singleElement().satisfies(e -> assertThat(e.identifiers()).isEmpty());
+            // A type that only its translation's default gives is not something the document says either.
+            Map<String, Object> defaulted = boundMapping();
+            ((Map<String, Object>) ((List<?>) defaulted.get("entities")).getFirst()).put("identifiers", List.of(Map.of(
+                    "type", Map.of("path", "$.id_kind", "values", Map.of("did", "DID"), "default", "URL"), "value", "$.id_value")));
+            assertThat(source(ctx, props("mapping", defaulted)).load().entities()).allSatisfy(e -> assertThat(e.identifiers()).isEmpty());
         } catch (io.vctrust.trust.core.spi.TrustSourceException e) {
             throw new AssertionError(e.getMessage());
         }

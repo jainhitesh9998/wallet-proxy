@@ -608,6 +608,17 @@ final class Mapping {
             STRICT
         }
 
+        /**
+         * Whether what a form yielded came from the document: not a constant, and not a translation's default standing
+         * for a path that found nothing.
+         */
+        private static boolean fromDocument(Value v, Object current, Object root) {
+            if (v instanceof Value.Constant) {
+                return false;
+            }
+            return !(v instanceof Value.Translated t) || t.path().select(current, root).stream().anyMatch(java.util.Objects::nonNull);
+        }
+
         /** Nested items: one per match of the item's {@code each}, or one; {@code needs} are the members an item must have. */
         private List<Map<String, Object>> objects(String member, Object record, Object root, Set<String> needs, Items rule) {
             return objects(items(fields.get(member)), member, record, root, needs, rule);
@@ -632,7 +643,7 @@ final class Mapping {
                             throw new IllegalArgumentException(member + ": an item yields no " + k
                                     + "; an authorization is never left open where the document does not say so");
                         }
-                        if (o.containsKey(k) && !(e.getValue() instanceof Value.Constant)) {
+                        if (o.containsKey(k) && fromDocument(e.getValue(), match, root)) {
                             fromDocument.add(k);
                         }
                     }
