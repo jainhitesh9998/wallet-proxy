@@ -8,7 +8,8 @@ set -e
 cd "$(dirname "$0")/.." && . scripts/env.sh
 mkdir -p .runtime
 [ -f trust-server/trust-server/target/trust-server.jar ] || scripts/build.sh
-scripts/start-trust-server.sh --trust.http.allow-private-networks=true --trust.http.http-allowed-hosts=localhost
+# The reference ecosystem first: a trust service that already lists its IACA (from an earlier run, kept in .runtime)
+# fetches that CA's CRL when it starts, and tries again only five minutes after a failure.
 if ! curl -sf localhost:8791/.well-known/openid-credential-issuer >/dev/null 2>&1; then
   DATA_DIR="$PWD/.runtime/reference-ecosystem" nohup node test-ecosystem/src/serve.mjs > .runtime/reference-ecosystem.log 2>&1 &
   echo $! > .runtime/reference-ecosystem.pid
@@ -18,5 +19,6 @@ if ! curl -sf localhost:8791/.well-known/openid-credential-issuer >/dev/null 2>&
   done
 fi
 curl -sf localhost:8791/.well-known/openid-credential-issuer >/dev/null || { echo "the reference ecosystem did not start: see .runtime/reference-ecosystem.log"; exit 1; }
+scripts/start-trust-server.sh --trust.http.allow-private-networks=true --trust.http.http-allowed-hosts=localhost
 echo "reference issuer http://localhost:8791, verifier http://localhost:8792"
 node scripts/register-reference.mjs
