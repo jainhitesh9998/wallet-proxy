@@ -116,7 +116,10 @@ proves and never through what a credential claims: the entity its anchor belongs
 an entity that lists the certificate, its subject, its subject key identifier, its SHA-256 hash or one of its DNS
 names ([how to list a party](configuration.md#registry-format)). With an entity, its standing and its
 authorizations are checked too. Without one, a valid chain is still `TRUSTED` ("validates to a trusted anchor"):
-the CA vouches for it, and the wallet shows no registered name.
+the CA vouches for it, and the wallet shows no registered name. So an anchor's `entity:` must name an entity of its
+framework exactly as a source of the framework lists it: an anchor whose `entity:` names nobody there (`Utopia-DMV`
+for `utopia-dmv`) is not loaded, and a chain to its CA is `UNKNOWN` (`x509.no_anchor`) rather than trusted without the
+party's entry ([frameworks and sources](configuration.md#frameworks-and-sources)).
 
 The outcome is `TRUSTED`, `UNKNOWN` or `NOT_TRUSTED` (any error), with every reason and the evidence.
 
@@ -676,7 +679,7 @@ The methods above work the same whatever the source.
 | Source `type` | Becomes | Notes |
 | --- | --- | --- |
 | `static`, `managed` | Whatever the entries say | The [registry format](configuration.md#registry-format), from a file or through the admin API |
-| `x509-bundle` | Anchors of one `domain` | No entities: list those separately, or name one with `entity` |
+| `x509-bundle` | Anchors of one `domain` | No entities: list those separately, or name one with `entity`, which another source of the same framework must list (otherwise the anchors are not loaded) |
 | `vical` (ISO 18013-5 VICAL) | Each IACA as an `mdoc-iaca` anchor constrained to its doctypes, each issuing authority as an entity that the anchor belongs to | The list is a COSE signature by the VICAL provider: pin its certificate with `signerCertificates` |
 | `etsi-tl` (TS 119 612, EU LOTL) | Each provider as an entity, each service certificate as an anchor | Service types map to domains: EAA, QEAA and Pub-EAA services to `credential-issuer`; add or change with `serviceTypeDomains`. Other types are skipped unless `includeAllServiceTypes` (domain `etsi-<type>`). The anchor of a service whose status is not a granted or supervised one is listed as revoked |
 | `etsi-lote` (TS 119 602) | The same, for the EUDI lists | PID and Pub-EAA providers: `credential-issuer` and `mdoc-iaca`; wallet providers: `wallet-provider`; access certificate CAs (WRPAC): `verifier-access`; the revocation services of each: `status-list` |

@@ -200,12 +200,13 @@ class TrustSourceManagerTest {
         var registry = new TrustRegistry();
         try (var manager = new TrustSourceManager(registry, List.of(), List.of(gov, sandbox), Clock.systemUTC())) {
             manager.start();
-            assertThat(registry.snapshot().anchor("sandbox-ca")).get().satisfies(a -> {
-                assertThat(a.frameworkId()).isEqualTo("sandbox");
-                assertThat(a.entityId()).isNull();
-            });
+            // It used to be loaded untied; its entity is none of the sandbox's, so it is not loaded now.
+            assertThat(registry.snapshot().allAnchors()).isEmpty();
             assertThat(manager.states()).filteredOn(st -> st.id().equals("sandbox-list")).singleElement()
-                    .satisfies(st -> assertThat(st.warnings()).anyMatch(w -> w.contains("another framework")));
+                    .satisfies(st -> assertThat(st.warnings()).containsExactly("Anchor 'sandbox-ca' is not loaded: it belongs to entity 'issuer',"
+                            + " which no source of framework 'sandbox' lists; only framework 'gov' has an entity of that id"));
+            assertThat(manager.states()).filteredOn(st -> st.id().equals("gov-list")).singleElement()
+                    .satisfies(st -> assertThat(st.warnings()).isEmpty());
         }
     }
 

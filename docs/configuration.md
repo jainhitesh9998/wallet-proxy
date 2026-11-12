@@ -230,7 +230,7 @@ status counts, and the merged entity is valid only where every entry is (the lat
 end. An entry that names no role and whose status is not `ACTIVE` withdraws the party whatever it is asked about,
 so the merged entity then names no role either: given the other entry's roles, it would be left out of a question
 of another role, and the chain to the CA would decide. An id that an entity of another framework already has is listed as `<id>@<framework>`
-instead, and an anchor is tied only to an entity of its own framework. A name `<id>@<framework>` (the id of a
+instead. A name `<id>@<framework>` (the id of a
 configured framework, or of one a source loads into) belongs to that framework, so the name an entry falls back to is
 always free. An entity of another framework written with such an id does not get it: it is listed under the name it
 would fall back to, `<id>@<its framework>` (`acme@other` of framework `national` as `acme@other@national`), with
@@ -238,7 +238,16 @@ everything it says, since a withdrawn entity left out would no longer restrict i
 framework already holds the name an entity falls back to (for either reason; only one of its own framework can), the
 two are merged as two entries of one id are, whichever is listed first, and the warning says so. An anchor written
 with such an id is not loaded. The admin API refuses both
-(`invalid_document`). An entry that is not loaded for any reason, or is listed under another name, is named in a
+(`invalid_document`). An anchor is tied only to an entity of its own framework: its `entity` must be an id that a
+source of the anchor's framework lists, as that source writes it (any source of the framework, in any order; when the
+entity is listed as `<id>@<framework>`, the anchor is tied to it there). An anchor whose `entity` names no such entity
+is not loaded, and its source's state names the anchor and the id, and says so when only another framework has an
+entity of that id. Tied to nobody, the anchor would let a chain to the CA be trusted by itself: with the id written
+another way (`Utopia-DMV` for `utopia-dmv`, or a trailing space), or another framework's, the party's entry (a
+withdrawal, a limit to some credential types) would no longer restrict the CA's certificates. The same holds for the
+`entity` of an `x509-bundle` source, which another source of its framework must list; and through the admin API, an
+anchor written before its entity, or kept after its entity is deleted, is not loaded until the entity is there.
+An entry that is not loaded for any reason, or is listed under another name, is named in a
 warning of its source's state (`GET /admin/v1/sources`); of these, a source's state shows at most 50, then one line
 that says how many more there are. A source of one framework therefore adds nothing to, and takes nothing from, what
 the clients of another framework are told. Put sources that should not vouch for each other's entries into different
@@ -281,7 +290,7 @@ entities:
 anchors:
   - id: example-iaca
     domain: mdoc-iaca                     # credential-issuer, verifier-access, wallet-provider, status-list
-    entity: example-issuer                # a chain to this anchor is this entity; omit for a CA shared by many parties
+    entity: example-issuer                # a chain to this anchor is this entity of the same framework; omit for a CA shared by many parties
     certificate: "<PEM>"                  # or certificateLocation (see below)
     constraints:
       docTypes: [org.iso.18013.5.1.mDL]   # the doctypes this IACA may sign
@@ -317,7 +326,7 @@ An anchor entry has these:
 | `id` | Text. Without it the anchor is named `<domain>:<SHA-256 of the certificate>`; an entry with several certificates makes one anchor of each, named `<id>-0`, `<id>-1`, ... |
 | `framework` | Text, as for an entity |
 | `domain` | Text; required |
-| `entity` | Text: the id of the entity of the same framework that a chain to this anchor is |
+| `entity` | Text: the id of the entity of the same framework that a chain to this anchor is, as a source of that framework writes it. An anchor whose `entity` no source of its framework lists is not loaded ([Frameworks and sources](#frameworks-and-sources)) |
 | `certificate`, `certificates`, `certificateLocation`, `certificateJsonField` | As for an entity; at least one certificate is required |
 | `status` | As for an entity; an anchor that is not `ACTIVE` vouches for nothing |
 | `constraints` | An object. What the service reads from it must have its type: `docTypes` a list of doctypes, `crlUrls` a URL or a list of URLs, `crl` a CRL as text (PEM or base64 DER). One of these names written another way (`doctypes`, `DocTypes`, `doc_types`, `crl_urls`, `CRL`) cannot be read |

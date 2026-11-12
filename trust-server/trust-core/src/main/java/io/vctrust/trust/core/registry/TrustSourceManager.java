@@ -47,7 +47,9 @@ import java.util.regex.Pattern;
  *
  * <p>A source speaks for its own framework and for nothing else. Whatever it loads is placed in the framework it is
  * configured for; entities of the same id are merged only within a framework; an anchor is tied to an entity only
- * of its own framework. An entry whose id another framework already has is listed as {@code <id>@<framework>}, and
+ * of its own framework, and an anchor whose {@code entity} no source of its framework lists (written another way, or
+ * only another framework's) is not loaded: the entry that restricts the CA's party would never be found, and a chain
+ * to the CA would decide alone. An entry whose id another framework already has is listed as {@code <id>@<framework>}, and
  * that name is its framework's, so it is always free ({@link #fallbackNameOf}): an entity of another framework written
  * with it is listed under its own fallback name instead, and such an anchor is not loaded. An entity whose fallback name
  * an entry of its own framework already holds is merged with it. A source of one framework can therefore add nothing to, and take nothing from, what a
@@ -302,6 +304,15 @@ public class TrustSourceManager implements AutoCloseable {
                 entities.merge(id, inFramework(e, id, framework), RegistrySnapshot::merge);
             }
         }
+        // The frameworks that have an entity of an id, as a source wrote it or as the registry lists it, for the warning
+        // about an anchor whose entity no source of its own framework lists.
+        Map<String, Set<String>> holders = new HashMap<>();
+        placed.forEach((written, at) -> {
+            if (written.getFirst() != null) {
+                holders.computeIfAbsent(written.getLast(), k -> new TreeSet<>()).add(written.getFirst());
+                holders.computeIfAbsent(at, k -> new TreeSet<>()).add(written.getFirst());
+            }
+        });
         // The anchor records placed under each id, with the source of each. An id holds the records of one framework: a
         // record of another framework whose id is taken is placed under <id>@<its framework>.
         Map<String, List<Placed>> placedAnchors = new LinkedHashMap<>();
@@ -317,14 +328,23 @@ public class TrustSourceManager implements AutoCloseable {
                     refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add(reservedName(a.id(), reserved.get()));
                     continue;
                 }
+                // The entity a chain to the CA is: the one a source of the anchor's own framework lists under that id,
+                // wherever the registry placed it. A tie to none of the framework's entities (the id written another way,
+                // or only another framework's) is found by nobody, and the party's entry (a withdrawal, a limit to some
+                // credential types) would no longer restrict the CA's certificates: such a record is not loaded. It is
+                // still placed, so that another record of the anchor that differs from it is not loaded either (a
+                // withdrawal written with such a tie must not let the other record count).
                 String entityId = a.entityId();
+                boolean untied = false;
                 if (entityId != null) {
                     String own = placed.get(Arrays.asList(framework, entityId));
-                    if (own == null && entities.containsKey(entityId)) {
-                        refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Anchor '" + a.id() + "' is not tied to entity '"
-                                + entityId + "': that entity belongs to another framework");
+                    if (own == null) {
+                        List<String> elsewhere = holders.getOrDefault(entityId, Set.of()).stream().filter(f -> !f.equals(framework)).toList();
+                        refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add(untied(a.id(), entityId, framework, elsewhere));
+                        untied = true;
+                    } else {
+                        entityId = own;
                     }
-                    entityId = own == null && entities.containsKey(entityId) ? null : own == null ? entityId : own;
                 }
                 String id = a.id();
                 List<Placed> held = placedAnchors.get(id);
@@ -333,17 +353,21 @@ public class TrustSourceManager implements AutoCloseable {
                 }
                 TrustAnchor anchor = new TrustAnchor(id, a.domain(), a.certificate(), framework, entityId, a.status(),
                         boundedCrlUrls(a, s.id(), refused), a.provenance());
-                placedAnchors.computeIfAbsent(id, k -> new ArrayList<>()).add(new Placed(s.id(), a.id(), anchor));
+                placedAnchors.computeIfAbsent(id, k -> new ArrayList<>()).add(new Placed(s.id(), a.id(), anchor, untied));
             }
         }
         Map<String, TrustAnchor> anchors = new LinkedHashMap<>();
         placedAnchors.forEach((id, records) -> {
-            TrustAnchor first = records.getFirst().anchor();
-            List<String> differ = records.stream().map(p -> differences(first, p.anchor())).filter(d -> !d.isEmpty())
+            Placed head = records.getFirst();
+            TrustAnchor first = head.anchor();
+            List<String> differ = records.stream().map(p -> differences(head, p)).filter(d -> !d.isEmpty())
                     .findFirst().orElse(List.of());
             if (differ.isEmpty()) {
-                // The same anchor listed again (by another source of the framework, say) loses nothing.
-                anchors.put(id, first);
+                // The same anchor listed again (by another source of the framework, say) loses nothing. Records that do
+                // not differ are tied alike: when to nobody of the framework, none is loaded, and each source was told.
+                if (!head.untied()) {
+                    anchors.put(id, first);
+                }
                 return;
             }
             // Records of one anchor that differ: kept first come, which one counted would depend on the order of the
@@ -420,6 +444,13 @@ public class TrustSourceManager implements AutoCloseable {
                 + "' is listed under when another framework has its id, and only that framework may use it";
     }
 
+    /** Why an anchor whose entity no source of its framework lists is not loaded; {@code elsewhere}: the frameworks that have one of that id. */
+    private static String untied(String id, String entity, String framework, List<String> elsewhere) {
+        return "Anchor '" + id + "' is not loaded: it belongs to entity '" + entity + "', which no source of framework '" + framework + "' lists"
+                + (elsewhere.isEmpty() ? "" : "; only " + (elsewhere.size() == 1 ? "framework " : "frameworks ") + quoted(elsewhere)
+                + (elsewhere.size() == 1 ? " has" : " have") + " an entity of that id");
+    }
+
     /** {@code 'a'}, {@code 'a' and 'b'}, {@code 'a', 'b' and 'c'}. */
     private static String quoted(List<String> names) {
         List<String> q = names.stream().map(n -> "'" + n + "'").toList();
@@ -428,16 +459,21 @@ public class TrustSourceManager implements AutoCloseable {
 
     /**
      * An anchor record placed under its id, the source that listed it and the id it was written with (another framework's
-     * anchor of that id places it under {@code <id>@<framework>}).
+     * anchor of that id places it under {@code <id>@<framework>}). {@code untied}: its entity is none of its framework's,
+     * and its {@code entityId} is then the id as written.
      */
-    private record Placed(String sourceId, String writtenId, TrustAnchor anchor) {
+    private record Placed(String sourceId, String writtenId, TrustAnchor anchor, boolean untied) {
     }
 
     /**
      * What two records of one anchor say differently: anything but where and when they were retrieved (the provenance).
-     * Empty when they say the same, and one placed instead of the other loses nothing.
+     * Empty when they say the same, and one placed instead of the other loses nothing. A record tied to nobody of its
+     * framework differs in its entity from one that is tied, even where the id it names is the name the other one's entity
+     * is listed under.
      */
-    private static List<String> differences(TrustAnchor a, TrustAnchor b) {
+    private static List<String> differences(Placed p, Placed q) {
+        TrustAnchor a = p.anchor();
+        TrustAnchor b = q.anchor();
         List<String> differ = new ArrayList<>();
         if (!Objects.equals(a.frameworkId(), b.frameworkId())) {
             differ.add("framework");
@@ -448,7 +484,7 @@ public class TrustSourceManager implements AutoCloseable {
         if (!a.thumbprint().equals(b.thumbprint())) {
             differ.add("certificate");
         }
-        if (!Objects.equals(a.entityId(), b.entityId())) {
+        if (!Objects.equals(a.entityId(), b.entityId()) || p.untied() != q.untied()) {
             differ.add("entity");
         }
         if (a.status() != b.status()) {
