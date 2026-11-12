@@ -182,4 +182,49 @@ class MappedSourceEdgesTest {
                     + "record 1 (id 'iaca-0') is skipped: crlUrls: 1000 CRL locations, more than 4 for one anchor");
         }
     }
+
+    // 3: nodes that weigh nothing ------------------------------------------------------------------------------------
+
+    @Test
+    void item3_aNullOrAnEmptyListOrObjectWeighsOneNodeAndARecordYieldsAtMost4096() throws Exception {
+        // attributes: {country: ^.country} over a list of 200,000 nulls in 1,000 records loaded with no warning, and
+        // referenced 200 million entries.
+        TestContext ctx = ctx();
+        serveJson(ctx, MappedSourceValidationTest.issuers(1_000, Map.of("country", Collections.nCopies(200_000, null))));
+        Map<String, Object> country = MappedSourceAttacksTest.entities("attributes", Map.of("country", "^.country"));
+        assertThat(loadError(source(ctx, props("mapping", country)))).contains("none of the 1000 records at $.issuers[*] could be read "
+                + "completely; record 1 (id 'partner:p0') is listed SUSPENDED: attributes.country: the record would yield more than 4096 "
+                + "nodes (values, nulls, lists and objects)");
+        serveJson(ctx, MappedSourceValidationTest.issuers(1_000, Map.of("country", "UT")));
+        assertThat(source(ctx, props("mapping", country)).load().entities()).hasSize(1_000)
+                .allSatisfy(e -> assertThat(e.attributes()).containsEntry("country", "UT"));
+        // The same through metadataPolicy, of empty objects.
+        Map<String, Object> heavy = Map.of("openid_credential_issuer", Map.of("display", Map.of("one_of", Collections.nCopies(5_000, Map.of()))));
+        Map<String, Object> light = Map.of("openid_credential_issuer", Map.of("display", Map.of("one_of", Collections.nCopies(5, Map.of()))));
+        var r = MappedSourceAttacksTest.load(MappedSourceAttacksTest.entities("metadataPolicy", "$.policy"),
+                List.of(Map.of("policy", heavy), Map.of("policy", light)));
+        assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
+                .containsExactly("partner:p0 SUSPENDED", "partner:p1 ACTIVE", "partner:fine ACTIVE");
+        assertThat(r.warnings()).containsExactly("mapping.entities[0]: record 1 (id 'partner:p0') is listed SUSPENDED: metadataPolicy: the "
+                + "record would yield more than 4096 nodes (values, nulls, lists and objects)");
+        assertThat(r.entities().getFirst().metadataPolicy()).isEmpty();
+    }
+
+    @Test
+    void item3_nodesCountTowardTheLoadsBudget() throws Exception {
+        // 50 records of a hundred nulls each: about 3,400 characters of mapped text, and 5,000 nodes more.
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        List<Object> issuers = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            issuers.add(Map.of("id", "p" + i, "credential_issuer", "https://p" + i + ".example", "state", "active",
+                    "flags", Collections.nCopies(100, null)));
+        }
+        d.put("issuers", issuers);
+        TestContext ctx = ctx();
+        serveJson(ctx, d);
+        Map<String, Object> m = MappedSourceAttacksTest.entities("attributes", Map.of("flags", "$.flags"));
+        assertThat(loadError(source(ctx, props("mapping", m, "limits", Map.of("text", 5_000)))))
+                .contains("The list's records yield more than 5000 characters and nodes of mapped text (limits.text)");
+        assertThat(source(ctx, props("mapping", m, "limits", Map.of("text", 10_000))).load().entities()).hasSize(50);
+    }
 }

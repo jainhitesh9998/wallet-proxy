@@ -60,10 +60,10 @@ final class Mapping {
 
     /**
      * What one record yields: its entry in the registry format, with every member that could be read, the members that
-     * could not, each with why (in the order the record was read), and how many characters of mapped text the entry
-     * holds.
+     * could not, each with why (in the order the record was read), and what the entry weighs against the load's budget
+     * ({@code limits.text}): its nodes and the characters of its text ({@link Weight}).
      */
-    record Mapped(Map<String, Object> entry, Map<String, String> unusable, int text) {
+    record Mapped(Map<String, Object> entry, Map<String, String> unusable, long weight) {
     }
 
     /**
@@ -72,47 +72,102 @@ final class Mapping {
      */
     static final int MAX_RECORD_TEXT = 65_536;
 
+    /**
+     * The most nodes one record yields, all its members together: every value, {@code null}, list and object, empty or
+     * not. A record of a few thousand is already unusual; without a count, a path from the root over a list of 200,000
+     * {@code null}s weighed nothing, and repeated it into every record.
+     */
+    static final int MAX_RECORD_NODES = 4_096;
+
     /** The most CRL locations a mapped anchor names (more make it unreadable): each is fetched on every refresh. */
     static final int MAX_CRL_URLS = 4;
 
     /**
-     * The characters of mapped text in a value: text, numbers and booleans as written, and the names of an object's
-     * members; counted up to {@code limit + 1} at most, so that the cost is bounded too.
+     * What mapped values weigh: one node for each value, {@code null}, list and object in them, empty or not, and the
+     * characters of their text (text, numbers and booleans as written, and the names of an object's members). Weighed
+     * up to just past its bounds and no further, so that weighing costs no more than the bounds either.
+     */
+    static final class Weight {
+        final int maxNodes;
+        final long maxCharacters;
+        int nodes;
+        long characters;
+
+        Weight(int maxNodes, long maxCharacters) {
+            this.maxNodes = maxNodes;
+            this.maxCharacters = maxCharacters;
+        }
+
+        /** The record's budget. */
+        static Weight ofRecord() {
+            return new Weight(MAX_RECORD_NODES, MAX_RECORD_TEXT);
+        }
+
+        boolean over() {
+            return nodes > maxNodes || characters > maxCharacters;
+        }
+
+        /** What is left of this budget, as a budget of its own. */
+        Weight remaining() {
+            return new Weight(maxNodes - nodes, maxCharacters - characters);
+        }
+
+        void add(Weight w) {
+            nodes += w.nodes;
+            characters += w.characters;
+        }
+
+        /** Against the load's budget, a node weighs one character. */
+        long units() {
+            return nodes + characters;
+        }
+
+        /** @throws IllegalArgumentException naming {@code member} when it takes the record beyond its budget */
+        void check(String member) {
+            if (nodes > maxNodes) {
+                throw new IllegalArgumentException(member + ": the record would yield more than " + MAX_RECORD_NODES
+                        + " nodes (values, nulls, lists and objects)");
+            }
+            if (characters > maxCharacters) {
+                throw new IllegalArgumentException(member + ": the record's mapped text would be more than " + MAX_RECORD_TEXT + " characters");
+            }
+        }
+    }
+
+    /**
+     * Adds what {@code v} weighs to {@code w}, until {@code w} is past one of its bounds.
      *
      * @throws IllegalArgumentException naming {@code member}, for a text in it longer than {@link Value#MAX_TEXT}
      */
-    static int weight(Object v, String member, int limit) {
+    static void weigh(Object v, String member, Weight w) {
+        if (w.over()) {
+            return;
+        }
+        w.nodes++;
         if (v instanceof Map<?, ?> m) {
-            int total = 0;
             for (Map.Entry<?, ?> e : m.entrySet()) {
-                total += weight(e.getKey(), member, limit - total);
-                if (total <= limit) {
-                    total += weight(e.getValue(), member, limit - total);
-                }
-                if (total > limit) {
-                    return total;
+                w.characters += String.valueOf(e.getKey()).length();
+                weigh(e.getValue(), member, w);
+                if (w.over()) {
+                    return;
                 }
             }
-            return total;
-        }
-        if (v instanceof List<?> l) {
-            int total = 0;
+        } else if (v instanceof List<?> l) {
             for (Object o : l) {
-                total += weight(o, member, limit - total);
-                if (total > limit) {
-                    return total;
+                weigh(o, member, w);
+                if (w.over()) {
+                    return;
                 }
             }
-            return total;
+        } else {
+            String t = Value.text(v);
+            if (t != null) {
+                if (t.length() > Value.MAX_TEXT) {
+                    throw new IllegalArgumentException(member + ": a value of " + t.length() + " characters, more than " + Value.MAX_TEXT);
+                }
+                w.characters += t.length();
+            }
         }
-        String t = Value.text(v);
-        if (t == null) {
-            return 0;
-        }
-        if (t.length() > Value.MAX_TEXT) {
-            throw new IllegalArgumentException(member + ": a value of " + t.length() + " characters, more than " + Value.MAX_TEXT);
-        }
-        return t.length();
     }
 
     final ListFacts list;
@@ -425,28 +480,27 @@ final class Mapping {
                     out.put("framework", framework);
                 }
             }
-            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable), r.text);
+            return new Mapped(out, java.util.Collections.unmodifiableMap(r.unusable), r.weight.units());
         }
 
         /**
-         * Reads one member at a time: what it yields, or why it cannot be read. A member that would take the record's
-         * mapped text beyond {@link #MAX_RECORD_TEXT} cannot be read either.
+         * Reads one member at a time: what it yields, or why it cannot be read. A member that would take the record
+         * beyond its budget ({@link #MAX_RECORD_NODES} nodes, {@link #MAX_RECORD_TEXT} characters) cannot be read
+         * either.
          */
         private static final class Reader {
             final Map<String, Object> values = new LinkedHashMap<>();
             final Map<String, String> unusable = new LinkedHashMap<>();
-            int text;
+            final Weight weight = Weight.ofRecord();
 
             void read(String member, java.util.function.Supplier<Object> value) {
                 try {
                     Object v = value.get();
                     if (v != null && !(v instanceof List<?> l && l.isEmpty()) && !(v instanceof Map<?, ?> m && m.isEmpty())) {
-                        int weight = weight(v, member, MAX_RECORD_TEXT - text);
-                        if (text + weight > MAX_RECORD_TEXT) {
-                            throw new IllegalArgumentException(member + ": the record's mapped text would be more than "
-                                    + MAX_RECORD_TEXT + " characters");
-                        }
-                        text += weight;
+                        Weight w = weight.remaining();
+                        weigh(v, member, w);
+                        w.check(member);
+                        weight.add(w);
                         values.put(member, v);
                     }
                 } catch (RuntimeException e) {
@@ -462,7 +516,11 @@ final class Mapping {
             Map<String, Value> named = (Map<String, Value>) fields.get("attributes");
             named.forEach((k, v) -> {
                 Object found = first(v, "attributes." + k, record, root);
-                weight(found, "attributes." + k, MAX_RECORD_TEXT);   // an object's texts are mapped text too
+                // An object or a list is weighed here, to name the attribute that is too much: its texts are mapped
+                // text, and its nulls and empty lists nodes, as anywhere.
+                Weight w = Weight.ofRecord();
+                weigh(found, "attributes." + k, w);
+                w.check("attributes." + k);
                 put(attributes, k, found);
             });
             return attributes;

@@ -326,7 +326,7 @@ class MappedSourceValidationTest {
         serveJson(ctx, issuers(40, Map.of()));
         // About 60 characters a record: id, role, URL identifier, status.
         assertThat(MappedSourceRulesTest.loadError(source(ctx, props("limits", Map.of("text", 1_000)))))
-                .contains("The list's records yield more than 1000 characters of mapped text (limits.text)");
+                .contains("The list's records yield more than 1000 characters and nodes of mapped text (limits.text)");
         assertThat(source(ctx, props("limits", Map.of("text", 10_000))).load().entities()).hasSize(40);
         assertThat(MappedSourceRulesTest.loadError(source(ctx, props("limits", Map.of("text", "lots")))))
                 .contains("limits.text must be a positive whole number");

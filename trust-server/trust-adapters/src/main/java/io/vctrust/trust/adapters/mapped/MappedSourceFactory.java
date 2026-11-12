@@ -985,7 +985,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         private Object mapEntity(Mapping.Block block, Object record, Object root, Provenance provenance, int number, Text text)
                 throws TrustSourceException {
             Mapping.Mapped m = block.map(record, root);
-            text.charge(m.text());
+            text.charge(m.weight());
             Map<String, Object> entry = new LinkedHashMap<>(m.entry());
             Map<String, String> unusable = new LinkedHashMap<>(m.unusable());
             String id = entry.get("id") instanceof String s ? s : null;
@@ -1065,7 +1065,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         private Object mapAnchor(Mapping.Block block, Object record, Object root, Provenance provenance, Text text)
                 throws TrustSourceException {
             Mapping.Mapped m = block.map(record, root);
-            text.charge(m.text());
+            text.charge(m.weight());
             String id = m.entry().get("id") instanceof String s ? s : null;
             String shown = id != null && ENTRY_ID.matcher(id).matches() ? id : null;
             if (!m.unusable().isEmpty()) {
@@ -1097,8 +1097,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         /**
-         * The characters of mapped text a load (or a lookup answer) has yielded, all its records together, against
-         * {@code limits.text}: each record is bounded, and so is what they make together.
+         * What a load (or a lookup answer) has yielded, all its records together, against {@code limits.text}: the
+         * characters of its mapped text, and one for each node ({@link Mapping.Weight}), so that nulls and empty lists
+         * repeated into every record weigh something too. Each record is bounded, and so is what they make together.
          */
         private static final class Text {
             private final int max;
@@ -1110,10 +1111,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 this.what = what;
             }
 
-            void charge(int characters) throws TrustSourceException {
-                used += characters;
+            void charge(long weight) throws TrustSourceException {
+                used += weight;
                 if (used > max) {
-                    throw new TrustSourceException(what + " yield more than " + max + " characters of mapped text (limits.text)");
+                    throw new TrustSourceException(what + " yield more than " + max + " characters and nodes of mapped text (limits.text)");
                 }
             }
         }
