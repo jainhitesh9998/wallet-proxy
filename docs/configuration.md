@@ -534,10 +534,14 @@ instant depends on where it was written). A member cannot be read either when:
   writes `default: ACTIVE`;
 - an authorization item lacks a member its mapping configures, or yields nothing at all: an authorization without its
   `type` would cover every type of its format, and none at all would leave the entity unconstrained for a lenient
-  client. Unless the item says `allowAnyType: true` (its `type` a path, or a translation of one): an item whose `type`
-  is not there at all (or `null`, or `""`) then covers every type of its format, as the registry format reads it and
-  this service's snapshot writes it. Write it only for an upstream that means that; a `type` that is there but cannot
-  be read (the wrong kind, a value its translation does not know) still makes the record unreadable;
+  client. Unless the item says `allowAnyType: true` (its `type` a path from a member of the item, or a translation of
+  one): an item that states no type then covers every type of its format, as the registry format reads it and this
+  service's snapshot writes it. An item states no type only when the first member the type's path names is not there,
+  or is `null` or `""` (`types` in `$.types[0]`). Once that member is there with anything else, the type is read as a
+  restricting list is read, and whatever does not yield a type makes the record unreadable: `[]`, `[null]` or `{}`
+  under `$.types[*]`, an index past the end, a filter that keeps nothing, an object without the member the path goes
+  on to, the wrong kind, a value the translation does not know. Write it only for an upstream that means "every type"
+  by no type;
 - it is a restricting list (an `authorizations` item's `each`, an anchor's `docTypes`) that is there and yields
   nothing: `credentials: []`, `[null]` or `{}` under a mapped `authorizations`, a filter that keeps none of them, and
   the same for `docTypes`. This holds wherever the list is in the path: `$.doctypes[*].id` over `"doctypes": []`, or

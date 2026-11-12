@@ -268,4 +268,59 @@ class MappedSourceProbesTest {
             assertThat(registry.snapshot().entity(derived("utopia dmv")).orElseThrow().identifiers()).hasSize(2);
         }
     }
+
+    // 2: allowAnyType reads the type's own path strictly ------------------------------------------------------------------
+
+    static final String PID = MappedSourceValidationTest.PID;
+
+    /** The decision about the DS certificate's PID, the issuer authorized by {@code credentials} under {@code allowAnyType}. */
+    static Map.Entry<EntityStatus, Decision> anyType(String typePath, Object credential) {
+        Map<String, Object> item = new LinkedHashMap<>(Map.of("each", "$.credentials[*]", "allowAnyType", true, "format", "$.format",
+                "type", typePath));
+        TestContext ctx = ctx();
+        serveJson(ctx, MappedSourceValidationTest.boundList(1, MappedSourceValidationTest.members("credentials", List.of(credential))));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", MappedSourceValidationTest.withAuthorizations(item))))) {
+            return Map.entry(registry.snapshot().entity("partner:dmv").orElseThrow().status(), MappedSourceValidationTest.decide(registry, PID));
+        }
+    }
+
+    static Map<String, Object> credential(String member, Object value) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("format", "mso_mdoc");
+        c.put(member, value);
+        return c;
+    }
+
+    @Test
+    void item2_aTypeThatIsThereButLostOnTheWayIsNoReasonToCoverEveryType() {
+        Map<String, List<Map<String, Object>>> lost = new LinkedHashMap<>();
+        lost.put("$.types[0]", List.of(credential("types", List.of()), credential("types", java.util.Arrays.asList(null, PID))));
+        lost.put("$.types[*]", List.of(credential("types", List.of()), credential("types", java.util.Collections.singletonList(null)),
+                credential("types", Map.of())));
+        lost.put("$.types[?@.primary == true].id", List.of(credential("types", List.of(Map.of("primary", false, "id", MDL))),
+                credential("types", List.of(Map.of("primary", true)))));
+        Map<String, Object> nullId = new LinkedHashMap<>();
+        nullId.put("id", null);
+        lost.put("$.type.id", List.of(credential("type", Map.of()), credential("type", Map.of("name", "mDL")), credential("type", nullId)));
+        lost.forEach((path, credentials) -> {
+            for (Map<String, Object> c : credentials) {
+                // Authorized for every type of mso_mdoc, PID included, before.
+                assertThat(anyType(path, c)).as(path + " over " + c).isEqualTo(Map.entry(EntityStatus.SUSPENDED, Decision.NOT_TRUSTED));
+            }
+        });
+        // The first member the path names not there, null or "": no type stated, every type of the format.
+        for (String path : lost.keySet()) {
+            String first = path.substring(2).split("[.\\[]")[0];
+            for (Object absent : java.util.Arrays.asList("not there", null, "")) {
+                Map<String, Object> c = absent != null && absent.equals("not there") ? credential("other", 1) : credential(first, absent);
+                assertThat(anyType(path, c)).as(path + " over " + c).isEqualTo(Map.entry(EntityStatus.ACTIVE, Decision.TRUSTED));
+            }
+        }
+        // And one that is read: the type stated.
+        assertThat(anyType("$.types[*].id", credential("types", List.of(Map.of("id", MDL))))).isEqualTo(Map.entry(EntityStatus.ACTIVE,
+                Decision.NOT_TRUSTED));
+        assertThat(anyType("$.types[*].id", credential("types", List.of(Map.of("id", PID), Map.of("name", "x")))))
+                .isEqualTo(Map.entry(EntityStatus.SUSPENDED, Decision.NOT_TRUSTED));
+    }
 }

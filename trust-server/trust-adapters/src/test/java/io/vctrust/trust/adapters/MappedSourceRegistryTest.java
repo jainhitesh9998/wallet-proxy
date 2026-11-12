@@ -326,7 +326,7 @@ class MappedSourceRegistryTest {
         Map<String, Object> constant = new LinkedHashMap<>(anyType);
         constant.put("type", MDL);
         assertThat(loadError(source(ctx(), props("mapping", withItem(constant))))).contains("mapping.entities[0].authorizations[0]: "
-                + "allowAnyType applies to an item whose type is read from the document");
+                + "allowAnyType applies to an item whose type is read from a member of the item");
         Map<String, Object> identifiers = MappedSourceValidationTest.boundMapping();
         ((Map<String, Object>) ((List<?>) identifiers.get("entities")).getFirst()).put("identifiers", List.of(Map.of("type", "URL",
                 "value", "$.credential_issuer", "allowAnyType", true)));

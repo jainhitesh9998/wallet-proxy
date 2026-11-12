@@ -914,13 +914,15 @@ final class Mapping {
         }
 
         /**
-         * Whether the document states something where a form reads it: its path selects a node that is not
-         * {@link Value#blank}. A type that is there but yields nothing (a value its translation does not know) is
-         * stated, and cannot be read; one that is not there at all is not.
+         * Whether an item states its type, for {@code allowAnyType}: it does not only when the first member the type's
+         * path names is not there, or is {@code null} or {@code ""}. Once that member is there with anything else, the
+         * type is stated, and must be read: a list there and empty, an index past its end, a filter that keeps nothing,
+         * an object without the member the path goes on to is a type the mapping cannot read, not "every type".
          */
-        private static boolean stated(Value v, Object current, Object root) {
+        private static boolean statesType(Value v, Object match) {
             JsonPath p = v instanceof Value.At a ? a.path() : v instanceof Value.Translated t ? t.path() : null;
-            return p == null || p.select(current, root).stream().anyMatch(o -> !Value.blank(o));
+            String first = p == null ? null : p.firstMember();
+            return first == null || !(match instanceof Map<?, ?> m) || !Value.blank(m.get(first));
         }
 
         /** Nested items: one per match of the item's {@code each}, or one; {@code needs} are the members an item must have. */
@@ -957,6 +959,15 @@ final class Mapping {
                 List<String> fromDocument = new ArrayList<>();
                 for (Map.Entry<String, Value> e : item.members.entrySet()) {
                     String k = e.getKey();
+                    boolean anyType = rule == Items.STRICT && k.equals("type") && item.allowAnyType();
+                    if (anyType) {
+                        if (!statesType(e.getValue(), match)) {
+                            continue;   // the item states no type: it covers every type of its format
+                        }
+                        // Stated: read as a restricting list is read, wherever a list or an object is in the path.
+                        JsonPath p = e.getValue() instanceof Value.At a ? a.path() : ((Value.Translated) e.getValue()).path();
+                        restricted(p, member + "." + k, match, root);
+                    }
                     String value;
                     try {
                         value = scalar(first(e.getValue(), member + "." + k, match, root), member + "." + k);
@@ -968,8 +979,7 @@ final class Mapping {
                         value = null;
                     }
                     put(o, k, value);
-                    if (rule == Items.STRICT && !o.containsKey(k) && !(k.equals("type") && item.allowAnyType()
-                            && !stated(e.getValue(), match, root))) {
+                    if (rule == Items.STRICT && !o.containsKey(k)) {
                         throw new IllegalArgumentException(member + ": an item yields no " + k
                                 + "; an authorization is never left open where the document does not say so");
                     }
@@ -1148,10 +1158,12 @@ final class Mapping {
             throw new IllegalArgumentException(where + " maps nothing");
         }
         boolean allowAnyType = flag(m, "allowAnyType", where);
-        if (m.containsKey("allowAnyType") && !(members.get("type") instanceof Value.At || members.get("type") instanceof Value.Translated)) {
+        Value type = members.get("type");
+        JsonPath typePath = type instanceof Value.At a ? a.path() : type instanceof Value.Translated t ? t.path() : null;
+        if (m.containsKey("allowAnyType") && (typePath == null || typePath.firstMember() == null)) {
             // Said where it cannot apply, it would be ignored: refused instead.
-            throw new IllegalArgumentException(where + ": allowAnyType applies to an item whose type is read from the document "
-                    + "(a path, or a translation of one)");
+            throw new IllegalArgumentException(where + ": allowAnyType applies to an item whose type is read from a member of the "
+                    + "item ($.name..., or a translation of one)");
         }
         return new Item(each, java.util.Collections.unmodifiableMap(members), allowEmpty, allowAnyType);
     }

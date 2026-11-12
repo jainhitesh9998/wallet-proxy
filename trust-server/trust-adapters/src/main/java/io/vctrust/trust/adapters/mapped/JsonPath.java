@@ -107,6 +107,11 @@ final class JsonPath {
         return new Restricted(s.nodes(), s.there(), s.lost());
     }
 
+    /** The member a path from the current record names first ({@code types} in {@code $.types[0].id}); null for any other path. */
+    String firstMember() {
+        return !fromRoot && !segments.isEmpty() && segments.getFirst() instanceof Member m ? m.name() : null;
+    }
+
     /** Whether the path has a {@code [*]} or a filter: it reads the items of a list (or the members of an object). */
     boolean readsList() {
         return multiple();
