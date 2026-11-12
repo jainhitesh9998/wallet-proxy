@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -73,6 +74,12 @@ public final class TrustedEntityParser {
      * member whose name reads so but is not written exactly so is a near miss, and cannot be read.
      */
     private static final Map<String, String> READ_CONSTRAINTS = Map.of("doctypes", "docTypes", "crlurls", "crlUrls", "crl", "crl");
+
+    /**
+     * What an entry written from outside the deployment may be called (an admin API entry, a record of a mapped
+     * source): it becomes a path segment, a database key and a field of the audit log.
+     */
+    public static final Pattern ENTRY_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:@~-]{0,127}");
 
     private TrustedEntityParser() {
     }

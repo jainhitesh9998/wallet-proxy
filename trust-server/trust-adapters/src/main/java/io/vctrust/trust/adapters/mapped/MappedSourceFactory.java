@@ -80,7 +80,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     /** How long after its iat a signed lookup answer without exp counts, unless lookup.maxAge says otherwise. */
     static final Duration DEFAULT_LOOKUP_MAX_AGE = Duration.ofHours(24);
     /** The identifiers the admin API accepts for an entry: an id from a document is held to the same rule. */
-    private static final Pattern ENTRY_ID = Pattern.compile("[A-Za-z0-9._:@~-]{1,128}");
+    private static final Pattern ENTRY_ID = TrustedEntityParser.ENTRY_ID;
+    private static final String ENTRY_ID_RULE = "its id is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit";
     private static final Pattern HEADER_NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
     /** A document from elsewhere names no file: whatever would load one is refused. */
     private static final ResourceLoader NO_FILES = location -> {
@@ -768,7 +769,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 Map<String, Object> entry = block.map(record, root);
                 id = entry.get("id") instanceof String s ? s : null;
                 if (id != null && !ENTRY_ID.matcher(id).matches()) {
-                    return new Skipped(block, null, "its id is not 1 to 128 letters, digits or . _ : @ ~ -");
+                    return new Skipped(block, null, ENTRY_ID_RULE);
                 }
                 return TrustedEntityParser.entity(entry, def.frameworkId(), provenance, NO_FILES);
             } catch (Exception e) {
@@ -783,7 +784,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 Map<String, Object> entry = block.map(record, root);
                 id = entry.get("id") instanceof String s ? s : null;
                 if (id != null && !ENTRY_ID.matcher(id).matches()) {
-                    return new Skipped(block, null, "its id is not 1 to 128 letters, digits or . _ : @ ~ -");
+                    return new Skipped(block, null, ENTRY_ID_RULE);
                 }
                 List<TrustAnchor> parsed = TrustedEntityParser.anchors(entry, def.frameworkId(), provenance, NO_FILES);
                 if (parsed.size() != 1) {

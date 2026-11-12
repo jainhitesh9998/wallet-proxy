@@ -772,10 +772,28 @@ class MappedSourceRulesTest {
             assertThat(e.status()).isEqualTo(EntityStatus.SUSPENDED);
         });
         assertThat(r.warnings()).containsExactly(
-                "mapping.entities[0]: record 2 is skipped: its id is not 1 to 128 letters, digits or . _ : @ ~ -",
+                "mapping.entities[0]: record 2 is skipped: its id is not 1 to 128 letters, digits or . _ : @ ~ - starting with a letter or digit",
                 "mapping.entities[0]: record 3 (id 'partner:x') is skipped: Unknown role 'PRESIDENT'; one of CREDENTIAL_ISSUER, VERIFIER, "
                         + "WALLET_PROVIDER, AUTHORIZATION_SERVER, ACCREDITATION_AUTHORITY, STATUS_LIST_PROVIDER, OTHER",
                 "mapping.entities[0]: record 4 is skipped: validUntil is not a date: 'forever'",
                 "mapping.entities[0]: record 5 is skipped: Entity without id");
+    }
+
+    @Test
+    void anIdIsHeldToTheRuleOfTheAdminApi() throws Exception {
+        // The admin API's rule (ManagedEntryService), from the same place: an id starts with a letter or a digit.
+        TestContext ctx = ctx();
+        Map<String, Object> m = mapping();
+        ((Map<String, Object>) ((List<?>) m.get("entities")).getFirst()).put("id", "$.id");
+        m.put("anchors", List.of(Map.of("each", "$.authorities[*]", "id", "$.kid", "domain", "mdoc-iaca", "certificate", "$.certificate")));
+        Map<String, Object> d = doc("a", "-dash", ".dot", "~tilde", "9.nine", "a".repeat(129));
+        d.put("authorities", List.of(Map.of("kid", "@iaca", "certificate", MappedTesting.der("iaca")),
+                Map.of("kid", "iaca", "certificate", MappedTesting.der("iaca"))));
+        serveJson(ctx, d);
+        SourceLoadResult r = source(ctx, props("mapping", m)).load();
+        assertThat(r.entities()).extracting(TrustedEntity::id).containsExactly("a", "9.nine");
+        assertThat(r.anchors()).extracting(a -> a.id()).containsExactly("iaca");
+        assertThat(r.warnings()).hasSize(5).allMatch(w -> w.endsWith("is skipped: its id is not 1 to 128 letters, digits or . _ : @ ~ - "
+                + "starting with a letter or digit"));
     }
 }

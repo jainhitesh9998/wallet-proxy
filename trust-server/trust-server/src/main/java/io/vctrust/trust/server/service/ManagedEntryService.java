@@ -34,7 +34,7 @@ public class ManagedEntryService {
     }
 
     /** What an entry may be called: it becomes a path segment, a database key and a field of the audit log. */
-    private static final Pattern ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:@~-]{0,127}");
+    private static final Pattern ID = TrustedEntityParser.ENTRY_ID;
 
     /** @param kind {@code entities} or {@code anchors} (singular accepted) */
     public List<Map<String, Object>> list(ClientProfile admin, String kind) {
