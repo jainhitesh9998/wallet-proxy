@@ -322,6 +322,122 @@ class MappedSourceValidationTest {
         assertThat(source(ctx, props("mapping", MappedSourceAttacksTest.entities("contexts", "^.nothing[*]"))).load().warnings()).isEmpty();
     }
 
+    // C: whoever serves the pages can leave one out ------------------------------------------------------------------
+
+    static final String PAGE_2 = MappedSourceRulesTest.LOCATION + "?page=2";
+    static final String PAGE_3 = MappedSourceRulesTest.LOCATION + "?page=3";
+
+    /** Page {@code k} of 3 of the partner's signed list (version 5): page 2 revokes "b". */
+    static Map<String, Object> page(int k, Integer number, Integer count) {
+        Map<String, Object> d = MappedSourceRulesTest.doc(5, NOW.plus(Duration.ofDays(7)));
+        d.put("issuers", List.of(switch (k) {
+            case 1 -> Map.of("id", "a", "credential_issuer", "https://a.example", "state", "active");
+            case 2 -> Map.of("id", "b", "credential_issuer", "https://b.example", "state", "revoked");
+            default -> Map.of("id", "c", "credential_issuer", "https://c.example", "state", "active");
+        }));
+        if (k < 3) {
+            d.put("next", k == 1 ? PAGE_2 : PAGE_3);
+        }
+        if (number != null) {
+            d.put("page", number);
+        }
+        if (count != null) {
+            d.put("pages", count);
+        }
+        return d;
+    }
+
+    static Map<String, Object> signedPages(com.nimbusds.jose.jwk.ECKey key, Map<String, Object> pages) {
+        Map<String, Object> m = MappedSourceAttacksTest.pagedMapping(Map.of("sequence", "$.version"));
+        m.put("pages", pages);
+        return props("format", "jws", "verify", Map.of("jwks", MappedTesting.jwks(key)), "mapping", m);
+    }
+
+    static void serve(TestContext ctx, com.nimbusds.jose.jwk.ECKey key, String url, Map<String, Object> page) {
+        ctx.http.respond(url, 200, "application/jwt", MappedTesting.utf8(MappedTesting.sign(key, page)));
+    }
+
+    @Test
+    void c_aPageServedInPlaceOfAnotherIsNoticedByItsNumberOrByTheCount() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        // Page 3 served at page 2's address: page 2, which revokes "b", is gone; the pages still agree on the list facts.
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, 1, 3));
+        serve(ctx, k1, PAGE_2, page(3, 3, 3));
+        Map<String, Object> numbered = signedPages(k1, Map.of("next", "$.next", "number", "$.page"));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, numbered))).contains("Page 2 of the list says it is page 3");
+        Map<String, Object> counted = signedPages(k1, Map.of("next", "$.next", "count", "$.pages"));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, counted))).contains("The list says it has 3 pages, and 2 were read");
+        // Served as they are, they load.
+        serve(ctx, k1, PAGE_2, page(2, 2, 3));
+        serve(ctx, k1, PAGE_3, page(3, 3, 3));
+        Map<String, Object> both = signedPages(k1, Map.of("next", "$.next", "number", "$.page", "count", "$.pages"));
+        for (Map<String, Object> p : List.of(numbered, counted, both)) {
+            var r = source(ctx, p).load();
+            assertThat(r.entities()).extracting(e -> e.id() + " " + e.status())
+                    .containsExactly("partner:a ACTIVE", "partner:b REVOKED", "partner:c ACTIVE");
+            assertThat(r.warnings()).isEmpty();
+        }
+        // A first page may count from 0.
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, 0, 3));
+        serve(ctx, k1, PAGE_2, page(2, 1, 3));
+        serve(ctx, k1, PAGE_3, page(3, 2, 3));
+        assertThat(source(ctx, numbered).load().entities()).hasSize(3);
+        serve(ctx, k1, PAGE_3, page(3, 3, 3));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, numbered))).contains("Page 3 of the list says it is page 3, not 2");
+    }
+
+    @Test
+    void c_theCountIsTheSameOnEveryPageAndThePagesReadAreThatMany() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        Map<String, Object> counted = signedPages(k1, Map.of("next", "$.next", "count", "$.pages"));
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, null, 3));
+        serve(ctx, k1, PAGE_2, page(2, null, 2));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, counted))).contains("Page 2 of the list says it has 2 pages where page 1 says 3");
+        // More pages than it says.
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, null, 2));
+        serve(ctx, k1, PAGE_2, page(2, null, 2));
+        serve(ctx, k1, PAGE_3, page(3, null, 2));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, counted))).contains("The list says it has 2 pages, and page 2 links to another");
+        // A count, or a number, that is not one; one missing; more pages than pages.max.
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, null, null));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, counted))).contains("mapping.pages.count: page 1 of the list has no number there");
+        Map<String, Object> first = page(1, null, null);
+        first.put("pages", "three");
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, first);
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, counted))).contains("mapping.pages.count: page 1 of the list has no number "
+                + "there: 'three'");
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, null, 51));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, counted))).contains("The list says it has 51 pages, more than 50 (mapping.pages.max)");
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, signedPages(k1, Map.of("next", "$.next", "number", "$.page")))))
+                .contains("mapping.pages.number: page 1 of the list has no number there");
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, 2, null));
+        assertThat(MappedSourceRulesTest.loadError(source(ctx, signedPages(k1, Map.of("next", "$.next", "number", "$.page")))))
+                .contains("Page 1 of the list says it is page 2; a first page is 0 or 1");
+    }
+
+    @Test
+    void c_signedPagesWithoutNumberOrCountLoadWithAWarningOnEveryLoad() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        serve(ctx, k1, MappedSourceRulesTest.LOCATION, page(1, null, null));
+        serve(ctx, k1, PAGE_2, page(3, null, null));   // page 3 in place of page 2: nothing can tell
+        TrustSource s = source(ctx, signedPages(k1, Map.of("next", "$.next")));
+        String warning = "The list comes in pages that are signed one by one and say neither their number nor their count "
+                + "(mapping.pages.number, mapping.pages.count): whoever serves them can leave one out";
+        for (int i = 0; i < 2; i++) {
+            var r = s.load();
+            assertThat(r.entities()).extracting(e -> e.id()).containsExactly("partner:a", "partner:c");
+            assertThat(r.warnings()).containsExactly(warning);
+        }
+        // Not for a list in one page, nor for pages the transport alone vouches for.
+        Map<String, Object> plain = MappedSourceAttacksTest.pagedMapping(Map.of("sequence", "$.version"));
+        serveJson(ctx, page(1, null, null));
+        ctx.http.json(PAGE_2, Json.write(page(3, null, null)));
+        assertThat(source(ctx, props("mapping", plain)).load().warnings()).isEmpty();
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();

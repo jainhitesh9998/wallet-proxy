@@ -364,6 +364,16 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 log.warn("Trust source '{}' (mapped): the list's signature is not verified (allowUnverified)", def.id());
                 warnings.add("The list's signature is not verified (allowUnverified)");
             }
+            Mapping.Pages paging = config.mapping().pages;
+            if (config.jws() && paging != null && paging.number() == null && paging.count() == null) {
+                // Each page is signed on its own: a page served at another's address, or a next link that ends early,
+                // is a signed page all the same. Only the pages' numbers or their count would show one missing.
+                log.warn("Trust source '{}' (mapped): the list's pages say neither their number nor their count; whoever serves "
+                        + "them can leave one out", def.id());
+                warnings.add("The list comes in pages that are signed one by one and say neither their number nor their count "
+                        + "(mapping.pages.number, mapping.pages.count): whoever serves them can leave one out");
+            }
+            Numbering numbering = new Numbering();
             Tally[] entityTallies = tallies(config.mapping().entities);
             Tally[] anchorTallies = tallies(config.mapping().anchors);
             Text text = new Text(config.maxText(), "The list's records");
@@ -388,6 +398,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         }
                     }
                     pages++;
+                    numbered(page.root(), pages, numbering);
                     for (int b = 0; b < config.mapping().entities.size(); b++) {
                         Mapping.Block block = config.mapping().entities.get(b);
                         List<Object> records = block.records(page.root());
@@ -418,6 +429,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         anchors.addAll(t.take(TrustAnchor.class));
                     }
                     URI next = next(page, visited, pages);
+                    if (numbering.count != null && (next == null) != (pages == numbering.count)) {
+                        throw new TrustSourceException("The list says it has " + numbering.count + " pages, and "
+                                + (next == null ? pages + " were read" : "page " + pages + " links to another"));
+                    }
                     if (next == null) {
                         break;
                     }
@@ -546,6 +561,58 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         private record Document(Object root, URI uri) {
+        }
+
+        /** What the first page says about the pages: its own number (0 or 1) and the count, as far as they are mapped. */
+        private static final class Numbering {
+            Long base;
+            Long count;
+        }
+
+        /**
+         * Page {@code k} says what the mapping reads from it about the pages: with {@code pages.number}, its own number
+         * (the first page 0 or 1, every later one the next); with {@code pages.count}, the count the first page says.
+         * Each page of a signed list is signed on its own, so only this ties a page to its place: page 3 served at
+         * page 2's address, with page 2 left out, would otherwise pass.
+         */
+        private void numbered(Object root, int k, Numbering n) throws TrustSourceException {
+            Mapping.Pages p = config.mapping().pages;
+            if (p == null) {
+                return;
+            }
+            if (p.number() != null) {
+                long said = pageFact(p.number(), "number", root, k);
+                if (k == 1) {
+                    if (said != 0 && said != 1) {
+                        throw new TrustSourceException("Page 1 of the list says it is page " + said + "; a first page is 0 or 1");
+                    }
+                    n.base = said;
+                } else if (said != n.base + k - 1) {
+                    throw new TrustSourceException("Page " + k + " of the list says it is page " + said + ", not " + (n.base + k - 1));
+                }
+            }
+            if (p.count() != null) {
+                long said = pageFact(p.count(), "count", root, k);
+                if (k == 1) {
+                    if (said < 1 || said > p.max()) {
+                        throw new TrustSourceException("The list says it has " + said + " pages, " + (said < 1 ? "none"
+                                : "more than " + p.max() + " (mapping.pages.max)"));
+                    }
+                    n.count = said;
+                } else if (said != n.count) {
+                    throw new TrustSourceException("Page " + k + " of the list says it has " + said + " pages where page 1 says " + n.count);
+                }
+            }
+        }
+
+        private static long pageFact(Value v, String member, Object root, int k) throws TrustSourceException {
+            Object found = v.first(root, root);
+            Long n = Mapping.whole(found);
+            if (n == null) {
+                throw new TrustSourceException("mapping.pages." + member + ": page " + k + " of the list has no number there"
+                        + (found == null ? "" : ": " + Mapping.quote(found)));
+            }
+            return n;
         }
 
         /** The next page: on the origin of location, never one already read, at most pages.max in all. */

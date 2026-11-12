@@ -32,7 +32,13 @@ final class Mapping {
     record ListFacts(Value issuer, Value sequence, Value issuedAt, Value nextUpdate) {
     }
 
-    record Pages(Value next, int max) {
+    /**
+     * How the pages of a list link, and what they say about themselves.
+     *
+     * @param number where a page says its own number (null when not mapped)
+     * @param count  where a page says how many pages the list has (null when not mapped)
+     */
+    record Pages(Value next, int max, Value number, Value count) {
     }
 
     /**
@@ -130,12 +136,13 @@ final class Mapping {
         }
         Pages pages = null;
         if (m.containsKey("pages")) {
-            Map<String, Object> p = members(m.get("pages"), "mapping.pages", Set.of("next", "max"));
+            Map<String, Object> p = members(m.get("pages"), "mapping.pages", Set.of("next", "max", "number", "count"));
             if (!p.containsKey("next")) {
                 throw new IllegalArgumentException("mapping.pages: next is required");
             }
             pages = new Pages(Value.parse(p.get("next"), "mapping.pages.next"),
-                    p.containsKey("max") ? positive(p.get("max"), "mapping.pages.max") : DEFAULT_MAX_PAGES);
+                    p.containsKey("max") ? positive(p.get("max"), "mapping.pages.max") : DEFAULT_MAX_PAGES,
+                    optional(p, "number", "mapping.pages"), optional(p, "count", "mapping.pages"));
         }
         List<Block> entities = blocks(m.get("entities"), "mapping.entities", true);
         List<Block> anchors = blocks(m.get("anchors"), "mapping.anchors", false);
@@ -857,6 +864,26 @@ final class Mapping {
             // fall through
         }
         throw new IllegalArgumentException(where + " must be a positive whole number");
+    }
+
+    /**
+     * A whole number from 0 to 18 digits: a number without a fraction ({@code 5.0} is 5) or a string of digits; null for
+     * anything else. Bounded whatever the number: a document holds only numbers {@link StrictJson} found small.
+     */
+    static Long whole(Object v) {
+        try {
+            if (v instanceof Number n) {
+                BigDecimal d = StrictJson.decimal(n);
+                if (d == null || d.signum() < 0) {
+                    return null;
+                }
+                BigDecimal s = d.stripTrailingZeros();
+                return s.scale() > 0 || s.precision() - s.scale() > 18 ? null : s.longValueExact();
+            }
+            return v instanceof String s && s.matches("[0-9]{1,18}") ? Long.valueOf(s) : null;
+        } catch (ArithmeticException e) {
+            return null;
+        }
     }
 
     /** The most seconds since the epoch a date is written with: the twelve digits its text form may have. */
