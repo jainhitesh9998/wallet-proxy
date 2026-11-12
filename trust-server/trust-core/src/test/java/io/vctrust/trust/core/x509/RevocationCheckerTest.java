@@ -209,6 +209,32 @@ class RevocationCheckerTest {
         assertThat(u.revocation().getFirst().reason()).startsWith("CRL unavailable: HTTP 404");
     }
 
+    /**
+     * A certificate decides how many distribution points it names; each is a request. At most the first
+     * {@link TrustAnchor#MAX_CRL_URLS} http(s) ones are fetched, as on the device
+     * (crlUrlsToFetch in trust-client).
+     */
+    @Test
+    void atMostEightDistributionPointsOfOneCertificateAreFetched() {
+        var root = TestPki.rootCa("CN=Many Points Root,C=UT");
+        List<String> points = new java.util.ArrayList<>(List.of("ldap://crl.test/cn=root"));
+        java.util.stream.IntStream.range(0, 20).forEach(i -> points.add("http://crl" + i + ".test/root.crl"));
+        var many = TestPki.withRevocationUrls("CN=Many Points,C=UT", root, false, points, List.of(), null);
+        Crls crls = new Crls();
+        // The CRL is published at the ninth http location only: it is never asked for.
+        crls.at("http://crl8.test/root.crl", TestPki.crl(root));
+        var r = validate(List.of(many.certificate()), root, crls, false);
+        assertThat(crls.fetched).containsExactlyElementsOf(points.subList(1, 9));
+        assertThat(r.revocation().getFirst().status()).isEqualTo(Status.UNKNOWN);
+
+        // What is held already is not fetched again, and counts among the eight.
+        Crls held = new Crls();
+        held.held.put(Certificates.sha256Thumbprint(root.certificate()), new java.util.ArrayList<>(List.of(
+                Crl.parse(der(TestPki.crl(TestPki.rootCa("CN=Elsewhere,C=UT"))), "http://crl0.test/root.crl", Instant.now()))));
+        validate(List.of(many.certificate()), root, held, false);
+        assertThat(held.fetched).containsExactlyElementsOf(points.subList(2, 9));
+    }
+
     /** The status of {@code DS} from CRLs held for its issuer, in the order given. */
     private static CertificateRevocation statusFrom(List<X509CRL> held) {
         Crls crls = new Crls();

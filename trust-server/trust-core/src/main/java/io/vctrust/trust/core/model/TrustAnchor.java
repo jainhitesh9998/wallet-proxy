@@ -51,9 +51,11 @@ public record TrustAnchor(String id, TrustDomain domain, X509Certificate certifi
     }
 
     /**
-     * The most CRL locations an anchor record counts with, and the most the service fetches for one certificate of one
-     * framework. A list decides how many there are, and every location is fetched by the service on each refresh and by
-     * devices from the snapshot: without a bound, one list makes thousands of requests for one CA.
+     * The most CRL locations an anchor record counts with, the most the service fetches for one certificate of one
+     * framework, and the most distribution points of one certificate in a chain that are fetched (the first http(s) ones
+     * it names; RevocationChecker, and crlUrlsToFetch on the device). A list, or a certificate, decides how many there
+     * are, and every location is fetched by the service and by devices: without a bound, one list makes thousands of
+     * requests for one CA.
      */
     public static final int MAX_CRL_URLS = 8;
 

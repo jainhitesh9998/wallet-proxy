@@ -10,7 +10,7 @@ import { createTrustClient, MemoryCacheStore, type TrustClientConfig, type Trust
 import { jwkThumbprint, parseCertificate, parseCrl } from '../src/primitives.js';
 import { b64, down, es256Key, fakeFetch, fixture, json, pem, signJwt } from './helpers.js';
 import * as P from './pki.js';
-import { anchorCrlUrls, MAX_ANCHOR_CRL_URLS } from '../src/x509/revocation.js';
+import { anchorCrlUrls, crlUrlsToFetch, MAX_CRL_URLS } from '../src/x509/revocation.js';
 
 const BASE = 'https://trust.example';
 const PROXY_CRL = `${BASE}/api/v1/proxy/crl`;
@@ -244,10 +244,10 @@ describe('an anchor whose record names no CRL location', () => {
     const points = Array.from({ length: 12 }, (_, i) => `http://pki${i}.rooted.example/root.crl`);
     const root = parseCertificate(b64der(P.cert({ subject: subject('Rooted IACA'), issuer: subject('Rooted IACA'), key, signer: key,
       exts: [P.X.bc(true, 0), P.X.ku([5, 6]), P.X.crlDp(points)] })));
-    expect(anchorCrlUrls({ certificate: root })).toEqual(points.slice(0, MAX_ANCHOR_CRL_URLS));
+    expect(anchorCrlUrls({ certificate: root })).toEqual(points.slice(0, MAX_CRL_URLS));
     expect(anchorCrlUrls({ certificate: root, constraints: { crlUrls: ['ftp://x', ...points.slice(2), points[0]] } }))
       .toEqual([...points.slice(2, 10)]);
-    expect(MAX_ANCHOR_CRL_URLS).toBe(8);
+    expect(MAX_CRL_URLS).toBe(8);
   });
 
   it('an intermediate CA listed as an anchor is not asked at the distribution point in its certificate', async () => {
@@ -262,5 +262,35 @@ describe('an anchor whose record names no CRL location', () => {
     const d = await c.evaluate(query(leaf));
     expect([d.decision, d.evidence?.x509?.revocation?.[0]?.status, d.evidence?.x509?.revocation?.[0]?.reason]).toEqual(['TRUSTED', 'UNKNOWN', 'no CRL is published for it']);
     expect(calls).toEqual([]);
+  });
+});
+
+/**
+ * A certificate decides how many distribution points it names, and each is a request: at most the first eight http(s)
+ * ones are fetched, in the order it names them, as on the service (RevocationChecker).
+ */
+describe('the distribution points a certificate names', () => {
+  const subject = (cn: string): P.Rdns => [['C', 'UT'], ['O', 'Pointed'], ['CN', cn]];
+  const key = P.ecKey();
+  const root = P.cert({ subject: subject('Pointed IACA'), issuer: subject('Pointed IACA'), key, signer: key, exts: [P.X.bc(true, 0), P.X.ku([5, 6])] });
+  const points = Array.from({ length: 20 }, (_, i) => `http://pki${i}.pointed.example/iaca.crl`);
+  const leaf = P.cert({ subject: subject('Pointed DS'), issuer: subject('Pointed IACA'), key: P.ecKey(), signer: key, serial: 0x77n,
+    exts: [P.X.ku([0]), P.X.eku(['1.0.18013.5.1.2'], true), P.X.crlDp(['ldap://pki.pointed.example/cn=iaca', ...points])] });
+  const revoking = P.crl({ issuer: subject('Pointed IACA'), signer: key, entries: [{ serial: 0x77n }] });
+
+  it('at most the first eight http(s) ones are fetched', async () => {
+    // The CRL that revokes it is at the ninth http location: it is never asked for.
+    const { fetch, calls } = fakeFetch({ [points[8]!]: crlResponse(revoking) }, down);
+    const c = createTrustClient({ http: { fetch, retries: 0 }, pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: root.toString('base64') }] } });
+    const d = await c.evaluate(issued([leaf.toString('base64')]));
+    expect(d.evidence?.x509?.revocation?.[0]?.status).toBe('UNKNOWN');
+    expect(calls).toEqual(points.slice(0, 8).map((u) => `GET ${u}`));
+    expect(crlUrlsToFetch([parseCertificate(leaf)], [{ index: 0, status: 'UNKNOWN' } as never])).toEqual(points.slice(0, 8));
+
+    // At the eighth, it is.
+    const eighth = fakeFetch({ [points[7]!]: crlResponse(revoking) }, down);
+    const e = createTrustClient({ http: { fetch: eighth.fetch, retries: 0 }, pinned: { anchors: [{ domain: 'mdoc-iaca', certificate: root.toString('base64') }] } });
+    expect((await e.evaluate(issued([leaf.toString('base64')]))).evidence?.x509?.revocation?.[0]).toMatchObject({ status: 'REVOKED', crlUrl: points[7] });
+    expect(MAX_CRL_URLS).toBe(8);
   });
 });

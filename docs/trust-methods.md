@@ -209,7 +209,9 @@ At most 8 locations count per CA certificate, the first that are named. An ancho
 first 8 http(s) locations in the registry and in snapshots, and its source's state says how many were left out; the
 service fetches at most 8 per framework and certificate however many records list it (what it leaves out is logged
 once), and a device asks at most the first 8 of an anchor, also of one pinned in the app. A list decides how many
-locations there are, and each one is a request on every refresh and from every device.
+locations there are, and each one is a request on every refresh and from every device. The same bound holds for the
+distribution points a certificate of a chain names: the service and the device fetch at most the first 8 http(s) ones,
+in the order the certificate names them, since a certificate decides how many there are too.
 
 ### What the service does
 
@@ -232,13 +234,14 @@ locations there are, and each one is a request on every refresh and from every d
   and its next update. The relay passes on only what parses as a CRL, byte for byte, and does not verify it: it
   does not know the issuer, the device does.
 - For its own decisions (`POST /api/v1/evaluate`) it uses the anchor CRLs of the frameworks the asking client sees,
-  the ones that client's snapshot carries, and fetches the CRLs of CAs below an anchor itself (`fetch-on-demand`).
+  the ones that client's snapshot carries, and fetches the CRLs of CAs below an anchor itself (`fetch-on-demand`), from
+  at most the first 8 http(s) distribution points each certificate names.
 
 ### What the device does
 
 - Checks each certificate against the CRLs in the snapshot first. No request leaves the device.
-- For a certificate whose status is still unknown, fetches its CRL from the http(s) distribution points it names,
-  and, for a certificate the trust anchor issued, from where the anchor publishes, found as the service finds it:
+- For a certificate whose status is still unknown, fetches its CRL from the http(s) distribution points it names (the
+  first 8), and, for a certificate the trust anchor issued, from where the anchor publishes, found as the service finds it:
   the http(s) URLs in the anchor's `constraints.crlUrls`, and when there are none, the distribution point in the
   anchor's own certificate if it is self-issued (an anchor of the snapshot, or one pinned in the app). Each through
   the relay, and from the URL itself when the relay cannot serve or answers with something that is not a CRL that

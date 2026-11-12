@@ -40,25 +40,31 @@ export interface RevocationOptions {
 const HTTP_URL = /^https?:\/\//i;
 
 /**
- * The most CRL locations a trust anchor counts with, as on the service (TrustAnchor.MAX_CRL_URLS): a list (or an app's
- * pinned anchor) decides how many there are, and each one is a request the device makes.
+ * The most CRL locations a trust anchor counts with, and the most distribution points of one certificate of a chain
+ * that are fetched (the first http(s) ones it names), as on the service (TrustAnchor.MAX_CRL_URLS): a list, an app's
+ * pinned anchor or a certificate decides how many there are, and each one is a request the device makes.
  */
-export const MAX_ANCHOR_CRL_URLS = 8;
+export const MAX_CRL_URLS = 8;
 
 /**
  * The http(s) locations where a trust anchor's CA publishes its CRL, as the service finds them (CrlService): what the
  * anchor's record names ({@code constraints.crlUrls}: a list, or one URL); and when it names none, the distribution
  * points of the anchor certificate itself if it is self-issued (a root publishes its own CRL there; an intermediate
  * CA's certificate names where the CA above it publishes, which says nothing about the certificates it issues). At most
- * the first {@link MAX_ANCHOR_CRL_URLS} of them.
+ * the first {@link MAX_CRL_URLS} of them.
  */
 export function anchorCrlUrls(anchor: { constraints?: Record<string, unknown>; certificate: Certificate } | undefined): string[] {
   if (!anchor) return [];
   const v = anchor.constraints?.crlUrls;
   const named = (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []).filter((u): u is string => typeof u === 'string' && HTTP_URL.test(u));
-  if (named.length > 0) return named.slice(0, MAX_ANCHOR_CRL_URLS);
+  if (named.length > 0) return named.slice(0, MAX_CRL_URLS);
   const c = anchor.certificate;
-  return bytesEqual(c.issuerRaw, c.subjectRaw) ? c.crlDistributionPoints.filter((u) => HTTP_URL.test(u)).slice(0, MAX_ANCHOR_CRL_URLS) : [];
+  return bytesEqual(c.issuerRaw, c.subjectRaw) ? fetchablePoints(c) : [];
+}
+
+/** The distribution points of a certificate that are fetched: the first {@link MAX_CRL_URLS} http(s) ones it names. */
+function fetchablePoints(cert: Certificate): string[] {
+  return cert.crlDistributionPoints.filter((u) => HTTP_URL.test(u)).slice(0, MAX_CRL_URLS);
 }
 
 /** Accepted clock skew for a CRL's thisUpdate. */
@@ -183,15 +189,18 @@ function unusable(crl: Crl, cert: Certificate, issuer: Certificate, time: Date):
 
 /**
  * http(s) CRL locations worth fetching for the certificates whose status is still unknown: each one's own
- * distribution points, and for the certificate the trust anchor issued (the last of the validated path, which
- * {@code statuses} covers one by one), where the anchor's CA publishes ({@code anchorUrls}, see {@link anchorCrlUrls}).
+ * distribution points (at most the first {@link MAX_CRL_URLS} http(s) ones it names: the certificate decides how many
+ * there are, and each is a request), and for the certificate the trust anchor issued (the last of the validated path,
+ * which {@code statuses} covers one by one), where the anchor's CA publishes ({@code anchorUrls}, see
+ * {@link anchorCrlUrls}). As on the service (RevocationChecker).
  */
 export function crlUrlsToFetch(path: Certificate[], statuses: CertificateRevocation[] | undefined, anchorUrls: string[] = []): string[] {
   const urls = new Set<string>();
   const issuedByAnchor = (statuses?.length ?? 0) - 1;
   for (const s of statuses ?? []) {
     if (s.status !== 'UNKNOWN') continue;
-    const candidates = [...(path[s.index]?.crlDistributionPoints ?? []), ...(s.index === issuedByAnchor ? anchorUrls : [])];
+    const cert = path[s.index];
+    const candidates = [...(cert ? fetchablePoints(cert) : []), ...(s.index === issuedByAnchor ? anchorUrls : [])];
     for (const u of candidates) if (HTTP_URL.test(u)) urls.add(u);
   }
   return [...urls];

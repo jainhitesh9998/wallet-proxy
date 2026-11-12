@@ -1,5 +1,6 @@
 package io.vctrust.trust.core.x509;
 
+import io.vctrust.trust.core.model.TrustAnchor;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Primitive;
@@ -367,10 +368,13 @@ public final class RevocationChecker {
             return decided;
         }
         // As on the device (validateChainOnDevice): for a certificate the CRLs held leave unknown, the CRLs at its own
-        // distribution points, read together with those held.
+        // distribution points, read together with those held. The certificate decides how many it names, and each is a
+        // request: at most the first TrustAnchor.MAX_CRL_URLS http(s) ones count, in the order it names them.
         boolean more = false;
-        for (String url : Certificates.crlDistributionPoints(c)) {
-            if (!isHttp(url) || !tried.add(url)) {
+        List<String> points = Certificates.crlDistributionPoints(c).stream().filter(RevocationChecker::isHttp)
+                .limit(TrustAnchor.MAX_CRL_URLS).toList();
+        for (String url : points) {
+            if (!tried.add(url)) {
                 continue;
             }
             more = true;
