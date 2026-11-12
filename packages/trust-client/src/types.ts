@@ -170,6 +170,11 @@ export interface TrustedAuthorityQuery {
 }
 
 export interface TrustQuery {
+  /**
+   * The role asked about; absent: an issuer question. Read as the service's API reads it (readRole in
+   * evaluation/local.ts): the spellings it also accepts ('credential_issuer', 'rp', 'as', ...) name the same role, and a
+   * role that is none of them is refused with an error.
+   */
   role?: Role;
   subject: {
     /** credential_issuer URL, DID, OpenID4VP client_id (with prefix), federation entity id */

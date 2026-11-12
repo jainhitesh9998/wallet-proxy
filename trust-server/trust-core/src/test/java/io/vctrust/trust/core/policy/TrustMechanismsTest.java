@@ -128,8 +128,15 @@ class TrustMechanismsTest {
         broken.put("unknown member of the leaf", with(nationalId(), "x509.profile.leaf.policy", "1.2.3"));
         broken.put("camelCase member", with(with(nationalId(), "x509.profile.leaf.key-usage", null), "x509.profile.leaf.keyUsage", List.of("digitalSignature")));
         broken.put("unknown member of did", mechanism("d", Map.of("role", "issuer"), "did", Map.of("methods", List.of("web"), "resolver", "x")));
-        broken.put("unknown role", with(nationalId(), "for.role", "authorization_server"));
+        broken.put("unknown role", with(nationalId(), "for.role", "holder"));
         broken.put("role in another spelling", with(nationalId(), "for.role", "CREDENTIAL_ISSUER"));
+        broken.put("role as the API also spells it", with(nationalId(), "for.role", "credential_issuer"));
+        // A credential's format and types belong to questions about its issuer, and a question about anyone else names neither.
+        broken.put("formats for a verifier", mechanism("v", Map.of("role", "verifier", "formats", List.of("mso_mdoc"))));
+        broken.put("types for a verifier", mechanism("v", Map.of("role", "verifier", "types", List.of("org.example.id.*"))));
+        broken.put("formats for a wallet provider", mechanism("w", Map.of("role", "wallet_provider", "formats", List.of("mso_mdoc"))));
+        broken.put("types for a status list provider", mechanism("s", Map.of("role", "status_list_provider", "types", List.of("x"))));
+        broken.put("formats for an authorization server", mechanism("a", Map.of("role", "authorization_server", "formats", List.of("ldp_vc"))));
         broken.put("no role", with(nationalId(), "for.role", null));
         broken.put("no for", with(nationalId(), "for", null));
         broken.put("unknown format", with(nationalId(), "for.formats", List.of("mdoc")));
@@ -200,6 +207,16 @@ class TrustMechanismsTest {
         // Any of the types a question asserts: the order they are listed in does not let a question past a mechanism.
         assertThat(select(m, EntityRole.CREDENTIAL_ISSUER, "ldp_vc", "OtherCredential", "UniversityDegreeCredential")).isEqualTo("exact");
         assertThat(select(m, EntityRole.CREDENTIAL_ISSUER, "jwt_vc_json", "OtherCredential", "org.example.id.x")).isEqualTo("prefix");
+    }
+
+    @Test
+    void anAuthorizationServerCanBeGoverned() {
+        TrustMechanisms m = read(mechanism("as", Map.of("role", "authorization_server"), "keys", List.of("x5c")),
+                mechanism("issuers", Map.of("role", "issuer")));
+        assertThat(m.claim().getFirst()).isEqualTo(Map.of("id", "as", "for", Map.of("role", "authorization_server"), "keys", List.of("x5c")));
+        assertThat(select(m, EntityRole.AUTHORIZATION_SERVER, null)).isEqualTo("as");
+        assertThat(select(m, EntityRole.CREDENTIAL_ISSUER, "ldp_vc")).isEqualTo("issuers");
+        assertThat(select(m, EntityRole.VERIFIER, null)).isNull();
     }
 
     static String select(TrustMechanisms m, EntityRole role, String format, String... types) {

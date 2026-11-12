@@ -15,7 +15,7 @@
 import { KEY_USAGE_BITS, type CertificateRequirements, type KeyUsageBit } from '../x509/requirements.js';
 
 /** The roles a mechanism can govern, as a query names them. */
-export type MechanismRole = 'issuer' | 'verifier' | 'wallet_provider' | 'status_list_provider';
+export type MechanismRole = 'issuer' | 'verifier' | 'wallet_provider' | 'status_list_provider' | 'authorization_server';
 /** An {@code x5c} certificate chain, a DID key ({@code kid} a DID URL), a bare JWK. */
 export type KeyKind = 'x5c' | 'did' | 'jwk';
 
@@ -47,7 +47,7 @@ export interface TrustMechanism {
   };
 }
 
-const ROLES: readonly string[] = ['issuer', 'verifier', 'wallet_provider', 'status_list_provider'];
+const ROLES: readonly string[] = ['issuer', 'verifier', 'wallet_provider', 'status_list_provider', 'authorization_server'];
 const KEY_KINDS: readonly string[] = ['x5c', 'did', 'jwk'];
 /** Canonical spellings only: the service writes vc+sd-jwt as dc+sd-jwt. */
 const FORMATS: readonly string[] = ['mso_mdoc', 'dc+sd-jwt', 'ldp_vc', 'jwt_vc_json', 'jwt_vc_json-ld'];
@@ -119,6 +119,13 @@ class Reader {
     const q = this.tree(this.required(m, 'for', ''), 'for', ['role', 'formats', 'types']);
     const role = this.string(this.required(q, 'role', 'for.'), 'for.role');
     if (!ROLES.includes(role)) throw this.error('for.role', `'${role}' is not one of ${ROLES.join(', ')}`);
+    // A credential's format and types belong to questions about its issuer: a question about anyone else names neither,
+    // so a mechanism for another role that names them would never govern anything.
+    if (role !== 'issuer') {
+      for (const member of ['formats', 'types'] as const) {
+        if (has(q, member)) throw this.error(`for.${member}`, `is given, but questions about a ${role} name no credential ${member === 'formats' ? 'format' : 'type'}: it would never apply`);
+      }
+    }
     const out: TrustMechanism = { id, for: { role: role as MechanismRole } };
     if (has(q, 'formats')) out.for.formats = this.strings(q.formats, 'for.formats', (f) => FORMATS.includes(f), `a credential format in its canonical spelling: ${FORMATS.join(', ')}`);
     if (has(q, 'types')) out.for.types = this.strings(q.types, 'for.types', (t) => TYPE.test(t), "a type, or a prefix followed by '*' (printable ASCII without spaces)");

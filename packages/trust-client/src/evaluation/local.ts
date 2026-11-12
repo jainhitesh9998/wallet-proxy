@@ -77,20 +77,64 @@ function onDemandIdentifier(i: { type: string; value: string }): boolean {
   return (i.type === 'URL' || i.type === 'FEDERATION_ENTITY') && i.value.startsWith('https://');
 }
 
-export function domainFor(role: TrustQuery['role'], format?: string): string {
+/** The roles a query can name, in the form this library writes them; the service reads the same ones (EntityRole). */
+export type QueryRole = NonNullable<TrustQuery['role']> | 'accreditation_authority' | 'other';
+
+/**
+ * The spellings of a role the service's API reads, and the registry's name of the role each names (Dtos.ROLES on the
+ * service). conformance/evaluation/roles.json holds both to the same list: a spelling one side reads and the other does
+ * not would decide a question under one mechanism on one side and under another, or none, on the other.
+ */
+export const ROLE_SPELLINGS: Readonly<Record<string, string>> = Object.freeze({
+  issuer: 'CREDENTIAL_ISSUER', credential_issuer: 'CREDENTIAL_ISSUER',
+  verifier: 'VERIFIER', relying_party: 'VERIFIER', rp: 'VERIFIER',
+  wallet: 'WALLET_PROVIDER', wallet_provider: 'WALLET_PROVIDER',
+  authorization_server: 'AUTHORIZATION_SERVER', as: 'AUTHORIZATION_SERVER',
+  accreditation_authority: 'ACCREDITATION_AUTHORITY',
+  status_list_provider: 'STATUS_LIST_PROVIDER',
+  other: 'OTHER',
+});
+const SPELLINGS = new Map(Object.entries(ROLE_SPELLINGS));
+const QUERY_ROLES = new Map<string, QueryRole>([['CREDENTIAL_ISSUER', 'issuer'], ['VERIFIER', 'verifier'], ['WALLET_PROVIDER', 'wallet_provider'],
+  ['AUTHORIZATION_SERVER', 'authorization_server'], ['ACCREDITATION_AUTHORITY', 'accreditation_authority'],
+  ['STATUS_LIST_PROVIDER', 'status_list_provider'], ['OTHER', 'other']]);
+
+/**
+ * A query's role, read as the service's API reads it (Dtos.parseRole): none when it is absent, empty or only spaces, tabs
+ * or line breaks; otherwise, without those around it, with ASCII letters in lower case and '-' read as '_', one of
+ * {@link ROLE_SPELLINGS}. Anything else is refused with an error, as the service refuses the request: read as no role,
+ * it would be decided under no mechanism here and under one there. Only ASCII is folded, so that the rule is the same in
+ * every language.
+ */
+export function readRole(role: unknown): QueryRole | undefined {
+  if (role === undefined || role === null || (typeof role === 'string' && /^[ \t\r\n]*$/.test(role))) return undefined;
+  const spelling = typeof role === 'string'
+    ? role.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase()).replace(/-/g, '_') : undefined;
+  const registry = spelling === undefined ? undefined : SPELLINGS.get(spelling);
+  if (registry === undefined) {
+    const shown = typeof role === 'string' ? (role.length <= 40 ? role : `${role.slice(0, 40)}…`) : String(role);
+    throw new Error(`Unknown role '${shown}': the roles are ${[...SPELLINGS.keys()].join(', ')}`);
+  }
+  return QUERY_ROLES.get(registry);
+}
+
+export function domainFor(role: QueryRole | undefined, format?: string): string {
   if (role === 'verifier') return 'verifier-access';
   if (role === 'wallet_provider') return 'wallet-provider';
   if (role === 'status_list_provider') return 'status-list';
   return format === 'mso_mdoc' ? 'mdoc-iaca' : 'credential-issuer';
 }
 
-function roleName(role: TrustQuery['role']): string | undefined {
+/** The registry's name of a role. */
+function roleName(role: QueryRole | undefined): string | undefined {
   switch (role) {
     case 'issuer': return 'CREDENTIAL_ISSUER';
     case 'verifier': return 'VERIFIER';
     case 'wallet_provider': return 'WALLET_PROVIDER';
     case 'authorization_server': return 'AUTHORIZATION_SERVER';
     case 'status_list_provider': return 'STATUS_LIST_PROVIDER';
+    case 'accreditation_authority': return 'ACCREDITATION_AUTHORITY';
+    case 'other': return 'OTHER';
     default: return undefined;
   }
 }
@@ -160,7 +204,8 @@ interface Evaluation {
   query: TrustQuery;
   data: LocalTrustData;
   now: Date;
-  role: TrustQuery['role'];
+  /** the query's role as readRole reads it; undefined when it names none */
+  role: QueryRole | undefined;
   /** the role as the registry names it */
   wantRole: string | undefined;
   format: string | undefined;
@@ -265,16 +310,19 @@ export class LocalEvaluator {
       throw new Error('context.credentialTypes must be a list of types (strings)');
     }
     const types = [...new Set([type, ...listed.map(present)].filter((t): t is string => t !== undefined))];
-    return { query, data, now, role: query.role, wantRole: roleName(query.role), format, type, types,
-      strict: data.policy?.strictAuthorization === true, mechanism: this.selectMechanism(data, query.role, format, types), reasons: [] };
+    const role = readRole(query.role);
+    return { query, data, now, role, wantRole: roleName(role), format, type, types,
+      strict: data.policy?.strictAuthorization === true, mechanism: this.selectMechanism(data, role, format, types), reasons: [] };
   }
 
   /**
    * The operator's mechanism that governs the question: the first of those in force whose {@code for} matches its role,
-   * its format and any of the types it asserts. None: the question is decided exactly as without mechanisms.
+   * its format and any of the types it asserts. None: the question is decided exactly as without mechanisms. A question
+   * that names no role is an issuer question here, as it is for the rest of the evaluation (its chain is validated in the
+   * issuer domains, see domainFor): otherwise leaving the role out would be a way around every issuer mechanism.
    */
-  private selectMechanism(data: LocalTrustData, role: TrustQuery['role'], format: string | undefined, types: string[]): TrustMechanism | undefined {
-    return selectMechanism(data.policy?.mechanisms ?? [], role, format, types);
+  private selectMechanism(data: LocalTrustData, role: QueryRole | undefined, format: string | undefined, types: string[]): TrustMechanism | undefined {
+    return selectMechanism(data.policy?.mechanisms ?? [], role ?? 'issuer', format, types);
   }
 
   private claim(ev: Evaluation): Claim {

@@ -69,7 +69,13 @@ describe('the mechanisms claim is read strictly', () => {
       ['unknown member of the profile', set(n, 'x509.profile.root', { ca: true })],
       ['unknown member of the leaf', set(n, 'x509.profile.leaf.policy', '1.2.3')],
       ['kebab-case member', set(set(n, 'x509.profile.leaf.keyUsage', undefined), 'x509.profile.leaf.key-usage', ['digitalSignature'])],
-      ['unknown role', set(n, 'for.role', 'authorization_server')],
+      ['unknown role', set(n, 'for.role', 'holder')],
+      ['role as the API also spells it', set(n, 'for.role', 'credential_issuer')],
+      // A credential's format and types belong to questions about its issuer, and a question about anyone else names neither.
+      ['formats and types for a verifier', set(n, 'for.role', 'verifier')],
+      ['types for a wallet provider', { id: 'national-id', for: { role: 'wallet_provider', types: ['org.example.id.*'] } }],
+      ['types for a status list provider', { id: 'national-id', for: { role: 'status_list_provider', types: ['x'] } }],
+      ['formats for an authorization server', { id: 'national-id', for: { role: 'authorization_server', formats: ['ldp_vc'] } }],
       ['no role', set(n, 'for.role', undefined)],
       ['no for', set(n, 'for', undefined)],
       ['unknown format', set(n, 'for.formats', ['mdoc'])],
@@ -132,6 +138,14 @@ describe('the mechanisms claim is read strictly', () => {
     expect(pick(undefined, 'ldp_vc', 'UniversityDegreeCredential')).toBeUndefined();
     expect(pick('issuer', 'ldp_vc', 'OtherCredential', 'UniversityDegreeCredential')).toBe('exact');
     expect(pick('issuer', 'jwt_vc_json', 'OtherCredential', 'org.example.id.x')).toBe('prefix');
+  });
+
+  it('governs an authorization server too', () => {
+    const list = parseMechanisms([{ id: 'as', for: { role: 'authorization_server' }, keys: ['x5c'] }, { id: 'issuers', for: { role: 'issuer' } }]);
+    expect(list[0]).toEqual({ id: 'as', for: { role: 'authorization_server' }, keys: ['x5c'] });
+    expect(selectMechanism(list, 'authorization_server', undefined, [])?.id).toBe('as');
+    expect(selectMechanism(list, 'issuer', 'ldp_vc', [])?.id).toBe('issuers');
+    expect(selectMechanism(list, 'verifier', undefined, [])).toBeUndefined();
   });
 });
 

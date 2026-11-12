@@ -30,6 +30,10 @@ A second pair covers the operator's trust mechanisms (`trust.mechanisms`, see
 The first pair is the proof that a service without mechanisms decides exactly as before them: its snapshots are
 format 4 without the claim, and no decision names a mechanism.
 
+`roles.json` is how both read the role of a query: the spellings the service's API accepts and the role each names,
+spellings that must read the same, and ones that must be refused. `RoleSpellingsTest` and `roles.test.ts` hold each
+side to it, and each side's own list of spellings must be exactly the file's.
+
 ```sh
 cd trust-server
 mvn test -Dtest='*VectorsTest' -Dsurefire.failIfNoSpecifiedTests=false                          # fails when either pair is stale

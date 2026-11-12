@@ -221,10 +221,12 @@ public class TrustEvaluator {
 
     /**
      * The operator's mechanism that governs the question: the first whose {@code for} matches its role, its format and
-     * any of the types it asserts. None: the question is decided exactly as without mechanisms.
+     * any of the types it asserts. None: the question is decided exactly as without mechanisms. A question that names no
+     * role is an issuer question here, as it is for the rest of the evaluation (its chain is validated in the issuer
+     * domains, see {@link #domainFor}): otherwise leaving the role out would be a way around every issuer mechanism.
      */
     private TrustMechanism selectMechanism(EntityRole role, String format, Set<String> types) {
-        return mechanisms.select(role, format, types);
+        return mechanisms.select(role == null ? EntityRole.CREDENTIAL_ISSUER : role, format, types);
     }
 
     /** Identifiers from the identifier string (incl. OpenID4VP client_id prefixes). */

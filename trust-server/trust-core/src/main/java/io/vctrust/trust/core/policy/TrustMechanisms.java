@@ -107,6 +107,7 @@ public final class TrustMechanisms {
         roles.put("verifier", EntityRole.VERIFIER);
         roles.put("wallet_provider", EntityRole.WALLET_PROVIDER);
         roles.put("status_list_provider", EntityRole.STATUS_LIST_PROVIDER);
+        roles.put("authorization_server", EntityRole.AUTHORIZATION_SERVER);
         return roles;
     }
 
@@ -154,6 +155,16 @@ public final class TrustMechanisms {
             EntityRole role = ROLES.get(roleName);
             if (role == null) {
                 throw error("for.role", "'" + roleName + "' is not one of " + String.join(", ", ROLES.keySet()));
+            }
+            // A credential's format and types belong to questions about its issuer: a question about anyone else names
+            // neither, so a mechanism for another role that names them would never govern anything.
+            if (role != EntityRole.CREDENTIAL_ISSUER) {
+                for (String member : List.of("formats", "types")) {
+                    if (q.containsKey(member)) {
+                        throw error("for." + member, "is given, but questions about a " + roleName + " name no credential "
+                                + ("formats".equals(member) ? "format" : "type") + ": it would never apply");
+                    }
+                }
             }
             List<String> formats = q.containsKey("formats") ? formats(q.get("formats")) : null;
             List<String> types = q.containsKey("types") ? strings(q.get("types"), "for.types", TYPE,

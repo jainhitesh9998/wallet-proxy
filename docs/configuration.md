@@ -281,7 +281,7 @@ trust:
   mechanisms:
     - id: national-id                        # reported in every decision it governs (evidence.mechanism)
       for:                                   # the questions it governs; every member given must match
-        role: issuer                         # issuer | verifier | wallet_provider | status_list_provider
+        role: issuer                         # issuer | verifier | wallet_provider | status_list_provider | authorization_server
         formats: [mso_mdoc]                  # credential formats; omitted: any
         types: ["org.example.id.*"]          # doctype / vct / VC type: exact, or a prefix ending in *; omitted: any
       keys: [x5c]                            # the proofs of key accepted: x5c, did, jwk; omitted: all
@@ -307,9 +307,9 @@ trust:
 | Member | Values | Meaning |
 | --- | --- | --- |
 | `id` | 1 to 128 letters, digits or `. _ : @ ~ -`; unique | Named in the evidence of every decision the mechanism governs (`evidence.mechanism`, on the service and on the device) |
-| `for.role` | `issuer`, `verifier`, `wallet_provider`, `status_list_provider`; required | The role the question asks about |
-| `for.formats` | `mso_mdoc`, `dc+sd-jwt` (also written `vc+sd-jwt`), `ldp_vc`, `jwt_vc_json`, `jwt_vc_json-ld` | Compared in their canonical spelling. A question that names no format matches only a mechanism without `formats` |
-| `for.types` | A type, or a prefix followed by `*` (printable ASCII, no spaces, `*` only at the end) | A question matches when any type it asserts matches: its doctype, vct or type, and for a W3C credential every type in `credentialTypes`, so that listing the types in another order does not get a question past a mechanism. A question that asserts no type matches only a mechanism without `types` |
+| `for.role` | `issuer`, `verifier`, `wallet_provider`, `status_list_provider`, `authorization_server`; required | The role the question asks about. A question that names no role is an issuer question, as it is everywhere else in a decision (its chain is validated in the issuer domains). A query's role is read alike on the service and on the device, with the API's other spellings (`credential_issuer`, `rp`, `as`, ...); a role that is none of them is refused, not read as no role |
+| `for.formats` | `mso_mdoc`, `dc+sd-jwt` (also written `vc+sd-jwt`), `ldp_vc`, `jwt_vc_json`, `jwt_vc_json-ld`; only with `role: issuer` | Compared in their canonical spelling. A question that names no format matches only a mechanism without `formats`. A question about anyone but an issuer names no format, so a mechanism for another role that lists formats is refused |
+| `for.types` | A type, or a prefix followed by `*` (printable ASCII, no spaces, `*` only at the end); only with `role: issuer` | A question matches when any type it asserts matches: its doctype, vct or type, and for a W3C credential every type in `credentialTypes`, so that listing the types in another order does not get a question past a mechanism. A question that asserts no type matches only a mechanism without `types`. As with `formats`, a mechanism for another role that lists types is refused |
 | `keys` | `x5c`, `did`, `jwk` | A key presented another way (an `x5c` chain, a DID key, a bare JWK) is refused. A `kid` relative to a DID identifier (`#key-1`) is a DID key of that DID, here and for `did.methods`. A question without key material (an identifier alone, as with a credential offer) is still a registry lookup |
 | `x509.domain` | A trust domain as anchors name it (lower case, no spaces) | The anchors of that domain, in the client's frameworks, are the ones that count; the default domain's do not. Omitted: the default domain |
 | `x509.profile` | The members below | Requirements on the chain, each a check of its own |

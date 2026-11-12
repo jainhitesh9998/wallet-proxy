@@ -550,8 +550,8 @@ anchors:
 ### How a decision is made
 
 1. **Selection.** Mechanisms are tried in the order they are listed; the first whose `for` matches governs the
-   question: the role, the format, and any type the question asserts (an exact type, or a prefix ending in `*`). A
-   question none matches is decided as in the sections above.
+   question: the role (a question that names none is an issuer question), the format, and any type the question asserts
+   (an exact type, or a prefix ending in `*`). A question none matches is decided as in the sections above.
 2. **The key.** A key presented in a way `keys` does not list is refused (`mechanism.key_not_accepted`), and so is a
    DID key of a method `did.methods` does not list (`mechanism.did_method_not_accepted`); a `kid` relative to a DID
    identifier (`"kid": "#key-1"`) is a key of that DID like an absolute one. An identifier alone is still a registry

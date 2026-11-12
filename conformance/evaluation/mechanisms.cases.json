@@ -506,6 +506,15 @@
           }
         }
       }
+    },
+    {
+      "id": "authorization-servers",
+      "for": {
+        "role": "authorization_server"
+      },
+      "keys": [
+        "x5c"
+      ]
     }
   ],
   "cases": [
@@ -1410,6 +1419,102 @@
         }
       },
       "sameAsFirstPair": "DID issuer, key named by a relative reference"
+    },
+    {
+      "name": "roles: a question without a role is governed as an issuer question",
+      "query": {
+        "subject": {
+          "x5c": [
+            "pki:nid-signer"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "roles: a question without a role is held to the issuer mechanism's profile",
+      "query": {
+        "subject": {
+          "x5c": [
+            "pki:nid-no-dp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "roles: the issuer role spelt as the service's API also reads it",
+      "query": {
+        "role": "credential_issuer",
+        "subject": {
+          "x5c": [
+            "pki:nid-no-dp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
+    },
+    {
+      "name": "roles: the verifier role spelt as the service's API also reads it",
+      "query": {
+        "role": "Relying-Party",
+        "subject": {
+          "identifier": "x509_san_dns:verifier.example",
+          "x5c": [
+            "pki:rp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vp",
+          "responseUri": "https://verifier.example/post"
+        }
+      }
+    },
+    {
+      "name": "roles: an authorization server is governed by a mechanism of its own",
+      "query": {
+        "role": "authorization_server",
+        "subject": {
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0",
+            "y": "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE"
+          }
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      }
+    },
+    {
+      "name": "roles: the same, the role spelt as the service's API also reads it",
+      "query": {
+        "role": "AS",
+        "subject": {
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0",
+            "y": "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE"
+          }
+        },
+        "context": {
+          "protocol": "oid4vci"
+        }
+      }
     }
   ]
 }

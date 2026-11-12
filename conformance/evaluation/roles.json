@@ -1,0 +1,53 @@
+{
+  "description": "How the role of a query is read, by the service's API (Dtos.parseRole) and by the client library (readRole in evaluation/local.ts): none when it is absent, empty or only spaces, tabs or line breaks; otherwise, without those around it, with the ASCII letters in lower case and '-' read as '_', one of 'spellings', which names the role given (the registry's name for it). Anything else is refused: a 400 from the service, an error from the library. 'variants' must read as the role given, 'absent' as no role, 'refused' must be refused. RoleSpellingsTest.java and roles.test.ts hold both sides to this file, and each side's own list of spellings must be exactly 'spellings'.",
+  "spellings": {
+    "issuer": "CREDENTIAL_ISSUER",
+    "credential_issuer": "CREDENTIAL_ISSUER",
+    "verifier": "VERIFIER",
+    "relying_party": "VERIFIER",
+    "rp": "VERIFIER",
+    "wallet": "WALLET_PROVIDER",
+    "wallet_provider": "WALLET_PROVIDER",
+    "authorization_server": "AUTHORIZATION_SERVER",
+    "as": "AUTHORIZATION_SERVER",
+    "accreditation_authority": "ACCREDITATION_AUTHORITY",
+    "status_list_provider": "STATUS_LIST_PROVIDER",
+    "other": "OTHER"
+  },
+  "variants": {
+    "Issuer": "CREDENTIAL_ISSUER",
+    "CREDENTIAL_ISSUER": "CREDENTIAL_ISSUER",
+    "credential-issuer": "CREDENTIAL_ISSUER",
+    " issuer ": "CREDENTIAL_ISSUER",
+    "\tissuer\r\n": "CREDENTIAL_ISSUER",
+    "Relying-Party": "VERIFIER",
+    "RP": "VERIFIER",
+    "Wallet-Provider": "WALLET_PROVIDER",
+    "AS": "AUTHORIZATION_SERVER",
+    "STATUS-LIST-PROVIDER": "STATUS_LIST_PROVIDER",
+    "OTHER": "OTHER"
+  },
+  "absent": [
+    "",
+    " ",
+    " \t\r\n"
+  ],
+  "refused": [
+    "issuers",
+    "credential issuer",
+    "credential__issuer",
+    "holder",
+    "trust_anchor",
+    "\u000b",
+    "\f",
+    " ",
+    "　",
+    "\u000bissuer",
+    "issuer\f",
+    " issuer",
+    "credential_ıssuer",
+    "İssuer",
+    "credential_iſſuer",
+    "wаllet"
+  ]
+}

@@ -3069,6 +3069,318 @@
         }
       },
       "sameAsFirstPair" : "DID issuer, key named by a relative reference"
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        }
+      },
+      "name" : "roles: a question without a role is governed as an issuer question",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.example.id.card",
+          "protocol" : "oid4vci"
+        },
+        "subject" : {
+          "x5c" : [
+            "MIICNjCCAdygAwIBAgIJAKx4edy/WNezMAoGCCqGSM49BAMCMEUxCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1VdG9waWEgTmF0aW9uMR4wHAYDVQQDDBVVdG9waWEgTmF0aW9uYWwgSUQgQ0EwHhcNMjYxMTEyMDQxMTI0WhcNNDYwMTExMDQxMTI0WjBCMQswCQYDVQQGEwJVVDEWMBQGA1UECgwNVXRvcGlhIE5hdGlvbjEbMBkGA1UEAwwSTmF0aW9uYWwgSUQgc2lnbmVyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUYGUiGCazmq7vJY1nmx4niAUYWBilnAIDgucmlT8QF2KE5iYyN4lLwqto3uhv1HXfU0vIKnSWOfeJgz8+eWG3KOBtzCBtDAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAhBgNVHSUBAf8EFzAVBgorBgEEAYaNHwEBBgcogYxdBQECMB0GA1UdDgQWBBSn8s8T5kQvEoMZMy/iin9Tw9PGWDAfBgNVHSMEGDAWgBS7PxVbiTH810zhT42urL0tFTZeqjAxBgNVHR8EKjAoMCagJKAihiBodHRwOi8vY3JsLm5hdGlvbi5leGFtcGxlL2lkLmNybDAKBggqhkjOPQQDAgNIADBFAiEA6xhm2vRs38A+1ZGmYZVYI7xuWb5GJ5dazeVi++/8v/wCIF+i/nYpu9EBdYsDt4OYajGIzZpPjUxRFFOHb0VZbhsl"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "profile.crl_distribution_point"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "profile.crl_distribution_point"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "roles: a question without a role is held to the issuer mechanism's profile",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.example.id.card",
+          "protocol" : "oid4vci"
+        },
+        "subject" : {
+          "x5c" : [
+            "MIICEjCCAbegAwIBAgIJAKx4edy/WNe5MAoGCCqGSM49BAMCMEUxCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1VdG9waWEgTmF0aW9uMR4wHAYDVQQDDBVVdG9waWEgTmF0aW9uYWwgSUQgQ0EwHhcNMjYxMTEyMDQxMTI0WhcNNDYwMTExMDQxMTI0WjBQMQswCQYDVQQGEwJVVDEWMBQGA1UECgwNVXRvcGlhIE5hdGlvbjEpMCcGA1UEAwwgTmF0aW9uYWwgSUQgc2lnbmVyIHdpdGhvdXQgYSBDUkwwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATwP9MzVIt0KwdFYwjopPuUVA0hD6P4ICyatSoLHoiXFKbtiOSahe4+/FJhly4zwgqMJ+W3uQM8mXzU5bZeCT1Mo4GEMIGBMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMCEGA1UdJQEB/wQXMBUGCisGAQQBho0fAQEGByiBjF0FAQIwHQYDVR0OBBYEFCQTVxljrbSme1BUiiy20eLNeYqTMB8GA1UdIwQYMBaAFLs/FVuJMfzXTOFPja6svS0VNl6qMAoGCCqGSM49BAMCA0kAMEYCIQCxwnxjUGdQrRE5aDZMfccBEZ3u+Ni+63nV36XHLohCdwIhAL7JgrYWSRW0QzI1mn9Jh70T/OMrtBwPJd/eANGLDtwN"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "profile.crl_distribution_point"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "profile.crl_distribution_point"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "roles: the issuer role spelt as the service's API also reads it",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.example.id.card",
+          "protocol" : "oid4vci"
+        },
+        "role" : "credential_issuer",
+        "subject" : {
+          "x5c" : [
+            "MIICEjCCAbegAwIBAgIJAKx4edy/WNe5MAoGCCqGSM49BAMCMEUxCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1VdG9waWEgTmF0aW9uMR4wHAYDVQQDDBVVdG9waWEgTmF0aW9uYWwgSUQgQ0EwHhcNMjYxMTEyMDQxMTI0WhcNNDYwMTExMDQxMTI0WjBQMQswCQYDVQQGEwJVVDEWMBQGA1UECgwNVXRvcGlhIE5hdGlvbjEpMCcGA1UEAwwgTmF0aW9uYWwgSUQgc2lnbmVyIHdpdGhvdXQgYSBDUkwwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATwP9MzVIt0KwdFYwjopPuUVA0hD6P4ICyatSoLHoiXFKbtiOSahe4+/FJhly4zwgqMJ+W3uQM8mXzU5bZeCT1Mo4GEMIGBMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMCEGA1UdJQEB/wQXMBUGCisGAQQBho0fAQEGByiBjF0FAQIwHQYDVR0OBBYEFCQTVxljrbSme1BUiiy20eLNeYqTMB8GA1UdIwQYMBaAFLs/FVuJMfzXTOFPja6svS0VNl6qMAoGCCqGSM49BAMCA0kAMEYCIQCxwnxjUGdQrRE5aDZMfccBEZ3u+Ni+63nV36XHLohCdwIhAL7JgrYWSRW0QzI1mn9Jh70T/OMrtBwPJd/eANGLDtwN"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : "vec-verifier",
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "DNS:verifier.example",
+            "X509_SUBJECT:CN=verifier.example,O=Verifier Inc,C=UT"
+          ],
+          "mechanism" : "verifiers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.revocation_unknown"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "identifier.unbound",
+            "x509.revocation_unknown"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "verifiers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "UNKNOWN"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "roles: the verifier role spelt as the service's API also reads it",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vp",
+          "responseUri" : "https://verifier.example/post"
+        },
+        "role" : "Relying-Party",
+        "subject" : {
+          "identifier" : "x509_san_dns:verifier.example",
+          "x5c" : [
+            "MIIB6zCCAZGgAwIBAgIJAKrzkwjDGI/6MAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRIwEAYDVQQKDAlSZWdpc3RyYXIxFTATBgNVBAMMDFJQIEFjY2VzcyBDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMD8xCzAJBgNVBAYTAlVUMRUwEwYDVQQKDAxWZXJpZmllciBJbmMxGTAXBgNVBAMMEHZlcmlmaWVyLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASNAYI3JZHHSEW/M3fSiT0/6qEY8/cX1zaH2YLpQ1BPY84DoDetWRm4jW9pcplGy9y8wxt1M+2anSw0FbeEUpHdo30wezAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQUCnRj815ZXY6/924MWoergbZIRcAwHwYDVR0jBBgwFoAUmMJXQHf5cPPBSF/CAUDUcXnTRHEwGwYDVR0RBBQwEoIQdmVyaWZpZXIuZXhhbXBsZTAKBggqhkjOPQQDAgNIADBFAiBfmFJaE7YV8m2jv5+zCtO0ostv86noqzjyNDrbeS2eQQIhAI+ccHvniVi9kE7eYGHbQzUtOjqnFjiBX0Ou+JXREUUo"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "mechanism.key_not_accepted"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "authorization-servers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "mechanism.key_not_accepted"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "authorization-servers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "roles: an authorization server is governed by a mechanism of its own",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vci"
+        },
+        "role" : "authorization_server",
+        "subject" : {
+          "jwk" : {
+            "crv" : "P-256",
+            "kty" : "EC",
+            "x" : "acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0",
+            "y" : "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE"
+          }
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "mechanism.key_not_accepted"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "authorization-servers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "mechanism.key_not_accepted"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "authorization-servers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : null
+        }
+      },
+      "name" : "roles: the same, the role spelt as the service's API also reads it",
+      "query" : {
+        "context" : {
+          "protocol" : "oid4vci"
+        },
+        "role" : "AS",
+        "subject" : {
+          "jwk" : {
+            "crv" : "P-256",
+            "kty" : "EC",
+            "x" : "acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0",
+            "y" : "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE"
+          }
+        }
+      }
     }
   ],
   "description" : "Generated by MechanismVectorsTest from mechanisms.cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",
@@ -4129,6 +4441,15 @@
               }
             }
           }
+        },
+        {
+          "for" : {
+            "role" : "authorization_server"
+          },
+          "id" : "authorization-servers",
+          "keys" : [
+            "x5c"
+          ]
         }
       ],
       "policy" : {
@@ -5196,6 +5517,15 @@
               }
             }
           }
+        },
+        {
+          "for" : {
+            "role" : "authorization_server"
+          },
+          "id" : "authorization-servers",
+          "keys" : [
+            "x5c"
+          ]
         }
       ],
       "policy" : {
