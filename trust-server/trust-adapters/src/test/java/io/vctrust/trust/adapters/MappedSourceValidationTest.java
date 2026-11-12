@@ -438,6 +438,58 @@ class MappedSourceValidationTest {
         assertThat(source(ctx, props("mapping", plain)).load().warnings()).isEmpty();
     }
 
+    // D: allowExpired reached signed lookup answers ---------------------------------------------------------------
+
+    static Map<String, Object> signedLookup(com.nimbusds.jose.jwk.ECKey key, Object... extra) {
+        Map<String, Object> p = lookupOnly(extra);
+        p.put("format", "jws");
+        p.put("verify", Map.of("jwks", MappedTesting.jwks(key)));
+        return p;
+    }
+
+    @Test
+    void d_aLookupAnswerIsNeverAcceptedPastItsExpWhateverAllowExpiredSays() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        Map<String, Object> p = signedLookup(k1);
+        p.put("allowExpired", true);   // for a list the operator decides to keep using, not for answers
+        OnDemandResolver r = (OnDemandResolver) source(ctx, p);
+        long now = NOW.getEpochSecond();
+        serve(ctx, k1, BASE + "did%3Aexample%3Ab", Map.of("id", "b", "did", "did:example:b",
+                "iat", now - Duration.ofDays(900).toSeconds(), "exp", now - Duration.ofDays(899).toSeconds()));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:b")))
+                .hasMessageContaining("The answer expired at").hasMessageContaining("allowExpired does not apply to lookup answers");
+        serve(ctx, k1, BASE + "did%3Aexample%3Ac", Map.of("id", "c", "did", "did:example:c", "iat", now, "exp", now + 600));
+        assertThat(r.resolve(Identifier.did("did:example:c"))).isPresent();
+    }
+
+    @Test
+    void d_anAnswerIsRememberedNoLongerThanItIsGoodFor() throws Exception {
+        com.nimbusds.jose.jwk.ECKey k1 = MappedTesting.key("k1");
+        TestContext ctx = ctx();
+        MappedSourceRulesTest.MutableClock clock = new MappedSourceRulesTest.MutableClock(NOW);
+        ctx.clock = clock;
+        OnDemandResolver r = (OnDemandResolver) source(ctx, signedLookup(k1));
+        long now = NOW.getEpochSecond();
+        // Good for one more minute by its exp; then for one more minute by its iat and lookup.maxAge (24 hours).
+        serve(ctx, k1, BASE + "did%3Aexample%3Ab", Map.of("id", "b", "did", "did:example:b", "iat", now, "exp", now + 60));
+        serve(ctx, k1, BASE + "did%3Aexample%3Ac", Map.of("id", "c", "did", "did:example:c",
+                "iat", now - Duration.ofHours(24).toSeconds() + 60));
+        assertThat(r.resolve(Identifier.did("did:example:b"))).isPresent();
+        assertThat(r.resolve(Identifier.did("did:example:c"))).isPresent();
+        assertThat(ctx.http.requests).hasSize(2);
+        clock.now = NOW.plusSeconds(59);
+        assertThat(r.resolve(Identifier.did("did:example:b"))).isPresent();
+        assertThat(r.resolve(Identifier.did("did:example:c"))).isPresent();
+        assertThat(ctx.http.requests).hasSize(2);
+        // Past what they are good for, they are asked again (and now refused), not served from memory for ten minutes.
+        clock.now = NOW.plusSeconds(121);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:b"))).hasMessageContaining("expired");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> r.resolve(Identifier.did("did:example:c")))
+                .hasMessageContaining("(lookup.maxAge)");
+        assertThat(ctx.http.requests).hasSize(4);
+    }
+
     @Test
     void a_aLookupAnswerThatCannotBeReadCompletelyIsASuspendedEntityNotAMiss() throws Exception {
         TestContext ctx = ctx();

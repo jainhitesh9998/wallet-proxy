@@ -390,7 +390,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 while (true) {
                     if (page == null) {
                         page = ResourceLoader.isRemote(config.location()) ? fetch(URI.create(config.location()), now, warnings)
-                                : new Document(document(ctx.resources().load(config.location()), now, warnings), null);
+                                : new Document(document(ctx.resources().load(config.location()), now, warnings, false), null);
                         first = mapped(page.root());
                         facts = facts(first, page.root(), now, warnings);
                         if (page.uri() != null) {
@@ -666,11 +666,15 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (!r.isSuccess()) {
                 throw new HttpFetcher.HttpStatusException(uri, r.status());
             }
-            return new Document(document(r.body(), now, warnings), r.finalUri() == null ? uri : r.finalUri());
+            return new Document(document(r.body(), now, warnings, false), r.finalUri() == null ? uri : r.finalUri());
         }
 
-        /** The JSON of a document: for a JWS, its payload once the signature has verified. */
-        private Object document(byte[] body, Instant now, Warnings warnings) throws TrustSourceException {
+        /**
+         * The JSON of a document: for a JWS, its payload once the signature has verified.
+         *
+         * @param answer whether it is a lookup answer, which {@code allowExpired} never covers
+         */
+        private Object document(byte[] body, Instant now, Warnings warnings, boolean answer) throws TrustSourceException {
             byte[] json = body;
             if (config.jws()) {
                 String compact = new String(body, StandardCharsets.US_ASCII).trim();
@@ -684,7 +688,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             if (config.jws()) {
                 // A payload that is not an object has no claims: none that verify.issuer asks for, either.
-                jwtClaims(root instanceof Map<?, ?> claims ? claims : Map.of(), now, warnings);
+                jwtClaims(root instanceof Map<?, ?> claims ? claims : Map.of(), now, warnings, answer);
             }
             return root;
         }
@@ -692,9 +696,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         /**
          * A JWS whose payload is a JWT is held to its claims (RFC 7519 section 4.1): not after {@code exp}, not before
          * {@code nbf}, only when addressed to this service when it names an audience at all, and only from the issuer
-         * {@code verify.issuer} names, when it names one. An {@code iat} must be a NumericDate too.
+         * {@code verify.issuer} names, when it names one. An {@code iat} must be a NumericDate too. {@code allowExpired}
+         * is for a list an operator decides to keep using; a lookup answer past its {@code exp} is never accepted.
          */
-        private void jwtClaims(Map<?, ?> claims, Instant now, Warnings warnings) throws TrustSourceException {
+        private void jwtClaims(Map<?, ?> claims, Instant now, Warnings warnings, boolean answer) throws TrustSourceException {
             numericDate(claims, "iat");
             String issuer = config.keys().issuer();
             if (issuer != null) {
@@ -709,6 +714,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             Instant exp = numericDate(claims, "exp");
             if (exp != null && now.isAfter(exp.plus(Duration.ofSeconds(60)))) {
+                if (answer) {
+                    throw new TrustSourceException("The answer expired at " + exp + " (exp); allowExpired does not apply to lookup answers");
+                }
                 if (!config.allowExpired()) {
                     throw new TrustSourceException("The list expired at " + exp + " (exp) and is not loaded (allowExpired: true overrides)");
                 }
@@ -1099,25 +1107,35 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 return cached.get();
             }
             Instant now = ctx.clock().instant();
-            Optional<TrustedEntity> found;
+            Answer answer;
             try {
-                found = ask(identifier, now);
+                answer = ask(identifier, now);
             } catch (TrustSourceException e) {
                 // Remembered like a miss, for a short time: every client request about the identifier would otherwise
                 // send one to a registry that is failing.
                 answers.put(identifier.key(), Optional.empty(), now.plus(ON_DEMAND_FAILURE_TTL));
                 throw reported(e);
             }
-            answers.put(identifier.key(), found, now.plus(found.isPresent() ? ON_DEMAND_TTL : ON_DEMAND_NEGATIVE_TTL));
-            return found;
+            // Remembered no longer than the answer is good for, when that is sooner.
+            Instant until = now.plus(answer.entity().isPresent() ? ON_DEMAND_TTL : ON_DEMAND_NEGATIVE_TTL);
+            if (answer.goodUntil() != null && answer.goodUntil().isBefore(until)) {
+                until = answer.goodUntil();
+            }
+            answers.put(identifier.key(), answer.entity(), until);
+            return answer.entity();
         }
 
-        private Optional<TrustedEntity> ask(Identifier identifier, Instant now) throws TrustSourceException {
+        /** What a lookup found, and until when a signed answer says it is good (null for one that is not signed). */
+        private record Answer(Optional<TrustedEntity> entity, Instant goodUntil) {
+        }
+
+        private Answer ask(Identifier identifier, Instant now) throws TrustSourceException {
             Mapping.Lookup l = config.mapping().lookup;
             // Percent-encoding with %20 for a space: the identifier cannot add a path segment, a query or a fragment.
             URI uri = URI.create(l.url().replace("{identifier}",
                     URLEncoder.encode(identifier.value(), StandardCharsets.UTF_8).replace("+", "%20")));
             Optional<TrustedEntity> found = Optional.empty();
+            Instant goodUntil = null;
             try {
                 HttpFetcher.Response r = get(uri);
                 if (!l.missStatus().contains(r.status())) {
@@ -1125,9 +1143,9 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         throw new TrustSourceException("The lookup at " + uri.getHost() + " answered HTTP " + r.status());
                     }
                     Warnings ignored = new Warnings();
-                    Object root = document(r.body(), now, ignored);
+                    Object root = document(r.body(), now, ignored, true);
                     if (config.jws()) {
-                        fresh(root, now, l);
+                        goodUntil = fresh(root, now, l);
                     }
                     Provenance provenance = Provenance.of(def.id(), TYPE, def.frameworkId(), publishedLocation(), now);
                     List<Object> records = l.entity().records(root);
@@ -1155,15 +1173,17 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             } catch (IllegalArgumentException e) {
                 throw new TrustSourceException("The answer cannot be read: " + e.getMessage(), e);
             }
-            return found;
+            return new Answer(found, goodUntil);
         }
 
         /**
          * A signed answer says when it was made. With {@code exp}, that decides ({@link #jwtClaims}); without it, the
          * answer counts for {@code lookup.maxAge} after its {@code iat}; with neither, an answer recorded once could
          * be replayed for as long as the key is pinned, and is refused.
+         *
+         * @return until when the answer is good: its {@code exp}, or its {@code iat} plus {@code lookup.maxAge}
          */
-        private void fresh(Object root, Instant now, Mapping.Lookup l) throws TrustSourceException {
+        private Instant fresh(Object root, Instant now, Mapping.Lookup l) throws TrustSourceException {
             Map<?, ?> claims = root instanceof Map<?, ?> m ? m : Map.of();
             Instant exp = numericDate(claims, "exp");
             Instant iat = numericDate(claims, "iat");
@@ -1171,7 +1191,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 throw new TrustSourceException("The answer says it was issued at " + iat + ", in the future");
             }
             if (exp != null) {
-                return;
+                return exp;
             }
             if (iat == null) {
                 throw new TrustSourceException("The answer states neither exp nor iat: how old it is cannot be told");
@@ -1180,6 +1200,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (now.isAfter(iat.plus(maxAge))) {
                 throw new TrustSourceException("The answer was issued at " + iat + ", more than " + maxAge + " ago (lookup.maxAge)");
             }
+            return iat.plus(maxAge);
         }
     }
 }
