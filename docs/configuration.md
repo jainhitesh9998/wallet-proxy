@@ -736,7 +736,11 @@ configuration is read.
   of at most 4,096 characters, are asked about, URL-encoded into the URL. An answer counts only when the entity it
   maps to carries the identifier asked about (compared as the registry compares identifiers); when several records of
   an answer do, the first holds, with the strictest status, the latest `validFrom` and the earliest `validUntil` of
-  them all. Answers are kept for 10 minutes, misses for 1 minute and failures for 30 seconds, at most 5000 of them
+  them all. When the answer's id is one that the source's last loaded list also holds (a party asked about by an
+  identifier the list does not give it), the stricter status and validity of the two stand, as the registry merges two
+  entries of one id: a party the list revokes is not trusted by its other identifiers. This holds for a kept answer as
+  soon as a list is loaded; a list older than the one loaded, which the registry refuses, does not count. Answers are
+  kept for 10 minutes, misses for 1 minute and failures for 30 seconds, at most 5000 of them
   holding at most 16,777,216 characters of mapped text in all (the least recently used go first when either bound is
   reached; expired ones are dropped as new ones come). A `missStatus` is a miss; any other failure is an error. With
   `format: jws` an answer is verified like the list, and must say when it was made: one with neither `exp` nor `iat`

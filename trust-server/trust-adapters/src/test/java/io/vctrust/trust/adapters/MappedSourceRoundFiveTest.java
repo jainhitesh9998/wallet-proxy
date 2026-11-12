@@ -515,4 +515,87 @@ class MappedSourceRoundFiveTest {
         assertThat(loadError(source(ctx, props("mapping", terseMapping(EACH_SHARED_TYPE), "limits", Map.of("yield", 1_024, "text",
                 1_000_000))))).contains("yield more than 1000000 characters and nodes of mapped text (limits.text)");
     }
+
+    // 6: a lookup answer for an id the loaded list holds ------------------------------------------------------------------
+
+    /** The issuers tied to their CA, and a lookup by URL whose answer is mapped as a list's record is. */
+    static Map<String, Object> withLookup() {
+        Map<String, Object> m = MappedSourceProbesTest.tiedByTheCa();
+        m.put("list", Map.of("sequence", "$.version"));
+        m.put("lookup", Json.parseObject("""
+                {"url": "https://registry.partner.example/v1/issuers/{identifier}", "identifierTypes": ["URL"], "startsWith": ["https://"],
+                 "entity": {"id": "$.id", "roles": ["CREDENTIAL_ISSUER"], "identifiers": [{"type": "URL", "value": "$.url"}],
+                            "status": {"path": "$.state", "values": {"active": "ACTIVE"}, "default": "REVOKED"},
+                            "validUntil": "$.valid_until"}}"""));
+        return m;
+    }
+
+    /** The URL the lookup is asked about: one the loaded list does not give the DMV. */
+    static final String ASKED = "https://issuer.utopia.example";
+    static final String ANSWER_AT = "https://registry.partner.example/v1/issuers/https%3A%2F%2Fissuer.utopia.example";
+
+    /** Version {@code version} of the list: the DMV ("Utopia DMV") under its old URL, with {@code party} put over it. */
+    static Map<String, Object> listed(int version, Map<String, Object> party) {
+        Map<String, Object> dmv = new LinkedHashMap<>(Map.of("url", "https://old.utopia.example"));
+        dmv.putAll(party);
+        Map<String, Object> d = MappedSourceProbesTest.tied("Utopia DMV", dmv);
+        d.put("version", version);
+        return d;
+    }
+
+    static Map<String, Object> answer(String id, Map<String, Object> party) {
+        Map<String, Object> a = new LinkedHashMap<>(Map.of("id", id, "url", ASKED, "state", "active"));
+        a.putAll(party);
+        return a;
+    }
+
+    @Test
+    void item6_aLookupAnswerOfAnIdTheLoadedListHoldsHasTheStricterStatusAndValidityOfTheTwo() {
+        String past = MappedSourceRulesTest.NOW.minus(Duration.ofDays(1)).toString();
+        record Case(String what, Map<String, Object> party, Map<String, Object> answer, Decision decision) {
+        }
+        List<Case> cases = List.of(
+                // The answer stood alone: the party the list revokes was TRUSTED by its other identifier.
+                new Case("listed revoked, answered active", Map.of("state", "revoked"), answer("Utopia DMV", Map.of()), Decision.NOT_TRUSTED),
+                new Case("listed until yesterday, answered active", Map.of("valid_until", past), answer("Utopia DMV", Map.of()),
+                        Decision.NOT_TRUSTED),
+                new Case("listed active, answered revoked", Map.of(), answer("Utopia DMV", Map.of("state", "revoked")), Decision.NOT_TRUSTED),
+                new Case("listed active, answered active", Map.of(), answer("Utopia DMV", Map.of()), Decision.TRUSTED),
+                new Case("listed revoked, answered active under another id", Map.of("state", "revoked"), answer("Utopia DMV (new)", Map.of()),
+                        Decision.TRUSTED));
+        for (Case c : cases) {
+            TestContext ctx = ctx();
+            serveJson(ctx, listed(1, c.party()));
+            ctx.http.json(ANSWER_AT, Json.write(c.answer()));
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", withLookup())))) {
+                assertThat(state(m, "partner").lastError()).as(c.what()).isNull();
+                TrustDecision d = decide(registry, m, ASKED, List.of(), null);
+                assertThat(d.decision()).as(c.what()).isEqualTo(c.decision());
+                if (c.what().equals("listed revoked, answered active")) {
+                    assertThat(d.summary()).isEqualTo("Entity 'Utopia DMV' is REVOKED");
+                }
+            }
+        }
+    }
+
+    @Test
+    void item6_aRememberedAnswerIsHeldToTheListLoadedSinceButNotToAnOlderOne() throws Exception {
+        TestContext ctx = ctx();
+        serveJson(ctx, listed(2, Map.of()));
+        ctx.http.json(ANSWER_AT, Json.write(answer("Utopia DMV", Map.of())));
+        TrustRegistry registry = new TrustRegistry();
+        try (TrustSourceManager m = manager(registry, source(ctx, props("mapping", withLookup())))) {
+            assertThat(decide(registry, m, ASKED, List.of(), null).decision()).isEqualTo(Decision.TRUSTED);
+            // Version 3 revokes the DMV: the answer remembered for ten minutes is held to it at once.
+            serveJson(ctx, listed(3, Map.of("state", "revoked")));
+            assertThat(m.refresh("partner").lastError()).isNull();
+            assertThat(decide(registry, m, ASKED, List.of(), null).decision()).isEqualTo(Decision.NOT_TRUSTED);
+            // Version 1, from before the withdrawal, served again: the registry refuses it, and so does the lookup.
+            serveJson(ctx, listed(1, Map.of()));
+            assertThat(m.refresh("partner").lastError()).contains("is older than the one already loaded");
+            assertThat(decide(registry, m, ASKED, List.of(), null).decision()).isEqualTo(Decision.NOT_TRUSTED);
+            assertThat(registry.snapshot().entity("Utopia DMV").orElseThrow().status()).isEqualTo(EntityStatus.REVOKED);
+        }
+    }
 }

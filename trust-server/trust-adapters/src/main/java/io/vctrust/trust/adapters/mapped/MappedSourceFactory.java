@@ -374,6 +374,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         private final Config config;
         private final String configError;
         private final Memo<Optional<TrustedEntity>> answers;
+        /** What the last list this source loaded says of each id: what a lookup answer of that id is held to. */
+        private volatile Listed listed;
 
         MappedSource(SourceDefinition def, SourceContext ctx) {
             this.def = def;
@@ -407,13 +409,74 @@ public final class MappedSourceFactory implements TrustSourceFactory {
 
         @Override
         public SourceLoadResult load() throws TrustSourceException {
+            SourceLoadResult result;
             try {
-                return loadList();
+                result = loadList();
             } catch (TrustSourceException e) {
                 throw reported(e);
             } catch (RuntimeException e) {
                 throw reported(unexpected(e));
             }
+            remember(result);
+            return result;
+        }
+
+        /** The status and validity a list states for one id: of its strictest record, when it has several. */
+        private record Standing(EntityStatus status, Instant validFrom, Instant validUntil) {
+        }
+
+        /** What a loaded list says of each of its ids, and the list's facts, by which a list older than it is told. */
+        private record Listed(ListInfo info, Map<String, Standing> ids) {
+        }
+
+        /**
+         * Remembers what a list just loaded says of each id, for the lookup answers of those ids ({@link #heldToTheList}).
+         * A list older than the one remembered is not remembered: the registry refuses it too and keeps the list it has
+         * (TrustSourceManager), so that a list served again from before an entry was withdrawn cannot vouch for an
+         * answer either.
+         */
+        private void remember(SourceLoadResult result) {
+            Listed held = listed;
+            if (held != null && result.listInfo().olderThan(held.info())) {
+                return;
+            }
+            Map<String, Standing> ids = new java.util.HashMap<>();
+            for (TrustedEntity e : result.entities()) {
+                ids.merge(e.id(), new Standing(e.status(), e.validFrom(), e.validUntil()), (a, b) -> new Standing(
+                        b.status().ordinal() > a.status().ordinal() ? b.status() : a.status(), later(a.validFrom(), b.validFrom()),
+                        earlier(a.validUntil(), b.validUntil())));
+            }
+            listed = new Listed(result.listInfo(), Map.copyOf(ids));
+        }
+
+        private static Instant later(Instant a, Instant b) {
+            return a == null ? b : b == null || !b.isAfter(a) ? a : b;
+        }
+
+        private static Instant earlier(Instant a, Instant b) {
+            return a == null ? b : b == null || !b.isBefore(a) ? a : b;
+        }
+
+        /**
+         * A lookup answer whose id the last loaded list also holds: the stricter status and validity of the two stand, as
+         * the registry merges two entries of one id. The answer is about another identifier of the party than those the
+         * list gives it (an identifier the list has is found in the registry, and not asked about), and would otherwise
+         * stand alone: a party the list revokes would be trusted by its other identifiers. Applied whenever an answer is
+         * handed out, a remembered one too, so that a list loaded since holds it at once.
+         */
+        private TrustedEntity heldToTheList(TrustedEntity answer) {
+            Listed held = listed;
+            Standing s = held == null ? null : held.ids().get(answer.id());
+            if (s == null) {
+                return answer;
+            }
+            EntityStatus status = s.status().ordinal() > answer.status().ordinal() ? s.status() : answer.status();
+            Instant from = later(answer.validFrom(), s.validFrom());
+            Instant until = earlier(answer.validUntil(), s.validUntil());
+            if (status == answer.status() && Objects.equals(from, answer.validFrom()) && Objects.equals(until, answer.validUntil())) {
+                return answer;
+            }
+            return answer.toBuilder().status(status).validFrom(from).validUntil(until).build();
         }
 
         /**
@@ -1465,7 +1528,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             }
             Optional<Optional<TrustedEntity>> cached = answers.get(identifier.key());
             if (cached.isPresent()) {
-                return cached.get();
+                return cached.get().map(this::heldToTheList);
             }
             Instant now = ctx.clock().instant();
             Answer answer;
@@ -1488,7 +1551,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                 until = answer.goodUntil();
             }
             answers.put(identifier.key(), answer.entity(), until, answer.weight());
-            return answer.entity();
+            return answer.entity().map(this::heldToTheList);
         }
 
         /**
