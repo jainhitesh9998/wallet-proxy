@@ -4,8 +4,8 @@
  * A context decides which statements a Data Integrity signature covers, so a verifier must know the contexts it
  * processes (VC Data Integrity 1.0 §2.4.1 "Validating Contexts"). The wallet uses the contexts built into it and,
  * for everything else, the trust client: a context the trust service vouches for comes from the signed snapshot (or
- * is checked against the digest it carries); one it does not know is fetched from its own https host and recorded,
- * so the verification report can say so.
+ * is checked against the digest it carries); one it does not know (through the service's relay or from its own https
+ * host) is recorded, so the verification report can say that the service does not vouch for it.
  */
 import jsonld from 'jsonld';
 import type { TrustClient } from '@vctrust/trust-client';

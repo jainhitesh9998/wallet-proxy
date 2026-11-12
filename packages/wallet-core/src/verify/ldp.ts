@@ -179,7 +179,8 @@ export async function verifyLdpVc(vcIn: Record<string, unknown> | string, opts: 
       }
       checks.pass('ldp.signature', 'Issuer signature', `${verified.join('; ')} over RDFC-1.0`);
       if (stats.unvouched.size) {
-        checks.warn('ldp.contexts', 'JSON-LD contexts', `Fetched from their own hosts, not vouched for by the trust service: ${[...stats.unvouched].join(', ')}`);
+        // Whether such a context came through the service's relay or from its own host, the service does not vouch for it.
+        checks.warn('ldp.contexts', 'JSON-LD contexts', `Not vouched for by the trust service: ${[...stats.unvouched].join(', ')}`);
       } else checks.pass('ldp.contexts', 'JSON-LD contexts', 'Built in or vouched for by the trust service');
     } catch (e) {
       checks.fail('ldp.signature', 'Issuer signature', (e as Error).message.slice(0, 300));

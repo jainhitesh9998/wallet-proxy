@@ -46,7 +46,7 @@ describe('issuance from the reference issuer', () => {
       expect(failed(c)).toEqual([]);
       expect(c.report).toMatchObject({ valid: true, trusted: true });
       expect(c.report!.checks.filter((x) => x.status === 'warn').map((x) => `${x.id}: ${x.detail}`)).toEqual(name === 'ecdsa' || name === 'eddsa'
-        ? [expect.stringMatching(/^ldp\.contexts: Fetched from their own hosts/)] : []);
+        ? [expect.stringMatching(/^ldp\.contexts: Not vouched for by the trust service: http:\/\/localhost:\d+\/contexts\/reference\/v1$/)] : []);
       expect(c.report!.checks.map((x) => x.id)).toEqual(expect.arrayContaining(['issuer.trust', {
         ecdsa: 'ldp.status', eddsa: 'ldp.status', mdl: 'mdoc.digests', identity: 'sdjwt.status' }[name]]));
     });
