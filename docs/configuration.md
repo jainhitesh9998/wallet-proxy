@@ -427,8 +427,9 @@ trust:
 | `mappingLocation` / `mapping` | one of them | The mapping: a YAML or JSON file of this host (`file:`, `classpath:` or a path, never a URL), or inline. Prefer the file: an inline mapping passes through Spring's property binding ([below](#a-mapping-inside-applicationyml)) |
 | `format` | `json` | `json`, or `jws`: a compact JWS or JWT whose payload is the JSON |
 | `verify.jwks` / `verify.jwksLocation` | none | For `jws`: the public keys (EC or RSA) the list is signed with, as a JWKS inline or in a `file:` / `classpath:` location. The header's `kid` chooses the key |
-| `verify.certificates` / `verify.certificateLocation` | none | Or certificates (PEM or base64 DER; a PEM file) that the JWS's `x5c` chain must validate to |
+| `verify.certificates` / `verify.certificateLocation` | none | Or certificates (PEM or base64 DER; a PEM file) that the JWS's `x5c` chain must validate to. The signing certificate must be allowed to sign: its key usage, when it has one, includes `digitalSignature`, and it is no CA certificate unless it is itself pinned |
 | `verify.typ` | none | The JOSE `typ` the JWS must have, so that another document signed with the same key cannot pass for the list |
+| `verify.issuer` | none | The `iss` the JWT must name; a document without `iss`, or with another, is refused |
 | `verify.audience` | none | This service's name at the list's issuer. A JWT that names an audience (`aud`) is loaded only when it names this one |
 | `allowUnverified` | `false` | Load a `jws` list without pinned keys, on the strength of TLS alone. For test environments; said in the log on every load |
 | `allowExpired` | `false` | Load a list past its mapped `nextUpdate` or its `exp`, with a warning |
@@ -439,16 +440,18 @@ trust:
 #### The mapping
 
 ```yaml
-list:                                    # optional: facts about the list, read from its (first) page
+list:                                    # optional: facts about the list, read from every page
   issuer: $.publisher
   sequence: $.version                    # a list with a lower number than the one held is refused
   issuedAt: $.issued                     # an ISO date-time or date, or seconds since the epoch
   nextUpdate: $.next_update              # past it, the list is not loaded
-pages:                                   # optional: the list comes in pages
+pages:                                   # optional: the list comes in pages, each repeating the list facts
   next: $.links.next                     # the next page's URL (may be relative), absent or empty on the last
   max: 50
 entities:                                # one or more blocks: every match of each is one entity
   - each: $.issuers[*]
+    allowEmpty: false                    # true: a document in which the block finds no record still loads
+    required: [validUntil]               # members a record must yield, or it is skipped
     id: { template: "partner:{$.id}" }   # required
     roles: [CREDENTIAL_ISSUER]
     name: $.display.name                 # or display: [{ each, locale, name, description, logoUri }]
@@ -456,7 +459,7 @@ entities:                                # one or more blocks: every match of ea
       - { type: URL, value: $.credential_issuer }
       - { each: "$.dids[*]", type: DID, value: $ }
     certificates: $.signing_certificates[*]      # PEM or base64 DER
-    authorizations:
+    authorizations:                      # an item lacking a member it maps skips the record
       - { each: "$.credentials[*]", format: $.format, type: $.type }
     status: { path: $.state, values: { active: ACTIVE, suspended: SUSPENDED }, default: REVOKED }
     validFrom: $.valid_from
@@ -480,11 +483,13 @@ lookup:                                  # optional: ask about one party at a ti
   identifierTypes: [DID]
   startsWith: ["did:example:"]
   missStatus: [404]                      # the answers that mean "not listed"
-  entity: { ... }                        # an entities block; each defaults to the whole answer
+  maxAge: PT24H                          # format: jws: how long after its iat an answer without exp counts
+  entity: { ... }                        # an entities block (without allowEmpty); each defaults to the whole answer
 ```
 
 Every member of the registry format that makes sense for remote data can be mapped. `certificateLocation` cannot: a
-document from elsewhere never makes the service read a file.
+document from elsewhere never makes the service read a file. `each`, `allowEmpty` and `required` say how a block is
+read; `required` names members the block maps (another name is a configuration error).
 
 **Values.** Every member takes one of these forms; a member that takes a list takes a list of them.
 
@@ -494,15 +499,33 @@ document from elsewhere never makes the service read a file.
 | `^.path` | The same, from the root of the document |
 | Any other scalar | A constant |
 | `{ value: "$5" }` | A constant that starts with `$` or `^` |
-| `{ path: P, values: { a: X, b: Y }, default: Z }` | The value at `P`, translated. Without `default`, a value not in the table yields nothing. `values` can also be a list of `{ when, then }` pairs |
+| `{ path: P, values: { a: X, b: Y }, default: Z }` | The value at `P`, translated. `default` stands for both a value not in the table and no value at `P`; without it, either yields nothing. `values` can also be a list of `{ when, then }` pairs |
 | `{ template: "did:web:{$.host}" }` | Text with paths in braces; nothing if any of them yields nothing |
 
-A path with `[*]` or a filter gives every match to a list member, and its first match to a single one. A member that
-yields nothing is left out. A member that yields something of the wrong kind (an object where text belongs, a
-`validUntil` that is not a date) skips the record, with a warning that names the block, the record and the reason; so
-does a record without what the registry format requires (an entity's `id`, an anchor's `domain` and `certificate`) or
-with an id that is not 1 to 128 letters, digits or `. _ : @ ~ -`. Give `status` a `default`: a state the mapping does
-not know should not stand for good standing, and a status left out is `ACTIVE`.
+A path with `[*]` or a filter gives every match to a list member, and its first match to a single one.
+
+**Absent is absent; present but unusable skips the record.** A path that matches nothing, or `null`, leaves its member
+out. A path that finds something it cannot use skips the record, with a warning that names the block, the record and
+the member: `[*]`, a filter or an index applied to text or a number (doctypes written as one string under
+`$.doctypes[*]`), a member name applied to anything but an object, an object or a list where text belongs (also in a
+template), a date that is not one. A date is an ISO date-time or date, or seconds since the epoch as a whole number
+or a string of digits, of at most twelve digits: a time in milliseconds is not a date. For the list facts, any of
+these fails the load. A record is skipped, too, when:
+
+- its `status` is mapped and yields nothing: no value at the path, or one the translation does not know and no
+  `default`. A state the mapping does not know is not good standing; an operator who means "no status is active"
+  writes `default: ACTIVE`;
+- an authorization item lacks a member its mapping configures, or yields nothing at all: an authorization without its
+  `type` would cover every type of its format, and none at all would leave the entity unconstrained for a lenient
+  client (identifiers, display and context items without what they need are left out, as before);
+- a member named in `required` yields nothing. This is how a renamed member upstream is caught: a `valid_until`
+  that became `validUntil` would otherwise read as "no expiry";
+- a member yields more than 1000 values for it (all the forms of the member, and the items of a nested `each`,
+  together): a path from the root in a list member would otherwise give every record all of its matches;
+- it lacks what the registry format requires (an entity's `id`, an anchor's `domain` and `certificate`), or has an id
+  that is not 1 to 128 letters, digits or `. _ : @ ~ -` starting with a letter or digit (the admin API's rule).
+
+A path from the root (`^...`) is evaluated once per page, not once per record.
 
 **Paths.** A subset of JSONPath (RFC 9535), evaluated in time linear in the size of the document:
 
@@ -525,27 +548,53 @@ configuration is read.
 - *A signed list is verified first.* With `format: jws` the signature is checked against the pinned keys before
   anything else is read: asymmetric algorithms only (ES256, ES384, ES512, PS256, PS384, PS512, and RS256, RS384,
   RS512 with keys of 2048 bits or more), never `none` or HMAC, no `crit`, the key chosen by `kid`. A JWT payload is
-  held to `exp`, `nbf` and `aud`. Keys come from the configuration, never from the network: a key served next to the
-  list proves nothing about it. The source's `listInfo` says `VERIFIED`; for `format: json`, `NOT_SIGNED`.
+  held to `exp`, `nbf`, `aud` and, with `verify.issuer`, `iss`; an `iat` must be a number of seconds. Keys come from
+  the configuration, never from the network: a key served next to the list proves nothing about it. The source's
+  `listInfo` says `VERIFIED`; for `format: json`, `NOT_SIGNED`.
+- *Pin the list's signer, not a CA of anything.* With `verify.certificates`, every certificate the pinned CA issues
+  that may sign can sign the list: pin the signer's own certificate, or a CA that issues only list signers. A CA
+  that also issues TLS server certificates lets every such server sign the list.
 - *Freshness, when the list says it.* With `nextUpdate` mapped, a list past it is not loaded; with `issuedAt` or
-  `sequence` mapped, a list older than the one held is refused, as for every source. A fact the mapping names but the
-  document lacks fails the load, and so does a list issued in the future.
+  `sequence` mapped, a list older than the one held is refused, as for every source. For `format: jws`, when the
+  mapping names no `issuedAt`, the JWT's `iat` is the list's: an older list is refused without any mapping. A fact
+  the mapping names but the document lacks fails the load, and so does a list issued in the future.
+- *Pages are one list.* Every page repeats the list facts the mapping names, each with the first page's value;
+  otherwise the load fails (a page of an older list, or another document, is not a page of this one). Each page of a
+  `jws` list is signed on its own, so a `jws` source with `pages` must map `list.sequence` or `list.issuedAt`.
 - *Headers stay with their origin.* They go with requests to the origin of `location` (for a source that only looks
   up: of `lookup.url`), not to a lookup URL elsewhere, and not after a redirect to another origin: the outbound
   client then passes on `Accept` only.
 - *Bounds.* At most `limits.entities` and `limits.anchors` records and `pages.max` pages; a next page must be on the
   origin of `location` and not one already read; strict JSON (no member twice, nothing after the value), nested at
-  most 32 deep; at most 50 warnings, then their number. Past a bound the load fails rather than load part of a list.
+  most 32 deep, every number with at most 40 significant digits and a decimal exponent from -40 to 40 (`1e999999999`
+  is eleven characters, and a gigabyte as text); at most 1000 values of a member for one record; at most 50 warnings,
+  then their number. Past a bound the load fails rather than load part of a list.
 - *A mapping that produces nothing fails.* When the document has records for a block and none of them maps, its
-  format has probably changed: the load fails and the source keeps its last good content. A block that finds no
-  record at all is a warning.
+  format has probably changed: the load fails and the source keeps its last good content. So does a block that finds
+  no record in any page, unless it says `allowEmpty: true`: another document of the same signer, or an empty answer,
+  must not pass for a list that has emptied.
 - *A source speaks for its own framework.* Everything lands in the source's framework; a record whose mapped
   `framework` names another is skipped.
+- *Records with one id.* Records of one load that map to the same anchor id must agree on certificate, domain,
+  status, entity and constraints (identical ones are one anchor); otherwise the load fails, naming the id. Records
+  with one entity id are one entity, merged by the registry (one entity per country, say); none of them can relax or
+  hide what another states: each gets the strictest status, the latest `validFrom` and the earliest `validUntil` of
+  them all, with a warning when they disagreed.
 - *Lookups are bound to the question.* Only identifiers of `identifierTypes` that start with one of `startsWith` are
   asked about, URL-encoded into the URL. An answer counts only when the entity it maps to carries the identifier
-  asked about (compared as the registry compares identifiers). Answers are kept for 10 minutes and misses for 1, at
-  most 5000 of them. A `missStatus` is a miss; any other failure is an error. With `format: jws` an answer is verified
-  like the list.
+  asked about (compared as the registry compares identifiers). Answers are kept for 10 minutes, misses for 1 minute
+  and failures for 30 seconds, at most 5000 of them. A `missStatus` is a miss; any other failure is an error. With
+  `format: jws` an answer is verified like the list, and must say when it was made: one with neither `exp` nor `iat`
+  is refused, and one with `iat` and no `exp` counts for `lookup.maxAge` (24 hours) after `iat`.
+- *Messages name no secret and break no log line.* No message, warning, source state or log line names the query of
+  `location`, of a page or of a lookup URL, nor a header value; text from the document is quoted with its control
+  characters escaped.
+
+**What a signature does not tell apart.** A key that signs several kinds of document (a sandbox list and a production
+list, a list of issuers and one of verifiers, lists and lookup answers) lets one of them stand in for another, unless
+something in the document tells them apart and the source checks it: `verify.typ`, `verify.issuer`,
+`verify.audience` (for documents that name an audience), or a list fact the mapping names. Ask the list's publisher
+what distinguishes its documents, and pin it.
 
 #### A mapping inside application.yml
 
