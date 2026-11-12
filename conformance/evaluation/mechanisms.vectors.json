@@ -3381,6 +3381,226 @@
           }
         }
       }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "UNKNOWN",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "UNKNOWN",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "roles: a question about another role of the issuer domains ('other') is governed as an issuer question",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "other",
+        "subject" : {
+          "x5c" : [
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "UNKNOWN",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "UNKNOWN",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "mdl",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "x509.no_anchor"
+          ],
+          "x509" : {
+            "anchorFound" : false,
+            "revocation" : [ ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "roles: the same for an accreditation authority",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "accreditation_authority",
+        "subject" : {
+          "x5c" : [
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "TRUSTED",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv"
+          ],
+          "mechanism" : "authorization-servers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "entity.role_mismatch"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        },
+        "strict" : {
+          "decision" : "TRUSTED",
+          "entity" : null,
+          "errors" : [ ],
+          "framework" : "vectors",
+          "matched" : [
+            "ANCHOR:vec-dmv"
+          ],
+          "mechanism" : "authorization-servers",
+          "trustedAuthorities" : [ ],
+          "warnings" : [
+            "entity.role_mismatch"
+          ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : true
+          }
+        }
+      },
+      "name" : "roles: the same for an authorization server, which a mechanism of its own role governs first",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.iso.18013.5.1.mDL",
+          "protocol" : "oid4vci"
+        },
+        "role" : "authorization_server",
+        "subject" : {
+          "x5c" : [
+            "MIIB3DCCAYKgAwIBAgIJAKXc3jlGX7JUMAoGCCqGSM49BAMCMDgxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRQwEgYDVQQDDAtVdG9waWEgSUFDQTAeFw0yNjEwMzEyMDA4NThaFw00NTEyMzAyMDA4NThaMDYxCzAJBgNVBAYTAlVUMRMwEQYDVQQKDApVdG9waWEgRE1WMRIwEAYDVQQDDAlVdG9waWEgRFMwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARqAtxPi7PXQeU+0PpqWVHSqzFz3d4PUmfo/yzcRs0C88bqao0g7p+L7rWL9y7ICQ1w1o7AeigLa2DhSNTrZU7no3cwdTAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUBAf8ECzAJBgcogYxdBQECMB0GA1UdDgQWBBRT8Dw2mg26zTA7UsXctTn1akMftTAfBgNVHSMEGDAWgBSoexZlUxPzw1qnN9PtH8I+e4lKYDAKBggqhkjOPQQDAgNIADBFAiEAsHE9OuGUl7wky98v3K8Io6C3uLtVelnrww7vo/V4w/MCIDK08Twg7F9+c5oaE5xvYZ0gbHnE2kOMjatnnFcUuK0S"
+          ]
+        }
+      }
+    },
+    {
+      "expect" : {
+        "lenient" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "profile.crl_distribution_point"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : false
+          }
+        },
+        "strict" : {
+          "decision" : "NOT_TRUSTED",
+          "entity" : null,
+          "errors" : [
+            "profile.crl_distribution_point"
+          ],
+          "framework" : null,
+          "matched" : [ ],
+          "mechanism" : "national-id",
+          "trustedAuthorities" : [ ],
+          "warnings" : [ ],
+          "x509" : {
+            "anchorFound" : true,
+            "revocation" : [
+              "GOOD"
+            ],
+            "valid" : false
+          }
+        }
+      },
+      "name" : "roles: another role of the issuer domains is held to the issuer mechanism's profile",
+      "query" : {
+        "context" : {
+          "credentialFormat" : "mso_mdoc",
+          "credentialType" : "org.example.id.card",
+          "protocol" : "oid4vci"
+        },
+        "role" : "other",
+        "subject" : {
+          "x5c" : [
+            "MIICEjCCAbegAwIBAgIJAKx4edy/WNe5MAoGCCqGSM49BAMCMEUxCzAJBgNVBAYTAlVUMRYwFAYDVQQKDA1VdG9waWEgTmF0aW9uMR4wHAYDVQQDDBVVdG9waWEgTmF0aW9uYWwgSUQgQ0EwHhcNMjYxMTEyMDQxMTI0WhcNNDYwMTExMDQxMTI0WjBQMQswCQYDVQQGEwJVVDEWMBQGA1UECgwNVXRvcGlhIE5hdGlvbjEpMCcGA1UEAwwgTmF0aW9uYWwgSUQgc2lnbmVyIHdpdGhvdXQgYSBDUkwwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATwP9MzVIt0KwdFYwjopPuUVA0hD6P4ICyatSoLHoiXFKbtiOSahe4+/FJhly4zwgqMJ+W3uQM8mXzU5bZeCT1Mo4GEMIGBMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMCEGA1UdJQEB/wQXMBUGCisGAQQBho0fAQEGByiBjF0FAQIwHQYDVR0OBBYEFCQTVxljrbSme1BUiiy20eLNeYqTMB8GA1UdIwQYMBaAFLs/FVuJMfzXTOFPja6svS0VNl6qMAoGCCqGSM49BAMCA0kAMEYCIQCxwnxjUGdQrRE5aDZMfccBEZ3u+Ni+63nV36XHLohCdwIhAL7JgrYWSRW0QzI1mn9Jh70T/OMrtBwPJd/eANGLDtwN"
+          ]
+        }
+      }
     }
   ],
   "description" : "Generated by MechanismVectorsTest from mechanisms.cases.json; do not edit. 'snapshots' are the claims the service signs for a lenient and a strict client, 'expect' the outcome of its own evaluation of each query for each of them.",

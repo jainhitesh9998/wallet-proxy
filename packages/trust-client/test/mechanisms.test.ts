@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createTrustClient, MemoryCacheStore, TrustIntegrityError, type TrustClientConfig, type TrustMechanism, type TrustQuery } from '../src/index.js';
-import { jwkThumbprint, MechanismError, parseMechanisms, selectMechanism } from '../src/primitives.js';
+import { jwkThumbprint, LocalEvaluator, MechanismError, parseCertificate, parseMechanisms, selectMechanism } from '../src/primitives.js';
 import { b64, down, es256Key, fakeFetch, json, pem, signJwt } from './helpers.js';
 
 const BASE = 'https://trust.example';
@@ -146,6 +146,31 @@ describe('the mechanisms claim is read strictly', () => {
     expect(selectMechanism(list, 'authorization_server', undefined, [])?.id).toBe('as');
     expect(selectMechanism(list, 'issuer', 'ldp_vc', [])?.id).toBe('issuers');
     expect(selectMechanism(list, 'verifier', undefined, [])).toBeUndefined();
+  });
+
+  /**
+   * A question about another role whose chains are validated in the issuer's trust domains (other, accreditation
+   * authority, authorization server) is governed by a mechanism of its own role first, and otherwise as an issuer
+   * question: naming another role must not get a chain past the issuer mechanisms (TrustEvaluator does the same).
+   */
+  it('governs a question of a role that shares the issuer domains as an issuer question when no mechanism of its role matches', async () => {
+    const mdl = { id: 'mdl', for: { role: 'issuer', formats: ['mso_mdoc'], types: ['org.iso.18013.5.1.mDL'] }, x509: { domain: 'national-id' } };
+    const ownAs = { id: 'as', for: { role: 'authorization_server' }, keys: ['x5c'] };
+    const decide = (role: string, mechanisms: unknown[]) => new LocalEvaluator(async () => ({ didDocument: null, didResolutionMetadata: { error: 'notFound' },
+      didDocumentMetadata: {} }) as never).evaluate({ role: role as never, subject: { x5c: [b64(pem('ds'))] },
+      context: { credentialFormat: 'mso_mdoc', credentialType: 'org.iso.18013.5.1.mDL' } }, { entities: [], frameworks: [], source: 'snapshot',
+      anchors: [{ domain: 'mdoc-iaca', frameworkId: 'utopia', certificate: parseCertificate(b64(pem('iaca'))) }], mechanisms: parseMechanisms(mechanisms) });
+    for (const role of ['other', 'accreditation_authority', 'authorization_server']) {
+      const d = await decide(role, [mdl]);
+      expect([d.decision, d.evidence?.mechanism, d.reasons.map((r) => r.code)], role).toEqual(['UNKNOWN', 'mdl', ['x509.no_anchor', 'local.snapshot']]);
+    }
+    // A mechanism of the question's own role comes first.
+    expect((await decide('authorization_server', [mdl, ownAs])).evidence?.mechanism).toBe('as');
+    // Roles with trust domains of their own are not issuer questions; nor is anything else when no mechanism matches.
+    for (const role of ['wallet_provider', 'status_list_provider']) {
+      expect((await decide(role, [mdl])).evidence?.mechanism, role).toBeUndefined();
+    }
+    expect((await decide('other', [ownAs])).decision).toBe('TRUSTED');
   });
 });
 

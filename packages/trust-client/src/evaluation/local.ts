@@ -120,6 +120,9 @@ export function readRole(role: unknown): QueryRole | undefined {
   return QUERY_ROLES.get(registry);
 }
 
+/** Whether the chains of a question about {@code role} are validated in the issuer's trust domains (domainFor). */
+const sharesIssuerDomains = (role: QueryRole) => role !== 'verifier' && role !== 'wallet_provider' && role !== 'status_list_provider';
+
 export function domainFor(role: QueryRole | undefined, format?: string): string {
   if (role === 'verifier') return 'verifier-access';
   if (role === 'wallet_provider') return 'wallet-provider';
@@ -321,10 +324,16 @@ export class LocalEvaluator {
    * The operator's mechanism that governs the question: the first of those in force whose {@code for} matches its role,
    * its format and any of the types it asserts. None: the question is decided exactly as without mechanisms. A question
    * that names no role is an issuer question here, as it is for the rest of the evaluation (its chain is validated in the
-   * issuer domains, see domainFor): otherwise leaving the role out would be a way around every issuer mechanism.
+   * issuer domains, see domainFor): otherwise leaving the role out would be a way around every issuer mechanism. For the
+   * same reason a question about another role whose chains are validated in the issuer domains (every role but verifier,
+   * wallet provider and status list provider) is governed by a mechanism of its own role first, and when none matches,
+   * as an issuer question: the issuer mechanisms are tried with its format and types.
    */
   private selectMechanism(data: LocalTrustData, role: QueryRole | undefined, format: string | undefined, types: string[]): TrustMechanism | undefined {
-    return selectMechanism(data.mechanisms ?? [], role ?? 'issuer', format, types);
+    const asked = role ?? 'issuer';
+    const own = selectMechanism(data.mechanisms ?? [], asked, format, types);
+    if (own || asked === 'issuer' || !sharesIssuerDomains(asked)) return own;
+    return selectMechanism(data.mechanisms ?? [], 'issuer', format, types);
   }
 
   private claim(ev: Evaluation): Claim {

@@ -223,10 +223,23 @@ public class TrustEvaluator {
      * The operator's mechanism that governs the question: the first whose {@code for} matches its role, its format and
      * any of the types it asserts. None: the question is decided exactly as without mechanisms. A question that names no
      * role is an issuer question here, as it is for the rest of the evaluation (its chain is validated in the issuer
-     * domains, see {@link #domainFor}): otherwise leaving the role out would be a way around every issuer mechanism.
+     * domains, see {@link #domainFor}): otherwise leaving the role out would be a way around every issuer mechanism. For
+     * the same reason a question about another role whose chains are validated in the issuer domains (every role but
+     * verifier, wallet provider and status list provider) is governed by a mechanism of its own role first, and when
+     * none matches, as an issuer question: the issuer mechanisms are tried with its format and types.
      */
     private TrustMechanism selectMechanism(EntityRole role, String format, Set<String> types) {
-        return mechanisms.select(role == null ? EntityRole.CREDENTIAL_ISSUER : role, format, types);
+        EntityRole asked = role == null ? EntityRole.CREDENTIAL_ISSUER : role;
+        TrustMechanism own = mechanisms.select(asked, format, types);
+        if (own != null || asked == EntityRole.CREDENTIAL_ISSUER || !sharesIssuerDomains(asked)) {
+            return own;
+        }
+        return mechanisms.select(EntityRole.CREDENTIAL_ISSUER, format, types);
+    }
+
+    /** Whether the chains of a question about {@code role} are validated in the issuer's trust domains ({@link #domainFor}). */
+    private static boolean sharesIssuerDomains(EntityRole role) {
+        return role != EntityRole.VERIFIER && role != EntityRole.WALLET_PROVIDER && role != EntityRole.STATUS_LIST_PROVIDER;
     }
 
     /** Identifiers from the identifier string (incl. OpenID4VP client_id prefixes). */

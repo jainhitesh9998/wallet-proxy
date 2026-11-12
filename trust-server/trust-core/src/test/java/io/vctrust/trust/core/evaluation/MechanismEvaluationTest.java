@@ -137,6 +137,36 @@ class MechanismEvaluationTest {
                 .isEqualTo(without.evaluate(q, lenient));
     }
 
+    /**
+     * A question about another role whose chains are validated in the issuer's trust domains (other, accreditation
+     * authority, authorization server) is governed by a mechanism of its own role first, and otherwise as an issuer
+     * question: naming another role must not get a chain past the issuer mechanisms (LocalEvaluator does the same).
+     */
+    @Test
+    void aRoleThatSharesTheIssuerDomainsIsGovernedAsAnIssuerQuestion() {
+        for (EntityRole role : List.of(EntityRole.OTHER, EntityRole.ACCREDITATION_AUTHORITY, EntityRole.AUTHORIZATION_SERVER)) {
+            TrustDecision d = mdlAsked(evaluator, role);
+            assertThat(d.decision()).as(role.name()).isEqualTo(Decision.UNKNOWN);
+            assertThat(d.evidence().mechanism()).as(role.name()).isEqualTo("mdl");
+            assertThat(d.reasons()).as(role.name()).extracting(Reason::code).containsExactly("x509.no_anchor");
+        }
+        // A mechanism of the question's own role comes first.
+        List<Object> withAs = new java.util.ArrayList<>(MECHANISMS);
+        withAs.add(Map.of("id", "as", "for", Map.of("role", "authorization_server"), "keys", List.of("x5c")));
+        TrustEvaluator asFirst = new TrustEvaluator(registry, null, new DidResolver(List.of(new DidKeyDriver())), new X509PathValidator(),
+                Clock.systemUTC(), Duration.ofHours(1), noCrls, TrustMechanisms.fromConfiguration(withAs));
+        assertThat(mdlAsked(asFirst, EntityRole.AUTHORIZATION_SERVER).evidence().mechanism()).isEqualTo("as");
+        // Roles with trust domains of their own are not issuer questions.
+        for (EntityRole role : List.of(EntityRole.WALLET_PROVIDER, EntityRole.STATUS_LIST_PROVIDER)) {
+            assertThat(mdlAsked(evaluator, role).evidence().mechanism()).as(role.name()).isNull();
+        }
+    }
+
+    TrustDecision mdlAsked(TrustEvaluator e, EntityRole role) {
+        return e.evaluate(new TrustQuery(role, new TrustQuery.Subject(null, List.of(Certificates.toBase64(ds.certificate())), null, null),
+                new TrustQuery.Context("oid4vci", "mso_mdoc", "org.iso.18013.5.1.mDL", null, null, List.of())), lenient);
+    }
+
     @Test
     void theBuiltInProfileFollowsTheQuestionToAnotherDomain() {
         // An mDL governed into the national-id domain still needs the ISO 18013-5 purpose of a Document Signer.

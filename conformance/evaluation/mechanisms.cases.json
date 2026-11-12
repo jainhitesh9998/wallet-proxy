@@ -1515,6 +1515,70 @@
           "protocol": "oid4vci"
         }
       }
+    },
+    {
+      "name": "roles: a question about another role of the issuer domains ('other') is governed as an issuer question",
+      "query": {
+        "role": "other",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "roles: the same for an accreditation authority",
+      "query": {
+        "role": "accreditation_authority",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "roles: the same for an authorization server, which a mechanism of its own role governs first",
+      "query": {
+        "role": "authorization_server",
+        "subject": {
+          "x5c": [
+            "pki:ds"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.iso.18013.5.1.mDL"
+        }
+      }
+    },
+    {
+      "name": "roles: another role of the issuer domains is held to the issuer mechanism's profile",
+      "query": {
+        "role": "other",
+        "subject": {
+          "x5c": [
+            "pki:nid-no-dp"
+          ]
+        },
+        "context": {
+          "protocol": "oid4vci",
+          "credentialFormat": "mso_mdoc",
+          "credentialType": "org.example.id.card"
+        }
+      }
     }
   ]
 }
