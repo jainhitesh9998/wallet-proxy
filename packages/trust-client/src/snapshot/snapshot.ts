@@ -136,33 +136,50 @@ export class SnapshotManager {
     const r = await this.transport.request<string>('GET', '/api/v1/snapshot', {
       accept: 'application/jwt', headers: this.cached?.etag ? { 'If-None-Match': this.cached.etag } : {},
     });
-    if (r.status === 304 && this.parsed) return this.parsed;
+    if (r.status === 304 && this.parsed) return this.held(this.parsed);
     const jwt = String(r.body).trim();
     const etag = r.headers.get('ETag') ?? undefined;
     const data = await this.verify(jwt, etag);
     if (data.expiresAt.getTime() <= this.now()) throw new TrustIntegrityError('The service returned an expired snapshot');
     // Rollback protection: never replace the held snapshot with an older one (a replay, or a lagging replica).
-    if (this.parsed && data.issuedAt.getTime() < this.parsed.issuedAt.getTime()) return this.parsed;
+    if (this.parsed && data.issuedAt.getTime() < this.parsed.issuedAt.getTime()) return this.held(this.parsed);
     this.cached = { jwt, etag };
     this.parsed = data;
     await this.store.set(KEY, JSON.stringify(this.cached));
     return data;
   }
 
-  /** The current usable snapshot (verified, not beyond its grace period), or null. */
+  /**
+   * The current usable snapshot (verified, not beyond its grace period, and not dated in the future by this device's
+   * clock), or null.
+   */
   async current(): Promise<SnapshotData | null> {
     await this.load();
     if (!this.parsed) return null;
     const t = this.now();
-    if (t > this.parsed.expiresAt.getTime() + this.graceMs) return null;
+    if (t > this.parsed.expiresAt.getTime() + this.graceMs || this.datedInFuture(this.parsed)) return null;
     return { ...this.parsed, stale: t > this.parsed.expiresAt.getTime() };
   }
 
   /**
+   * Whether this device's clock says the snapshot was issued in the future (beyond the skew allowed). Its data is not
+   * used meanwhile: accepted, it would outrank every later, correctly dated snapshot.
+   */
+  private datedInFuture(s: SnapshotData): boolean {
+    return s.issuedAt.getTime() > this.now() + MAX_CLOCK_SKEW_MS;
+  }
+
+  /** The held snapshot as the outcome of a sync: refused, as a fetched one would be, while it is dated in the future. */
+  private held(s: SnapshotData): SnapshotData {
+    if (this.datedInFuture(s)) throw new TrustIntegrityError('Snapshot is dated in the future: check the clock of this device');
+    return s;
+  }
+
+  /**
    * The rules stated by the most recent snapshot that verified, also once its data can no longer be used (past its
-   * expiry and grace period) and after a restart: the stored snapshot is verified again when it is loaded, and one
-   * that does not verify is dropped. Only its rules leave this way, never the data of a snapshot that is not usable.
-   * Null when no snapshot verified.
+   * expiry and grace period, or dated in the future by a clock that is behind) and after a restart: the stored snapshot
+   * is verified again when it is loaded, and one that is not the service's is dropped. Only its rules leave this way,
+   * never the data of a snapshot that is not usable. Null when no snapshot verified.
    */
   async lastRules(): Promise<SnapshotRules | null> {
     await this.load();
@@ -170,6 +187,12 @@ export class SnapshotManager {
     return p ? { id: p.id, issuedAt: p.issuedAt, policy: p.policy, mechanisms: p.mechanisms } : null;
   }
 
+  /**
+   * The stored snapshot, verified again. One that is not the service's (it does not parse, its signature, audience or
+   * format does not verify) is dropped. One that verifies but is dated in the future by this device's clock is kept:
+   * the clock is what is wrong (one start with it behind would otherwise lose the remembered rules for good); its data
+   * is not used while the clock says so (current()), its rules are in force (lastRules()), as it verified.
+   */
   private async load(): Promise<void> {
     if (this.cached) return;
     const raw = await this.store.get(KEY).catch(() => null);
@@ -251,6 +274,10 @@ export class SnapshotManager {
     }
   }
 
+  /**
+   * @param offline the snapshot stored on this device, verified again: no key is fetched, and one dated in the future is
+   *                not refused here (see load()); a snapshot the service has just sent is
+   */
   private async verify(jwt: string, etag: string | undefined, offline = false): Promise<SnapshotData> {
     const jws = decodeJws<Record<string, unknown>>(jwt);
     if (jws.header.typ !== 'trust-snapshot+jwt') throw new TrustIntegrityError(`Unexpected snapshot typ ${String(jws.header.typ)}`);
@@ -265,7 +292,7 @@ export class SnapshotManager {
     const mechanisms = this.mechanisms(p);
     const [iat, exp] = [Number(p.iat) * 1000, Number(p.exp) * 1000];
     if (!Number.isFinite(iat) || !Number.isFinite(exp) || exp <= iat) throw new TrustIntegrityError('Snapshot has no valid iat and exp');
-    if (iat > this.now() + MAX_CLOCK_SKEW_MS) throw new TrustIntegrityError('Snapshot is dated in the future: check the clock of this device');
+    if (!offline && iat > this.now() + MAX_CLOCK_SKEW_MS) throw new TrustIntegrityError('Snapshot is dated in the future: check the clock of this device');
     const anchors: LocalAnchor[] = [];
     for (const a of (p.anchors as Record<string, unknown>[] | undefined) ?? []) {
       try {

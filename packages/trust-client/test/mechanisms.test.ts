@@ -258,6 +258,29 @@ describe('the mechanisms in force', () => {
     expect([d.source, d.evidence?.mechanism]).toEqual(['pinned', 'app-mdoc']);
   });
 
+  it('keeps a stored snapshot dated ahead of the device clock: its rules stay in force, and its data comes back with the clock', async () => {
+    const { w, client } = world({ format: 5, mechanisms: [MDL_REVOCATION], policy: { ...LENIENT, strictAuthorization: true } });
+    await client().sync();
+    const synced = w.now;
+    // The app starts again with the device clock ten minutes before the snapshot's iat, and the service out of reach.
+    w.online = false;
+    w.now = synced - 10 * 60_000;
+    const behind = client();
+    const held = await behind.status();
+    expect(held.snapshot).toBeNull();
+    expect(held.rules).toEqual({ requireRevocationStatus: false, strictAuthorization: true, requireSignedIssuerMetadata: false });
+    expect(held.mechanisms?.map((m) => m.id)).toEqual(['mdl-revocation']);
+    const d = await behind.evaluate(ds);
+    expect([d.decision, d.source, d.evidence?.mechanism]).toEqual(['NOT_TRUSTED', 'pinned', 'mdl-revocation']);
+    expect(await w.storage.get('snapshot')).not.toBeNull();
+    // The clock is put right: the stored snapshot is used again, its data with its rules.
+    w.now = synced + 60_000;
+    const right = client();
+    const again = await right.evaluate(ds);
+    expect([again.decision, again.source, again.evidence?.mechanism]).toEqual(['NOT_TRUSTED', 'snapshot', 'mdl-revocation']);
+    expect((await right.status()).snapshot?.mechanisms).toBe(1);
+  });
+
   it('reports the rule flags in status().rules and the mechanisms next to them, not among them', async () => {
     const c = world({ format: 5, mechanisms: [NATIONAL_ID, MDL_REVOCATION] }).client({ policy: { strictAuthorization: true } });
     await c.sync();
