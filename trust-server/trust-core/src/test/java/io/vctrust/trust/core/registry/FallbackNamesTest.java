@@ -195,17 +195,48 @@ class FallbackNamesTest {
     }
 
     @Test
-    void anEntityWrittenWithAnotherFrameworksNameWhoseOwnNameIsTakenTooIsNotLoaded() {
-        // National's own "acme@other@national" comes first and holds the name.
+    void anEntityWrittenWithAnotherFrameworksNameWhoseOwnNameIsTakenTooIsMergedWithTheEntryThere() {
+        // National's own "acme@other@national" comes first and holds the name. The revoked "acme@other" used to be left
+        // out; it is merged into that entry now, as it is when it comes first.
         Fixed national = new Fixed("national-list", "national", listing(List.of(issuer("acme@other@national", "national", "https://acme.example"),
                 acme("acme@other")), List.of()));
         var registry = new TrustRegistry();
         try (var manager = new TrustSourceManager(registry, WITH_NATIONAL, List.of(national), Clock.systemUTC())) {
             manager.start();
             assertThat(registry.snapshot().entities()).singleElement()
-                    .satisfies(e -> assertThat(e.status()).isEqualTo(EntityStatus.ACTIVE));
-            assertThat(warnings(manager, "national-list")).containsExactly("Entity 'acme@other' is not loaded: 'acme@other' is the name an entry"
-                    + " of framework 'other' is listed under when another framework has its id, and 'acme@other@national' is taken too");
+                    .satisfies(e -> assertThat(e.status()).isEqualTo(EntityStatus.REVOKED));
+            assertThat(warnings(manager, "national-list")).containsExactly("Entity 'acme@other' is listed as 'acme@other@national' together with"
+                    + " the entry already there: 'acme@other' is the name an entry of framework 'other' is listed under when another framework has its id");
+        }
+    }
+
+    /**
+     * National's active {@code acme@other@national} and its revoked {@code acme@other} (which pins a certificate and falls
+     * back to that name), from two sources: listed in one order they merge, and in the other the revoked one used to be
+     * left out, so that its certificate was trusted through national's CA. Only an entry of national can hold that name,
+     * so the two are merged in either order.
+     */
+    @Test
+    void anEntityWhoseFallbackNameIsHeldIsMergedWithTheEntryThereInEitherOrder() {
+        Fixed own = new Fixed("own", "national", listing(List.of(issuer("acme@other@national", "national", "https://acme.example")),
+                List.of(anchor("national-ca", NATIONAL_CA, "national"))));
+        Fixed withdrawn = new Fixed("withdrawn", "national", listing(List.of(acme("acme@other").toBuilder().certificate(ACME.certificate()).build()),
+                List.of()));
+        for (List<io.vctrust.trust.core.spi.TrustSource> order : List.<List<io.vctrust.trust.core.spi.TrustSource>>of(
+                List.of(own, withdrawn), List.of(withdrawn, own))) {
+            String which = order.getFirst().id() + " first";
+            var registry = new TrustRegistry();
+            try (var manager = new TrustSourceManager(registry, WITH_NATIONAL, order, Clock.systemUTC())) {
+                manager.start();
+                TrustDecision d = decideAcme(registry, manager);
+                assertThat(d.decision()).as(which + ": " + d.summary()).isEqualTo(Decision.NOT_TRUSTED);
+                assertThat(d.reasons()).as(which).extracting(r -> r.code()).contains("entity.status");
+                assertThat(registry.snapshot().entities()).as(which).singleElement().satisfies(e -> {
+                    assertThat(e.id()).isEqualTo("acme@other@national");
+                    assertThat(e.status()).isEqualTo(EntityStatus.REVOKED);
+                    assertThat(e.certificates()).containsExactly(ACME.certificate());
+                });
+            }
         }
     }
 
@@ -238,11 +269,15 @@ class FallbackNamesTest {
         var registry = new TrustRegistry();
         try (var manager = new TrustSourceManager(registry, FRAMEWORKS, List.of(first, partner), Clock.systemUTC())) {
             manager.start();
-            // The partner's "ca" falls back to "ca@partner", which its own anchor of another certificate holds: two
-            // records of one anchor id in one framework that differ, and neither is loaded (the first one listed was kept).
-            assertThat(warnings(manager, "partner")).anyMatch(w -> w.startsWith("Entity 'a' is not loaded"))
+            // The partner's "a" falls back to "a@partner", which its own entry holds: the two are merged (it used to be
+            // left out). The partner's "ca" falls back to "ca@partner", which its own anchor of another certificate holds:
+            // two records of one anchor id in one framework that differ, and neither is loaded (the first one listed was kept).
+            assertThat(warnings(manager, "partner")).anyMatch(w -> w.equals("Entity 'a' is listed as 'a@partner' together with the entry already"
+                            + " there: framework 'other' already has an entity with that id"))
                     .anyMatch(w -> w.startsWith("Anchor 'ca@partner' is not loaded: source 'partner' lists it twice in framework 'partner'"
                             + " (written as 'ca@partner' and 'ca') with records that differ (certificate)"));
+            assertThat(registry.snapshot().entity("a@partner")).get().satisfies(e -> assertThat(e.identifiers()).extracting(i -> i.value())
+                    .containsExactly("https://partner.example/own", "https://partner.example/a"));
             assertThat(registry.snapshot().anchor("ca@partner")).isEmpty();
             assertThat(registry.snapshot().anchor("ca")).get().satisfies(a -> assertThat(a.frameworkId()).isEqualTo("other"));
         }

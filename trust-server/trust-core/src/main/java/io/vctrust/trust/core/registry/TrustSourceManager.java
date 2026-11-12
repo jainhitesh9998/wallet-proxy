@@ -49,7 +49,8 @@ import java.util.regex.Pattern;
  * configured for; entities of the same id are merged only within a framework; an anchor is tied to an entity only
  * of its own framework. An entry whose id another framework already has is listed as {@code <id>@<framework>}, and
  * that name is its framework's, so it is always free ({@link #fallbackNameOf}): an entity of another framework written
- * with it is listed under its own fallback name instead, and such an anchor is not loaded. A source of one framework can therefore add nothing to, and take nothing from, what a
+ * with it is listed under its own fallback name instead, and such an anchor is not loaded. An entity whose fallback name
+ * an entry of its own framework already holds is merged with it. A source of one framework can therefore add nothing to, and take nothing from, what a
  * client of another framework is told. Two records of one anchor id in one framework that differ (in anything but
  * where and when they were retrieved) are neither loaded: which one counted would depend on the order of the sources.
  * An entry that is not loaded is named in a warning of its source's state. A list that is older than the one already
@@ -283,13 +284,18 @@ public class TrustSourceManager implements AutoCloseable {
                                 ? "'" + e.id() + "' is the name an entry of framework '" + reserved.get() + "' is listed under when another framework has its id"
                                 : "framework '" + other.frameworkId() + "' already has an entity with that id";
                         id = e.id() + "@" + framework;
-                        if (entities.containsKey(id)) {
-                            // Only an entry of this framework can hold that name: no other framework may write it.
+                        TrustedEntity holder = entities.get(id);
+                        if (holder != null && !Objects.equals(holder.frameworkId(), framework)) {
+                            // Not reached: only an entry of this framework can hold that name, no other may write it.
                             refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is not loaded: " + why
-                                    + ", and '" + id + "' is taken too");
+                                    + ", and '" + id + "' is held by framework '" + holder.frameworkId() + "'");
                             continue;
                         }
-                        refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is listed as '" + id + "': " + why);
+                        // The name is held by an entry of this framework: the two are merged as two entries of one id
+                        // are. Left out, the entry would no longer restrict its party, and which one survived would
+                        // depend on the order of the records (in the other order they merge as one id).
+                        refused.computeIfAbsent(s.id(), k -> new ArrayList<>()).add("Entity '" + e.id() + "' is listed as '" + id + "'"
+                                + (holder != null ? " together with the entry already there" : "") + ": " + why);
                     }
                     placed.put(Arrays.asList(framework, e.id()), id);
                 }
