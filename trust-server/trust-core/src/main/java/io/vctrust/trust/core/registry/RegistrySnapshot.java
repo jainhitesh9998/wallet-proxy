@@ -129,7 +129,8 @@ public final class RegistrySnapshot {
      * conflicts), the most restrictive status wins, and the merged entry is valid only where both are (the later
      * {@code validFrom} and the earlier {@code validUntil} of those stated; an entry that states none sets no bound).
      * An entry that says the registration ended, or has not begun, restricts the party as a status does: it must not
-     * lose to another entry for being listed second.
+     * lose to another entry for being listed second. An entry that names no role and whose status is not usable
+     * withdraws the party for every role: the merged entry then names no role either.
      */
     static TrustedEntity merge(TrustedEntity a, TrustedEntity b) {
         TrustedEntity.Builder m = a.toBuilder();
@@ -139,7 +140,13 @@ public final class RegistrySnapshot {
         Set<EntityRole> roles = EnumSet.noneOf(EntityRole.class);
         roles.addAll(a.roles());
         roles.addAll(b.roles());
-        m.roles(roles);
+        // An entry that names no role and is not in good standing withdraws the party whatever it is asked about: the
+        // role filter keeps it. Given the roles of the other entry, the merged entry would be dropped by a question of
+        // another role, and the chain to the CA would decide. It names no role then either.
+        if (withdrawsForEveryRole(a) || withdrawsForEveryRole(b)) {
+            roles.clear();
+        }
+        m.replaceRoles(roles);
         b.identifiers().forEach(m::identifier);
         b.authorizations().forEach(m::authorization);
         if (a.display().isEmpty()) {
@@ -170,6 +177,11 @@ public final class RegistrySnapshot {
         if (a.attributes().get("mergedFrom") instanceof Collection<?> c) c.forEach(x -> sources.add(String.valueOf(x)));
         m.attribute("mergedFrom", List.copyOf(sources));
         return m.build();
+    }
+
+    /** An entry that names no role, with a status that is not usable: it withdraws the party for every role. */
+    private static boolean withdrawsForEveryRole(TrustedEntity e) {
+        return e.roles().isEmpty() && !e.status().isUsable();
     }
 
     private static EntityStatus moreRestrictive(EntityStatus a, EntityStatus b) {

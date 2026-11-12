@@ -121,6 +121,8 @@ public record TrustedEntity(String id, String frameworkId, Set<EntityRole> roles
         public Builder framework(String v) { this.frameworkId = v; return this; }
         public Builder role(EntityRole v) { this.roles.add(v); return this; }
         public Builder roles(Iterable<EntityRole> v) { v.forEach(this.roles::add); return this; }
+        /** The roles {@code v} and no others (where {@link #roles} adds to those the builder holds). */
+        public Builder replaceRoles(Iterable<EntityRole> v) { this.roles.clear(); return roles(v); }
         public Builder identifier(Identifier v) { if (!identifiers.contains(v)) this.identifiers.add(v); return this; }
         public Builder identifier(IdentifierType t, String v) { return identifier(new Identifier(t, v)); }
         public Builder display(LocalizedDisplay v) { this.display.add(v); return this; }

@@ -7,6 +7,7 @@ import io.vctrust.trust.core.evaluation.TrustDecision;
 import io.vctrust.trust.core.evaluation.TrustEvaluator;
 import io.vctrust.trust.core.evaluation.TrustQuery;
 import io.vctrust.trust.core.model.EntityRole;
+import io.vctrust.trust.core.model.EntityStatus;
 import io.vctrust.trust.core.model.IdentifierType;
 import io.vctrust.trust.core.model.TrustAnchor;
 import io.vctrust.trust.core.model.TrustDomain;
@@ -96,6 +97,61 @@ class EntityMergeTest {
 
     static Fixed source(String id, TrustedEntity entity, List<TrustAnchor> anchors) {
         return new Fixed(id, "fw", new SourceLoadResult(List.of(entity), anchors, ListInfo.unsigned(), List.of()));
+    }
+
+    /** The party bound by the subject of its certificate, with these roles and this status. */
+    static TrustedEntity party(Set<EntityRole> roles, EntityStatus status) {
+        TrustedEntity.Builder b = TrustedEntity.builder("party").framework("fw").status(status)
+                .identifier(IdentifierType.X509_SUBJECT, Certificates.subjectName(SIGNER.certificate()));
+        roles.forEach(b::role);
+        return b.build();
+    }
+
+    @Test
+    void aWithdrawalThatNamesNoRoleNamesNoneOnceMerged() {
+        TrustedEntity withdrawn = party(Set.of(), EntityStatus.REVOKED);
+        TrustedEntity wallet = party(Set.of(EntityRole.WALLET_PROVIDER), EntityStatus.ACTIVE);
+        for (List<TrustedEntity> order : List.of(List.of(withdrawn, wallet), List.of(wallet, withdrawn))) {
+            TrustedEntity merged = RegistrySnapshot.merge(order.get(0), order.get(1));
+            assertThat(merged.roles()).isEmpty();
+            assertThat(merged.status()).isEqualTo(EntityStatus.REVOKED);
+        }
+        // An active entry without roles adds nothing to withdraw: the roles are the union, as before.
+        TrustedEntity unroled = party(Set.of(), EntityStatus.ACTIVE);
+        for (List<TrustedEntity> order : List.of(List.of(unroled, wallet), List.of(wallet, unroled))) {
+            assertThat(RegistrySnapshot.merge(order.get(0), order.get(1)).roles()).containsExactly(EntityRole.WALLET_PROVIDER);
+        }
+        // A withdrawn entry that names roles limits the withdrawal to them: the union, as before.
+        TrustedEntity revokedWallet = party(Set.of(EntityRole.WALLET_PROVIDER), EntityStatus.REVOKED);
+        TrustedEntity issuer = party(Set.of(EntityRole.CREDENTIAL_ISSUER), EntityStatus.ACTIVE);
+        assertThat(RegistrySnapshot.merge(revokedWallet, issuer).roles()).containsExactlyInAnyOrder(EntityRole.WALLET_PROVIDER, EntityRole.CREDENTIAL_ISSUER);
+    }
+
+    @Test
+    void aWithdrawalThatNamesNoRoleKeepsThePartyOutWhateverIsAskedInEitherOrder() {
+        List<TrustAnchor> anchors = List.of(
+                new TrustAnchor("shared-issuer-ca", TrustDomain.CREDENTIAL_ISSUER, CA.certificate(), "fw", null, null, null, null),
+                new TrustAnchor("shared-verifier-ca", TrustDomain.VERIFIER_ACCESS, CA.certificate(), "fw", null, null, null, null));
+        Fixed withdrawn = source("withdrawn", party(Set.of(), EntityStatus.REVOKED), anchors);
+        Fixed wallet = source("wallet", party(Set.of(EntityRole.WALLET_PROVIDER), EntityStatus.ACTIVE), List.of());
+        for (List<TrustSource> order : List.<List<TrustSource>>of(List.of(withdrawn, wallet), List.of(wallet, withdrawn))) {
+            TrustRegistry registry = new TrustRegistry();
+            try (TrustSourceManager manager = new TrustSourceManager(registry, List.of(new TrustFramework("fw", "Framework", null, null, null)),
+                    order, Clock.systemUTC())) {
+                manager.start();
+                TrustEvaluator evaluator = new TrustEvaluator(registry, manager, new DidResolver(List.of()), new X509PathValidator(),
+                        Clock.systemUTC(), Duration.ofHours(1));
+                for (EntityRole role : List.of(EntityRole.CREDENTIAL_ISSUER, EntityRole.VERIFIER)) {
+                    String which = order.getFirst().id() + " first, asked as " + role;
+                    TrustDecision d = evaluator.evaluate(new TrustQuery(role,
+                            new TrustQuery.Subject(null, List.of(Certificates.toBase64(SIGNER.certificate())), null, null),
+                            new TrustQuery.Context(role == EntityRole.VERIFIER ? "oid4vp" : "oid4vci", role == EntityRole.VERIFIER ? null : "dc+sd-jwt",
+                                    null, null, null, List.of())), CLIENT);
+                    assertThat(d.decision()).as(which + ": " + d.summary()).isEqualTo(Decision.NOT_TRUSTED);
+                    assertThat(d.reasons()).as(which).filteredOn(Reason::isError).extracting(Reason::code).containsExactly("entity.status");
+                }
+            }
+        }
     }
 
     @Test

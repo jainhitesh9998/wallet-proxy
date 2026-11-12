@@ -227,7 +227,9 @@ for. Entities with the same id are merged when they come from sources of the sam
 describe one party together: roles, identifiers, certificates and authorizations are combined, the most restrictive
 status counts, and the merged entity is valid only where every entry is (the latest `validFrom` and the earliest
 `validUntil` stated), so that an entry saying the registration ended is not outweighed by another that states no
-end; an id that an entity of another framework already has is listed as `<id>@<framework>`
+end. An entry that names no role and whose status is not `ACTIVE` withdraws the party whatever it is asked about,
+so the merged entity then names no role either: given the other entry's roles, it would be left out of a question
+of another role, and the chain to the CA would decide. An id that an entity of another framework already has is listed as `<id>@<framework>`
 instead, and an anchor is tied only to an entity of its own framework. A name `<id>@<framework>` (the id of a
 configured framework, or of one a source loads into) belongs to that framework, so the name an entry falls back to is
 always free. An entity of another framework written with such an id does not get it: it is listed under the name it
