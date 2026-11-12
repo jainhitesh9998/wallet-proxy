@@ -24,7 +24,7 @@ API: [`docs/openapi.json`](../docs/openapi.json), or `/swagger-ui.html` on a run
 | `GET /api/v1/proxy/crl?url=`, `/api/v1/proxy/status-list?uri=` | CRL and status list relays (signed by their own issuers) |
 | `GET /api/v1/frameworks`, `/issuers`, `/verifiers`, `/entities/lookup` | The registry as the client may see it; on-demand lookup of unlisted parties |
 | `POST /api/v1/evaluate` | The service's own decision, for verifier backends; the reference the client library is checked against |
-| `/admin/v1/**` | Sources, registry, managed entities and anchors, caches (admin clients) |
+| `/admin/v1/**` | Sources, registry, anchor CRLs, managed entities and anchors, caches (admin clients) |
 
 Configuration: [`docs/configuration.md`](../docs/configuration.md). How it works: [`docs/architecture.md`](../docs/architecture.md).
 Method by method (X.509 chains, CRLs, status lists, DIDs), with an example configuration to run:

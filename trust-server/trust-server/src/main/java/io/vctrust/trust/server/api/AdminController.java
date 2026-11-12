@@ -18,8 +18,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Operator API: source health and refresh, managed entities/anchors, caches. Every use case behind it requires an
- * admin client and checks that itself; the authentication filter refuses others before they get here.
+ * Operator API: source health and refresh, the anchor CRLs held, managed entities/anchors, caches. Every use case
+ * behind it requires an admin client and checks that itself; the authentication filter refuses others before they
+ * get here.
  */
 @RestController
 @RequestMapping("/admin/v1")
@@ -41,6 +42,12 @@ public class AdminController {
     @PostMapping("/sources/{id}/refresh")
     public SourceState refresh(ClientProfile admin, @PathVariable String id) {
         return administration.refreshSource(admin, id);
+    }
+
+    /** The anchor CRLs the service holds: dates, fetches, the last error, whether current and whether in snapshots. */
+    @GetMapping("/crls")
+    public List<Map<String, Object>> anchorCrls(ClientProfile admin) {
+        return administration.anchorCrls(admin);
     }
 
     @GetMapping("/registry")

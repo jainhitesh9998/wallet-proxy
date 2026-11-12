@@ -477,6 +477,46 @@ class TrustServerIntegrationTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void anOperatorSeesTheAnchorCrlsTheServiceHolds() throws Exception {
+        var listed = TestPki.rootCa("CN=Listed IACA,C=UT");
+        var crl = TestPki.crl(listed);
+        String pem = "-----BEGIN X509 CRL-----\n" + Base64.getMimeEncoder().encodeToString(crl.getEncoded()) + "\n-----END X509 CRL-----\n";
+        assertThat(put("/admin/v1/managed/anchors/listed-iaca", "key-admin", Map.of("domain", "mdoc-iaca",
+                "certificate", Certificates.toPem(listed.certificate()), "constraints", Map.of("crl", pem))).statusCode()).isEqualTo(200);
+        try {
+            for (int i = 0; i < 100 && crls.heldFor(listed.certificate()).isEmpty(); i++) {
+                Thread.sleep(50);
+            }
+            var r = get("/admin/v1/crls", "key-admin");
+            assertThat(r.statusCode()).isEqualTo(200);
+            List<Map<String, Object>> entries = Json.MAPPER.readValue(r.body(), List.class);
+            // The CRL pushed with the managed anchor: no url, its dates as the CRL states them, carried in snapshots.
+            assertThat(entries).filteredOn(e -> Certificates.sha256Thumbprint(listed.certificate()).equals(e.get("issuer"))).singleElement()
+                    .satisfies(e -> {
+                        assertThat(e).containsEntry("anchorIds", List.of("listed-iaca")).containsEntry("revoked", 0)
+                                .containsEntry("current", true).containsEntry("inSnapshots", true)
+                                .containsKeys("subject", "crlNumber", "bytes", "fetchedAt", "nextFetch").doesNotContainKeys("url", "error");
+                        assertThat(Instant.parse((String) e.get("thisUpdate"))).isEqualTo(crl.getThisUpdate().toInstant());
+                        assertThat(Instant.parse((String) e.get("nextUpdate"))).isEqualTo(crl.getNextUpdate().toInstant());
+                    });
+            // The CRL the service fetches for the registry's IACA, with where it fetches it from.
+            assertThat(entries).filteredOn(e -> Certificates.sha256Thumbprint(IACA.certificate()).equals(e.get("issuer"))).singleElement()
+                    .satisfies(e -> assertThat(e).containsEntry("url", UPSTREAM_BASE + "/crl/iaca.crl").containsEntry("revoked", 1)
+                            .containsEntry("inSnapshots", true));
+
+            assertThat(get("/admin/v1/crls", "key-a").statusCode()).isEqualTo(403);
+            assertThat(get("/admin/v1/crls", null).statusCode()).isEqualTo(401);
+        } finally {
+            http.send(HttpRequest.newBuilder(URI.create(base() + "/admin/v1/managed/anchors/listed-iaca")).DELETE()
+                    .header("Authorization", "Bearer key-admin").build(), HttpResponse.BodyHandlers.discarding());
+            for (int i = 0; i < 100 && !crls.heldFor(listed.certificate()).isEmpty(); i++) {
+                Thread.sleep(50);
+            }
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void crlAndStatusListRelays() throws Exception {
         var crl = getBytes("/api/v1/proxy/crl?url=" + UPSTREAM_BASE + "/crl/iaca.crl", "key-a", "Accept", "application/pkix-crl");
         assertThat(crl.statusCode()).isEqualTo(200);

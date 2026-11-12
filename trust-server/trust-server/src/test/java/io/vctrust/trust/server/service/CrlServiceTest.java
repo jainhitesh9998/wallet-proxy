@@ -136,7 +136,7 @@ class CrlServiceTest {
         assertThat(service.heldFor(wrong.certificate())).isEmpty();
         assertThat(changes.get()).isEqualTo(1);
 
-        List<Map<String, Object>> listing = service.listing(a -> true);
+        List<Map<String, Object>> listing = service.listing(a -> true, 256 * 1024);
         assertThat(listing).hasSize(4);
         assertThat(listing).filteredOn(m -> m.get("anchorIds").equals(List.of("wrong")))
                 .singleElement().satisfies(m -> assertThat((String) m.get("error")).contains("not issued and signed by the anchor"));
@@ -186,8 +186,75 @@ class CrlServiceTest {
         clock.now = clock.now.plus(Duration.ofHours(2));
         service.refresh();
         assertThat(service.heldFor(ca.certificate())).singleElement().satisfies(c -> assertThat(c.revokedCount()).isEqualTo(1));
-        assertThat(service.listing(a -> true)).singleElement()
-                .satisfies(m -> assertThat((String) m.get("error")).contains("older than the one held"));
+        // The operator sees the refusal, and that the CRL held (the newer one) is still current and still shipped.
+        assertThat(service.listing(a -> true, 256 * 1024)).singleElement().satisfies(m -> {
+            assertThat((String) m.get("error")).contains("older than the one held");
+            assertThat(m).containsEntry("revoked", 1).containsEntry("current", true).containsEntry("inSnapshots", true);
+        });
+    }
+
+    @Test
+    void theOperatorListingSaysWhatIsHeldAndWhatSnapshotsCarry() throws Exception {
+        var pushed = TestPki.rootCa("CN=Pushed CRL,C=UT");
+        var fetched = TestPki.rootCa("CN=Fetched CRL,C=UT");
+        var unreachable = TestPki.rootCa("CN=Unreachable CRL,C=UT");
+        var wrong = TestPki.rootCa("CN=Wrong CRL,C=UT");
+        Instant now = clock.instant();
+        Instant nextUpdate = now.plus(Duration.ofDays(1));
+        byte[] pushedCrl = der(TestPki.crl(pushed, now.minus(Duration.ofHours(1)), nextUpdate, List.of(), null, null));
+        serve("/fetched.crl", der(TestPki.crl(fetched)), "application/pkix-crl");
+        serve("/wrong.crl", der(TestPki.crl(fetched)), "application/pkix-crl");
+        // Nothing answers at /missing.crl: the test server says 404.
+        TrustRegistry registry = new TrustRegistry();
+        registry.publish(new RegistrySnapshot(1, Instant.now(), List.of(), List.of(), List.of(
+                anchor("pushed", pushed, "fw-a", Map.of("crl", Base64.getEncoder().encodeToString(pushedCrl))),
+                anchor("pushed-again", pushed, "fw-b", Map.of("crl", Base64.getEncoder().encodeToString(pushedCrl))),
+                anchor("fetched", fetched, "fw-a", Map.of("crlUrls", List.of(base + "/fetched.crl"))),
+                anchor("unreachable", unreachable, "fw-a", Map.of("crlUrls", List.of(base + "/missing.crl"))),
+                anchor("wrong", wrong, "fw-a", Map.of("crlUrls", List.of(base + "/wrong.crl"))))));
+        TrustProperties.Revocation cfg = new TrustProperties.Revocation();
+        cfg.setEnabled(false);
+        service = new CrlService(registry, fetcher(), cfg, new ResourceCache.Settings(1_000_000, Duration.ofSeconds(30), Duration.ofDays(1), false), clock);
+        service.refresh();
+
+        List<Map<String, Object>> listing = service.listing(a -> true, 256 * 1024);
+        assertThat(listing).hasSize(4).extracting(m -> (String) m.get("subject")).isSorted();
+        Map<String, Object> held = entry(listing, "Pushed CRL");
+        // One entry per certificate and location, naming every anchor that uses it; a pushed CRL has no url.
+        assertThat(held).containsEntry("issuer", Certificates.sha256Thumbprint(pushed.certificate()))
+                .containsEntry("anchorIds", List.of("pushed", "pushed-again"))
+                .containsEntry("nextUpdate", nextUpdate.truncatedTo(java.time.temporal.ChronoUnit.SECONDS))
+                .containsEntry("revoked", 0).containsEntry("bytes", pushedCrl.length)
+                .containsEntry("current", true).containsEntry("inSnapshots", true)
+                .containsKeys("thisUpdate", "crlNumber", "fetchedAt", "nextFetch").doesNotContainKeys("url", "error");
+        assertThat(entry(listing, "Fetched CRL")).containsEntry("url", base + "/fetched.crl")
+                .containsEntry("current", true).containsEntry("inSnapshots", true).doesNotContainKey("error");
+
+        // A CRL that could not be loaded: its error, no dates, not current, not shipped, and when it is tried again.
+        for (String failed : List.of("Unreachable CRL", "Wrong CRL")) {
+            assertThat(entry(listing, failed)).as(failed).containsKeys("url", "error", "fetchedAt")
+                    .containsEntry("current", false).containsEntry("inSnapshots", false)
+                    .doesNotContainKeys("thisUpdate", "nextUpdate", "crlNumber", "revoked", "bytes")
+                    .satisfies(m -> assertThat((Instant) m.get("nextFetch")).isAfter(now).isBefore(now.plus(Duration.ofMinutes(6))));
+        }
+        assertThat((String) entry(listing, "Wrong CRL").get("error")).contains("not issued and signed by the anchor");
+        assertThat(service.snapshotClaims(a -> true, 256 * 1024)).extracting(m -> m.get("issuer")).containsExactlyInAnyOrder(
+                Certificates.sha256Thumbprint(pushed.certificate()), Certificates.sha256Thumbprint(fetched.certificate()));
+
+        // Current, but larger than a snapshot may carry: held, and not shipped.
+        assertThat(entry(service.listing(a -> true, pushedCrl.length - 1), "Pushed CRL"))
+                .containsEntry("current", true).containsEntry("inSnapshots", false);
+        // Past its next update and not yet replaced: still listed, no longer current, no longer shipped.
+        clock.now = nextUpdate.plus(Duration.ofSeconds(1));
+        assertThat(entry(service.listing(a -> true, 256 * 1024), "Pushed CRL"))
+                .containsEntry("current", false).containsEntry("inSnapshots", false);
+        // The anchors a predicate selects, by their ids.
+        assertThat(service.listing(a -> "fw-b".equals(a.frameworkId()), 256 * 1024)).singleElement()
+                .satisfies(m -> assertThat(m).containsEntry("anchorIds", List.of("pushed-again")));
+    }
+
+    static Map<String, Object> entry(List<Map<String, Object>> listing, String cn) {
+        return listing.stream().filter(m -> ((String) m.get("subject")).contains("CN=" + cn)).findFirst().orElseThrow();
     }
 
     @Test

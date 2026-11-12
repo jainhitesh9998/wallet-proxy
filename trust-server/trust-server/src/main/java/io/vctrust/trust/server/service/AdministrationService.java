@@ -15,8 +15,9 @@ import java.util.TreeMap;
 import java.util.function.Supplier;
 
 /**
- * What an operator sees and triggers: the health of the trust sources and their reload, a summary of the registry,
- * the configured clients, and the emptying of the proxy caches. What changes the service's state is audited.
+ * What an operator sees and triggers: the health of the trust sources and their reload, the anchor CRLs the service
+ * holds, a summary of the registry, the configured clients, and the emptying of the proxy caches. What changes the
+ * service's state is audited.
  *
  * <p>Every use case asks for the acting client and refuses one that is not an operator, whatever let the request
  * through to here: the rule does not rest on how requests are routed.
@@ -30,10 +31,17 @@ public class AdministrationService {
     private final MetadataService metadata;
     private final ContextService contexts;
     private final StatusListRelay statusLists;
+    private final CrlService crls;
+    private final int snapshotMaxCrlBytes;
 
-    /** @param clients the configured client profiles */
+    /**
+     * @param clients             the configured client profiles
+     * @param crls                the anchor CRLs; null when revocation is off
+     * @param snapshotMaxCrlBytes the largest anchor CRL a snapshot carries
+     */
     public AdministrationService(TrustSourceManager sources, TrustRegistry registry, Supplier<Collection<ClientProfile>> clients,
-                                 DidService dids, MetadataService metadata, ContextService contexts, StatusListRelay statusLists) {
+                                 DidService dids, MetadataService metadata, ContextService contexts, StatusListRelay statusLists,
+                                 CrlService crls, int snapshotMaxCrlBytes) {
         this.sources = sources;
         this.registry = registry;
         this.clients = clients;
@@ -41,6 +49,8 @@ public class AdministrationService {
         this.metadata = metadata;
         this.contexts = contexts;
         this.statusLists = statusLists;
+        this.crls = crls;
+        this.snapshotMaxCrlBytes = snapshotMaxCrlBytes;
     }
 
     /** Refuses (and records) an operator action by a client that is not an operator. */
@@ -64,6 +74,17 @@ public class AdministrationService {
         } catch (IllegalArgumentException e) {
             throw ServiceException.notFound(e.getMessage());
         }
+    }
+
+    /**
+     * The CRL of every trust anchor, as the service holds it: one entry per anchor certificate and CRL location, with
+     * its dates, when it was fetched and will be next, the last error, whether it is current and whether snapshots
+     * carry it. A CRL that cannot be loaded leaves devices without it ({@code x509.revocation_unknown}); this is where
+     * an operator sees that. Empty when revocation is off: then the service holds no CRL.
+     */
+    public List<Map<String, Object>> anchorCrls(ClientProfile admin) {
+        requireAdmin(admin, "list-crls");
+        return crls == null ? List.of() : crls.listing(anchor -> true, snapshotMaxCrlBytes);
     }
 
     public Map<String, Object> registrySummary(ClientProfile admin) {

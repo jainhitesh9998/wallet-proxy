@@ -1,11 +1,24 @@
 package io.vctrust.trust.server.service;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import io.vctrust.trust.core.model.TrustAnchor;
+import io.vctrust.trust.core.model.TrustDomain;
 import io.vctrust.trust.core.policy.ClientProfile;
+import io.vctrust.trust.core.registry.RegistrySnapshot;
 import io.vctrust.trust.core.registry.TrustRegistry;
 import io.vctrust.trust.core.registry.TrustSourceManager;
+import io.vctrust.trust.core.testing.TestPki;
+import io.vctrust.trust.server.cache.ResourceCache;
+import io.vctrust.trust.server.config.TrustProperties;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,11 +36,12 @@ class OperatorUseCasesTest {
     void everyOperatorUseCaseChecksTheActingClient() {
         TrustRegistry registry = new TrustRegistry();
         try (TrustSourceManager sources = new TrustSourceManager(registry, List.of(), List.of(), Clock.systemUTC())) {
-            AdministrationService administration = new AdministrationService(sources, registry, List::of, null, null, null, null);
+            AdministrationService administration = new AdministrationService(sources, registry, List::of, null, null, null, null, null, 0);
             ManagedEntryService managed = new ManagedEntryService(null, location -> new byte[0], sources);
             List<Runnable> asWallet = List.of(
                     () -> administration.sourceStates(WALLET),
                     () -> administration.refreshSource(WALLET, "any"),
+                    () -> administration.anchorCrls(WALLET),
                     () -> administration.registrySummary(WALLET),
                     () -> administration.clientProfiles(WALLET),
                     () -> administration.clearCaches(WALLET),
@@ -40,6 +54,39 @@ class OperatorUseCasesTest {
                         e -> assertThat(e.kind()).isEqualTo(ServiceException.Kind.FORBIDDEN));
             }
             assertThat(administration.sourceStates(OPERATOR)).isEmpty();
+        }
+    }
+
+    @Test
+    void anOperatorSeesTheAnchorCrlsAndAnyoneElseIsRefusedOnTheRecord() throws Exception {
+        var ca = TestPki.rootCa("CN=Listed IACA,C=UT");
+        String crl = Base64.getEncoder().encodeToString(TestPki.crl(ca).getEncoded());
+        TrustRegistry registry = new TrustRegistry();
+        registry.publish(new RegistrySnapshot(1, Instant.now(), List.of(), List.of(), List.of(
+                new TrustAnchor("listed", TrustDomain.MDOC_IACA, ca.certificate(), "fw", null, null, Map.of("crl", crl), null))));
+        TrustProperties.Revocation revocation = new TrustProperties.Revocation();
+        revocation.setEnabled(false); // no refresh thread: the test loads the CRLs itself
+        Logger audit = (Logger) LoggerFactory.getLogger("io.vctrust.trust.audit");
+        ListAppender<ILoggingEvent> recorded = new ListAppender<>();
+        recorded.start();
+        audit.addAppender(recorded);
+        try (TrustSourceManager sources = new TrustSourceManager(registry, List.of(), List.of(), Clock.systemUTC());
+             CrlService crls = new CrlService(registry, null, revocation,
+                     new ResourceCache.Settings(1_000_000, Duration.ofSeconds(30), Duration.ofDays(1), false), Clock.systemUTC())) {
+            crls.refresh();
+            AdministrationService administration = new AdministrationService(sources, registry, List::of, null, null, null, null, crls, 262144);
+            assertThat(administration.anchorCrls(OPERATOR)).singleElement().satisfies(m -> assertThat(m)
+                    .containsEntry("anchorIds", List.of("listed")).containsEntry("current", true).containsEntry("inSnapshots", true));
+
+            assertThatThrownBy(() -> administration.anchorCrls(WALLET)).isInstanceOfSatisfying(ServiceException.class,
+                    e -> assertThat(e.kind()).isEqualTo(ServiceException.Kind.FORBIDDEN));
+            assertThat(recorded.list).extracting(ILoggingEvent::getFormattedMessage)
+                    .containsExactly("client=\"wallet\" action=list-crls refused=not-an-admin");
+
+            // Revocation off: the service holds no CRL, and says so with an empty list rather than an error.
+            assertThat(new AdministrationService(sources, registry, List::of, null, null, null, null, null, 262144).anchorCrls(OPERATOR)).isEmpty();
+        } finally {
+            audit.detachAppender(recorded);
         }
     }
 

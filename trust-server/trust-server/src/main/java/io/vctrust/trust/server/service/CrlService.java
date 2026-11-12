@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -64,6 +65,11 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
         /** Usable for snapshots: verified, and not past its next update. */
         public boolean currentAt(Instant now) {
             return crl != null && (crl.nextUpdate() == null || !crl.nextUpdate().isBefore(now));
+        }
+
+        /** Shipped in the snapshots of the clients that see one of its anchors: current, and no larger than {@code maxBytes}. */
+        public boolean shippedAt(Instant now, int maxBytes) {
+            return currentAt(now) && crl.size() <= maxBytes;
         }
     }
 
@@ -331,7 +337,7 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
         List<Map<String, Object>> out = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (AnchorCrl a : anchorCrls.values()) {
-            if (!a.currentAt(now) || a.crl().size() > maxBytes || a.anchors().stream().noneMatch(visible)
+            if (!a.shippedAt(now, maxBytes) || a.anchors().stream().noneMatch(visible)
                     || !seen.add(a.issuer() + "|" + Objects.toString(a.url(), "") + "|" + Hashes.sha256B64u(a.crl().der()))) {
                 continue;
             }
@@ -351,8 +357,16 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
         return out;
     }
 
-    /** Operator view of the anchor CRLs visible to a client. */
-    public List<Map<String, Object>> listing(Predicate<TrustAnchor> visible) {
+    /**
+     * Operator view of the anchor CRLs of the anchors {@code visible} selects: one entry per anchor certificate and
+     * CRL location, with what is held, when it was fetched and will be next, the last error, whether it is current
+     * and whether snapshots carry it. A member without a value is left out: a pushed CRL has no url, a CRL that never
+     * loaded has no dates, a load that went well has no error.
+     *
+     * @param snapshotMaxBytes the largest CRL a snapshot carries ({@code trust.revocation.snapshot-max-crl-bytes})
+     */
+    public List<Map<String, Object>> listing(Predicate<TrustAnchor> visible, int snapshotMaxBytes) {
+        Instant now = clock.instant();
         List<Map<String, Object>> out = new ArrayList<>();
         for (AnchorCrl a : anchorCrls.values()) {
             List<String> ids = a.anchors().stream().filter(visible).map(TrustAnchor::id).toList();
@@ -363,18 +377,30 @@ public class CrlService implements RevocationChecker.CrlSource, AutoCloseable {
             m.put("issuer", a.issuer());
             m.put("anchorIds", ids);
             m.put("subject", a.issuerCertificate().getSubjectX500Principal().getName());
-            m.put("url", a.url());
+            if (a.url() != null) {
+                m.put("url", a.url());
+            }
             if (a.crl() != null) {
                 m.put("thisUpdate", a.crl().thisUpdate());
-                m.put("nextUpdate", a.crl().nextUpdate());
+                if (a.crl().nextUpdate() != null) {
+                    m.put("nextUpdate", a.crl().nextUpdate());
+                }
                 a.crl().crlNumber().ifPresent(n -> m.put("crlNumber", n.toString()));
                 m.put("revoked", a.crl().revokedCount());
                 m.put("bytes", a.crl().size());
             }
             m.put("fetchedAt", a.fetchedAt());
-            m.put("error", a.error());
+            m.put("nextFetch", a.nextFetch());
+            if (a.error() != null) {
+                m.put("error", a.error());
+            }
+            m.put("current", a.currentAt(now));
+            m.put("inSnapshots", a.shippedAt(now, snapshotMaxBytes));
             out.add(m);
         }
+        // The CRLs are held in no particular order; an operator comparing two answers wants the same one each time.
+        out.sort(Comparator.comparing((Map<String, Object> m) -> (String) m.get("subject"))
+                .thenComparing(m -> (String) m.get("url"), Comparator.nullsFirst(Comparator.naturalOrder())));
         return out;
     }
 

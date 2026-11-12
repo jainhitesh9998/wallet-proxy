@@ -302,6 +302,7 @@ For an admin client, under `/admin/v1`:
 | Request | Does |
 | --- | --- |
 | `GET /sources`, `POST /sources/{id}/refresh` | Source states; load one now |
+| `GET /crls` | The anchor CRLs the service holds, one entry per anchor certificate and CRL location: `issuer` (the certificate's thumbprint), `anchorIds`, `subject`, `url` (absent for a pushed CRL), `thisUpdate`, `nextUpdate`, `crlNumber`, `revoked`, `bytes`, `fetchedAt`, `nextFetch`, the last `error`, whether the CRL held is `current`, and whether it is `inSnapshots` (current and no larger than `snapshot-max-crl-bytes`). Empty with `trust.revocation.enabled: false` |
 | `GET /registry`, `GET /clients` | What is loaded; the client profiles |
 | `GET /managed/{entities\|anchors}` | The managed entries |
 | `PUT /managed/{entities\|anchors}/{id}` | Add or replace one (body: an entity or anchor in the registry format) |

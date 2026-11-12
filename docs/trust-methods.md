@@ -296,7 +296,13 @@ when the distribution point does not answer, `502 invalid_crl` when what it serv
   `trust-service` for the service's own decisions; `snapshot`, `proxy`, `direct`, `fallback` or `cache` on a device).
 - The library's `status()` gives the number of CRLs in the snapshot in use (`snapshot.crls`).
 - A CRL that could not be loaded is in the service log at `WARN`; the snapshot is then built without it and devices
-  fall back to the distribution point.
+  fall back to the distribution point. `GET /admin/v1/crls` (an admin client) shows every anchor CRL the service is
+  responsible for: the anchors that use it, its `url` (absent for a pushed CRL), the dates and number of the CRL held,
+  when it was fetched (`fetchedAt`) and will be next (`nextFetch`), the last `error`, whether the CRL held is
+  `current`, and whether snapshots carry it (`inSnapshots`: current and no larger than `snapshot-max-crl-bytes`). An
+  entry with `inSnapshots: false` is a CRL devices do not get from the service. In the example,
+  `curl -s -H 'Authorization: Bearer ops-key' localhost:8095/admin/v1/crls` lists the CRL pushed with `utopia-iaca`:
+  `"crlNumber": "1", "revoked": 2, "current": true, "inSnapshots": true`, and no `url` or `error`.
 
 ## Credential status lists
 

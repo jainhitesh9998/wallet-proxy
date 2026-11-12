@@ -58,8 +58,10 @@ public class UseCaseConfiguration {
     @Bean
     AdministrationService administrationService(TrustSourceManager sources, TrustRegistry registry, ClientRegistry clients,
                                                 DidService dids, MetadataService metadata, ContextService contexts,
-                                                StatusListRelay statusLists) {
-        return new AdministrationService(sources, registry, clients::all, dids, metadata, contexts, statusLists);
+                                                StatusListRelay statusLists, CrlService crls, TrustProperties props) {
+        TrustProperties.Revocation revocation = props.getRevocation();
+        return new AdministrationService(sources, registry, clients::all, dids, metadata, contexts, statusLists,
+                revocation.isEnabled() ? crls : null, revocation.getSnapshotMaxCrlBytes());
     }
 
     @Bean
