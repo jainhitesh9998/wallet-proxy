@@ -71,6 +71,10 @@ public final class MappedSourceFactory implements TrustSourceFactory {
     static final int DEFAULT_MAX_ANCHORS = 1_000;
     /** The characters of mapped text one load may yield, all records together (64 Mi). */
     static final int DEFAULT_MAX_TEXT = 67_108_864;
+    /** How many times the bytes it read a load (or a lookup answer) may yield, as characters and nodes of mapped text. */
+    static final long YIELD_FACTOR = 32;
+    /** What a load may yield however few bytes it read: a small list with a long text in each record is honest. */
+    static final long MIN_YIELD = 1_048_576;
     /** How long a load may still be fetching pages: whoever serves them slowly would otherwise hold the load forever. */
     static final Duration DEFAULT_MAX_DURATION = Duration.ofMinutes(5);
     static final int MAX_WARNINGS = 50;
@@ -439,8 +443,13 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             try {
                 while (true) {
                     if (page == null) {
-                        page = ResourceLoader.isRemote(config.location()) ? fetch(URI.create(config.location()), now, warnings)
-                                : new Document(document(ctx.resources().load(config.location()), now, warnings, false), null);
+                        if (ResourceLoader.isRemote(config.location())) {
+                            page = fetch(URI.create(config.location()), now, warnings);
+                        } else {
+                            byte[] local = ctx.resources().load(config.location());
+                            page = new Document(document(local, now, warnings, false), null, local.length);
+                        }
+                        text.read(page.bytes());
                         first = mapped(page.root());
                         facts = facts(first, page.root(), now, warnings);
                         if (page.uri() != null) {
@@ -495,6 +504,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                     }
                     inTime(now);
                     page = fetch(next, now, warnings);
+                    text.read(page.bytes());
                     inTime(now);
                     if (!page.uri().toString().equals(next.toString()) && !visited.add(page.uri().toString())) {
                         throw new TrustSourceException("Page " + (pages + 1) + " of the list was read from an address already read, "
@@ -668,7 +678,8 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             return config.keys().configured() ? ListInfo.SignatureStatus.VERIFIED : ListInfo.SignatureStatus.NOT_CHECKED;
         }
 
-        private record Document(Object root, URI uri) {
+        /** A page as read: its JSON, the address it was finally read from (null for a local one), and its bytes. */
+        private record Document(Object root, URI uri, int bytes) {
         }
 
         /**
@@ -783,7 +794,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
             if (!r.isSuccess()) {
                 throw new HttpFetcher.HttpStatusException(uri, r.status());
             }
-            return new Document(document(r.body(), now, warnings, false), r.finalUri() == null ? uri : r.finalUri());
+            return new Document(document(r.body(), now, warnings, false), r.finalUri() == null ? uri : r.finalUri(), r.body().length);
         }
 
         /**
@@ -1248,24 +1259,37 @@ public final class MappedSourceFactory implements TrustSourceFactory {
         }
 
         /**
-         * What a load (or a lookup answer) has yielded, all its records together, against {@code limits.text}: the
-         * characters of its mapped text, and one for each node ({@link Mapping.Weight}), so that nulls and empty lists
-         * repeated into every record weigh something too. Each record is bounded, and so is what they make together.
+         * What a load (or a lookup answer) has yielded, all its records together: the characters of its mapped text,
+         * and one for each node ({@link Mapping.Weight}), so that nulls and empty lists repeated into every record weigh
+         * something too. Each record is bounded, and so is what they make together: at most {@link #YIELD_FACTOR}
+         * times the bytes read, over all pages (a path from the root repeats what it finds into every record, and a
+         * document of 180 kB yielded 100 MB inside every other bound), though never less than {@link #MIN_YIELD}; and
+         * at most {@code limits.text} in any case.
          */
         private static final class Text {
             private final int max;
             private final String what;
             private long used;
+            private long read;
 
             Text(int max, String what) {
                 this.max = max;
                 this.what = what;
             }
 
+            /** The bytes of a page (or of an answer) read. */
+            void read(int bytes) {
+                read += bytes;
+            }
+
             void charge(long weight) throws TrustSourceException {
                 used += weight;
                 if (used > max) {
                     throw new TrustSourceException(what + " yield more than " + max + " characters and nodes of mapped text (limits.text)");
+                }
+                if (used > Math.max(MIN_YIELD, YIELD_FACTOR * read)) {
+                    throw new TrustSourceException(what + " yield more than " + YIELD_FACTOR + " times the " + read + " bytes read (limits: "
+                            + YIELD_FACTOR + " times what is read, and at least " + MIN_YIELD + ")");
                 }
             }
         }
@@ -1444,6 +1468,7 @@ public final class MappedSourceFactory implements TrustSourceFactory {
                         throw new TrustSourceException("The lookup answered with more than " + config.maxEntities() + " records");
                     }
                     Text text = new Text(config.maxText(), "The answer's records");
+                    text.read(r.body().length);
                     List<TrustedEntity> about = new ArrayList<>();
                     for (int i = 0; i < records.size(); i++) {
                         // A record about the identifier that cannot be read completely answers with a suspended entity,

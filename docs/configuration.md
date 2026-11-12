@@ -436,7 +436,7 @@ trust:
 | `headers` | none | Sent with requests to the origin of `location` (scheme, host and port) and nowhere else; never shown in a log, a message or the source state |
 | `publicUri` | none | Published as the entries' `provenance.sourceUri`. Without it an https `location` is published, and a local one is not |
 | `limits.entities` / `limits.anchors` | `5000` / `1000` | More records than this fail the load |
-| `limits.text` | `67108864` | What all the records of a load (or of one lookup answer) may yield: the characters of their mapped text, certificates and CRLs included, and one for every node (each value, `null`, list and object, empty or not); more fail the load |
+| `limits.text` | `67108864` | What all the records of a load (or of one lookup answer) may yield: the characters of their mapped text, certificates and CRLs included, and one for every node (each value, `null`, list and object, empty or not); more fail the load. Below it, a load yields at most 32 times the bytes it read over all its pages, and at least 1,048,576 is always allowed |
 | `limits.duration` | `PT5M` | How long a load may take; one still fetching pages after that fails |
 
 #### The mapping
@@ -684,10 +684,14 @@ configuration is read.
   is eleven characters, and a gigabyte as text); for one record, at most 1000 nodes selected by a path of a member and
   1000 values of a member, at most 8,192 characters in one value (1,048,576 in a certificate, a PEM bundle or a CRL),
   65,536 characters of mapped text and 4,096 nodes in all; for the whole load (and
-  for one lookup answer), at most `limits.text` characters and nodes; a load still fetching pages after
+  for one lookup answer), at most 32 times the bytes read (over all pages; at least 1,048,576 always allowed) and at
+  most `limits.text` characters and nodes, so that a path from the root cannot repeat a small document into a large
+  registry (180 kB of `null`s yielded 100 MB); a load still fetching pages after
   `limits.duration` fails; at most 50 warnings, then their number. Past a bound of a record, that record cannot be read
   completely (above); past a bound of the load, the load fails rather than load part of a list. The documented
-  examples and the four fixture lists of the tests are far inside these: their records hold a few dozen nodes. An
+  examples and the four fixture lists of the tests are far inside these: their records hold a few dozen nodes, and
+  they yield less than the bytes they read (the example about 0.95 times, this service's snapshot about 0.8 times),
+  against 32, and far less than the mebibyte always allowed. An
   anchor's `crlUrls` are mapped as the list states them; the registry counts the first 8 of an anchor of any source,
   and says in a warning of the source what it left out.
 - *A mapping that produces nothing fails.* When the document has records for a block and none of them could be read

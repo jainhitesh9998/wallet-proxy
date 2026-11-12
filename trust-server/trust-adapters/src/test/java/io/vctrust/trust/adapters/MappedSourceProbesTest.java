@@ -412,4 +412,47 @@ class MappedSourceProbesTest {
             }
         }
     }
+
+    // 4: what a load may yield for the bytes it read --------------------------------------------------------------------
+
+    @Test
+    void item4_aLoadYieldsAtMost32TimesTheBytesItReadAndAtLeastAMebibyteIsAllowed() throws Exception {
+        // 4,000 nulls at the root, repeated into each of 1,000 records through an attribute: about 4 million nodes from
+        // a document of about 90 kB, inside every bound of a record and of limits.text.
+        Map<String, Object> d = MappedSourceRulesTest.doc();
+        List<Object> issuers = new ArrayList<>();
+        for (int i = 0; i < 1_000; i++) {
+            issuers.add(Map.of("id", "p" + i, "credential_issuer", "https://p" + i + ".example", "state", "active"));
+        }
+        d.put("issuers", issuers);
+        d.put("nulls", java.util.Collections.nCopies(4_000, null));
+        String json = Json.write(d);
+        TestContext ctx = ctx();
+        serveJson(ctx, json);
+        Map<String, Object> m = MappedSourceAttacksTest.entities("attributes", Map.of("flags", "^.nulls"));
+        assertThat(loadError(source(ctx, props("mapping", m)))).contains("The list's records yield more than 32 times the "
+                + json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + " bytes read (limits: 32 times what is read, and at "
+                + "least 1048576)");
+        // The same list without what repeats: inside the factor by far.
+        assertThat(source(ctx, props()).load().entities()).hasSize(1_000);
+        // A small document may still yield a mebibyte: a text of 8,000 characters at the root, in eight attributes of
+        // each record, is 64,000 characters a record from a document of about 9 kB. Ten records (640,000) load, more
+        // than 32 times the bytes read but less than a mebibyte; twenty (1,280,000) do not.
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        for (int i = 0; i < 8; i++) {
+            attributes.put("a" + i, "^.text");
+        }
+        Map<String, Object> repeated = MappedSourceAttacksTest.entities("attributes", attributes);
+        d.remove("nulls");
+        d.put("text", "T".repeat(8_000));
+        for (int n : List.of(10, 20)) {
+            d.put("issuers", issuers.subList(0, n));
+            serveJson(ctx, d);
+            if (n == 10) {
+                assertThat(source(ctx, props("mapping", repeated)).load().entities()).hasSize(10);
+            } else {
+                assertThat(loadError(source(ctx, props("mapping", repeated)))).contains("more than 32 times the");
+            }
+        }
+    }
 }

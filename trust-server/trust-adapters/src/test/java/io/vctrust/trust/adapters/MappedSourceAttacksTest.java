@@ -516,8 +516,10 @@ class MappedSourceAttacksTest {
         Map<String, Object> m = entities("contexts", "^.contexts[*]");
         assertThat(loadError(source(ctx, props("mapping", m)))).contains("none of the 200 records at $.issuers[*] could be read completely; "
                 + "record 1 (id 'partner:p0') is listed SUSPENDED: contexts: yields more than 1000 values for one record");
-        serveJson(ctx, withContexts(200, 1_000));
-        assertThat(source(ctx, props("mapping", m)).load().entities()).hasSize(200)
+        // A thousand are read. (In 20 records: 200 of them, 5.8 million characters from 45 kB, are more than a load may
+        // yield for the bytes it read since the fourth round, item 4: MappedSourceProbesTest.item4_...)
+        serveJson(ctx, withContexts(20, 1_000));
+        assertThat(source(ctx, props("mapping", m)).load().entities()).hasSize(20)
                 .allSatisfy(e -> assertThat((List<?>) e.attributes().get(io.vctrust.trust.core.metadata.Oid4vciMetadataMapper.CONTEXTS))
                         .hasSize(1_000));
         // Several forms of one member count together, and so do the items of a nested each.
